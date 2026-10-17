@@ -12,6 +12,7 @@ export type OrchestratorCfg = {
   llmModel: string;
   snapshot?: string;
   platformSecrets: string[];   // values that must never appear in the sandbox env
+  assignLine?: (orgId: ObjectId) => Promise<void>;   // real Photon line assignment; default inserts a fake pool row (tests)
 };
 
 export type StepLog = { name: string; ok: boolean; ms: number; detail?: string };
@@ -91,6 +92,7 @@ export class Orchestrator {
       if (!r.text) throw new Error("empty health reply");
     });
     await this.step(log, agentId, "assign_line", async () => {
+      if (this.cfg.assignLine) return this.cfg.assignLine(orgId);
       await this.db.collection("channel_lines").insertOne({ orgId, channel: "imessage", provider: "photon", photonLineId: null, address: `+1555${String(Date.now()).slice(-7)}`, status: "active", capabilities: ["typing"], createdAt: new Date() });
     });
     await this.db.collection("sandboxes").updateOne({ daytonaId: sandbox.id }, { $set: { state: "running", lastActiveAt: new Date() } });
