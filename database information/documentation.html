@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation — Sales Agent Platform (DubHacks '26)</title>
+<style>
+  :root{--bg:#fafaf7;--fg:#1a1a17;--muted:#66655e;--line:#e3e1d8;--card:#fff;--accent:#2f5d50;--soft:#e4efe9;--warn:#9a5b00;--warnsoft:#fbf0dc;--bad:#9b2c2c;--badsoft:#f8e3e3;--mono:ui-monospace,Menlo,monospace}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{max-width:1160px;margin:0 auto;padding:0 28px 96px;display:grid;grid-template-columns:210px 1fr;gap:44px}
+  nav{position:sticky;top:0;align-self:start;padding-top:44px;font-size:14px;max-height:100vh;overflow:auto}
+  nav .t{font-weight:700;margin-bottom:8px}
+  nav .g{margin:14px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:2px 0}
+  nav a:hover{color:var(--accent)}
+  main{padding-top:44px;min-width:0}
+  h1{font-size:32px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:23px;margin:56px 0 12px;padding-top:20px;border-top:1px solid var(--line)}
+  h2.part{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);border:0;margin:70px 0 -30px;padding:0}
+  h3{font-size:16px;margin:24px 0 6px}
+  .meta{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:12px;padding:1px 9px;border-radius:99px;font-weight:600;margin-right:4px;background:var(--soft);color:var(--accent)}
+  .pill.plan{background:#ecece4;color:#66655e}.pill.warn{background:var(--warnsoft);color:var(--warn)}.pill.bad{background:var(--badsoft);color:var(--bad)}
+  code{font-family:var(--mono);font-size:13px;background:#efede4;padding:1px 5px;border-radius:4px}
+  pre{background:#1d2421;color:#e8efe9;padding:14px 16px;border-radius:8px;overflow:auto;font:12.5px/1.55 var(--mono)}
+  pre code{background:none;padding:0;color:inherit}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:10px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1efe6}
+  .callout{background:var(--soft);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{background:var(--warnsoft);border-color:var(--warn)}
+  .coll{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:2px 18px 10px;margin:18px 0}
+  .coll table{margin:6px 0 0}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;overflow:auto}
+  a{color:var(--accent)}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr}nav{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="t">Documentation</div>
+  <div class="g">Project</div>
+  <a href="#overview">Overview</a>
+  <a href="#index">Doc index</a>
+  <a href="#setup">Setup &amp; commands</a>
+  <a href="#decisions">Decisions log</a>
+  <div class="g">Database</div>
+  <a href="#db-status">Status</a>
+  <a href="#db-principles">Principles</a>
+  <a href="#db-er">Entity diagram</a>
+  <a href="#db-collections">Collections</a>
+  <a href="#db-indexes">Indexes &amp; access</a>
+  <a href="#db-guards">Guards (tested)</a>
+  <a href="#db-review">Review log</a>
+  <div class="g">Integrations</div>
+  <a href="#int-photon">Photon</a>
+  <a href="#int-daytona">Daytona</a>
+  <a href="#int-harness">Harness</a>
+  <div class="g">Meta</div>
+  <a href="#changelog">Changelog</a>
+  <a href="#howto">Extending this doc</a>
+</nav>
+
+<main>
+<p class="meta"><span class="pill">Living doc</span> Last updated 2026-10-17 · owner: Avi Agola</p>
+<h1>Sales Agent Platform — Documentation</h1>
+<p class="meta">One place for everything we need during the hackathon. Add a section whenever we learn something worth keeping.</p>
+
+<h2 class="part">Project</h2>
+<h2 id="overview">Overview</h2>
+<p>A platform where a business owner runs an AI sales agent that talks to their customers. One business = one org = one agent = one Daytona sandbox. Customers reach the agent over <b>iMessage first</b>, then WhatsApp, then SMS and voice, all through Photon. Everything is stored in MongoDB Atlas; the owner sees it all in a Next.js console.</p>
+<table>
+<tr><th>Layer</th><th>Choice</th><th>State</th></tr>
+<tr><td>Owner console</td><td>Next.js 16 (App Router, Cache Components), Tailwind 4 — <code>web/</code></td><td><span class="pill">built</span> dashboard, inbox, contacts, agent settings</td></tr>
+<tr><td>Database</td><td>MongoDB Atlas, db <code>salesagent</code></td><td><span class="pill">built</span> 14 collections, validators, indexes</td></tr>
+<tr><td>Channels</td><td>Photon Spectrum (<code>spectrum-ts</code>)</td><td><span class="pill plan">next</span> iMessage first</td></tr>
+<tr><td>Agent sandbox</td><td>Daytona, one per business</td><td><span class="pill plan">next</span> waiting on connectors</td></tr>
+<tr><td>Agent harness</td><td>Hermes (recommended) or fx</td><td><span class="pill warn">undecided</span></td></tr>
+<tr><td>Owner auth</td><td>—</td><td><span class="pill warn">deferred</span> Clerk dropped; approach TBD</td></tr>
+<tr><td>Agent service</td><td><code>agent/</code> folder (planned)</td><td><span class="pill plan">planned</span></td></tr>
+</table>
+
+<h2 id="index">Doc index</h2>
+<table>
+<tr><th>Document</th><th>Location</th><th>What's in it</th></tr>
+<tr><td>Product plan (PRD)</td><td><a href="../docs/PRD.html"><code>docs/PRD.html</code></a></td><td>Goals, architecture, Photon/Daytona/harness comparison, phases, risks</td></tr>
+<tr><td>This file</td><td><code>database information/documentation.html</code></td><td>Database design (live), setup, decisions, integration notes, changelog</td></tr>
+<tr><td>Repo README</td><td><a href="../README.md"><code>README.md</code></a></td><td>Run instructions</td></tr>
+<tr><td>Schema in code</td><td><code>web/src/lib/models.ts</code>, <code>schema.ts</code></td><td>Types, validators and indexes. <b>If this doc and the code disagree, the code wins</b>; fix the doc.</td></tr>
+</table>
+
+<h2 id="setup">Setup &amp; commands</h2>
+<pre><code>cd web
+pnpm install
+# credentials: web/.env.local (gitignored) with MONGODB_URI and MONGODB_DB=salesagent
+pnpm db:setup          # create collections, apply validators + indexes (idempotent, never deletes data)
+pnpm db:seed           # demo business "Sunrise Bike Shop" (refuses if data exists)
+pnpm db:seed -- --reset   # wipe + reseed (DESTRUCTIVE)
+pnpm db:local          # optional local MongoDB on :27017 instead of Atlas
+pnpm dev               # http://localhost:3000   ·   GET /api/health pings Mongo</code></pre>
+<div class="callout warn"><b>Secrets.</b> <code>atlas-credentials.env</code> and every <code>*.env</code> are gitignored (root <code>.gitignore</code>). Never commit them or paste the URI in chat/docs. The Atlas password was shared as a file; rotate it when convenient.</div>
+<div class="callout warn"><b>No auth yet.</b> <code>getCurrentOrg()</code> in <code>web/src/lib/queries.ts</code> serves the first org in the database. Don't deploy the console to a public URL until login exists.</div>
+
+<h2 id="decisions">Decisions log</h2>
+<table>
+<tr><th>Date</th><th>Decision</th><th>Why</th></tr>
+<tr><td>10-17</td><td>MongoDB Atlas for all data</td><td>Team choice; single system of record</td></tr>
+<tr><td>10-17</td><td>One agent per business; one Daytona sandbox per agent</td><td>Isolation, fairness</td></tr>
+<tr><td>10-17</td><td>iMessage first, WhatsApp next, SMS/voice later</td><td>Master one channel; Spectrum makes new channels a provider + adapter</td></tr>
+<tr><td>10-17</td><td>Shared collections scoped by <code>orgId</code></td><td>Cheap, simple; revisit for enterprise isolation</td></tr>
+<tr><td>10-17</td><td>Clerk dropped</td><td>Owner call; auth approach to be decided (Mongo gives DB auth only, not end-user login)</td></tr>
+<tr><td>10-17</td><td>One conversation per contact, spanning channels</td><td>Continuous history; enforced by unique index</td></tr>
+<tr><td class="meta">open</td><td>Harness: Hermes vs fx</td><td>Needs Phase 0 spike (see PRD §7)</td></tr>
+</table>
+
+<h2 class="part">Database</h2>
+<h2 id="db-status">Database status</h2>
+<div class="callout"><b>Live in Atlas now:</b> all 14 collections below, each with a <code>$jsonSchema</code> validator (strict, action = error) and its indexes. Seeded with one demo business. Applied by <code>pnpm db:setup</code> from <code>web/src/lib/schema.ts</code>.</div>
+<table>
+<tr><th>Collection</th><th>Docs (seed)</th><th>Used by</th></tr>
+<tr><td>orgs, agents, contacts, conversations, messages</td><td>1 · 1 · 5 · 5 · 16</td><td>Console today</td></tr>
+<tr><td>users, channel_lines, knowledge, knowledge_chunks, usage, tool_calls</td><td>1 · 1 · 1 · 4 · 7 · 1</td><td>Seeded; console pages come later</td></tr>
+<tr><td>sandboxes, templates, calls</td><td>0 · 0 · 0</td><td>Empty until agent / WhatsApp / voice phases</td></tr>
+</table>
+
+<h2 id="db-principles">Design principles</h2>
+<ul>
+<li><b>Tenant = business = org.</b> <code>orgId</code> on every tenant document (even <code>messages</code>), first in every tenant index, required by every query helper.</li>
+<li><b>Channel-agnostic.</b> Contacts have many handles; one conversation per contact spans channels; messages carry <code>channel</code>.</li>
+<li><b>Mongo is the system of record.</b> Sandboxes and harness memory are disposable.</li>
+<li><b>Embed small bounded data, reference unbounded data.</b> Handles, facts, guardrails, attachments embedded; messages, tool calls, chunks separate.</li>
+<li><b>Denormalize for the inbox.</b> <code>lastMessageAt/Preview</code> on conversations.</li>
+<li><b>Constraints in the database, not just code.</b> Unique indexes and validators catch races and bad writes from any service.</li>
+</ul>
+
+<h2 id="db-er">Entity relationships</h2>
+<div class="diagram">
+<svg viewBox="0 0 980 520" width="100%" font-family="-apple-system,Segoe UI,sans-serif" font-size="12.5">
+  <defs><marker id="m" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#66655e"/></marker></defs>
+  <g stroke="#2f5d50" fill="#e4efe9">
+    <rect x="410" y="20" width="160" height="52" rx="8"/>
+    <rect x="20" y="130" width="140" height="52" rx="8"/><rect x="180" y="130" width="140" height="52" rx="8"/>
+    <rect x="340" y="130" width="140" height="52" rx="8"/><rect x="500" y="130" width="140" height="52" rx="8"/>
+    <rect x="660" y="130" width="140" height="52" rx="8"/><rect x="820" y="130" width="140" height="52" rx="8"/>
+    <rect x="340" y="260" width="140" height="52" rx="8"/><rect x="340" y="390" width="140" height="52" rx="8"/>
+    <rect x="180" y="260" width="140" height="52" rx="8"/><rect x="500" y="260" width="140" height="52" rx="8"/>
+    <rect x="20" y="260" width="140" height="52" rx="8"/><rect x="660" y="260" width="140" height="52" rx="8"/>
+    <rect x="500" y="390" width="140" height="52" rx="8"/>
+  </g>
+  <g fill="#1a1a17" text-anchor="middle" font-weight="600">
+    <text x="490" y="50">orgs</text>
+    <text x="90" y="160">users</text><text x="250" y="160">agents</text><text x="410" y="160">contacts</text><text x="570" y="160">channel_lines</text><text x="730" y="160">knowledge</text><text x="890" y="160">usage</text>
+    <text x="410" y="290">conversations</text><text x="410" y="420">messages</text>
+    <text x="250" y="290">sandboxes</text><text x="570" y="290">tool_calls</text><text x="90" y="290">templates</text><text x="730" y="290">knowledge_chunks</text>
+    <text x="570" y="420">calls</text>
+  </g>
+  <g fill="#66655e" text-anchor="middle" font-size="11">
+    <text x="490" y="64">tenant root</text>
+    <text x="250" y="176">1 per org · unique</text><text x="410" y="176">handles[] · E.164</text><text x="570" y="176">Photon line</text><text x="730" y="176">catalog / FAQ</text><text x="890" y="176">daily rollup</text>
+    <text x="410" y="306">1 per contact · unique</text><text x="410" y="436">dedupe channel+msgId</text><text x="250" y="306">Daytona state</text><text x="570" y="306">audit</text><text x="90" y="306">WhatsApp</text><text x="730" y="306">vector-ready</text><text x="570" y="436">voice</text>
+  </g>
+  <g stroke="#66655e" fill="none" marker-end="url(#m)" stroke-width="1.2">
+    <path d="M430 72 L100 130"/><path d="M450 72 L260 130"/><path d="M490 72 L410 130"/><path d="M530 72 L570 130"/><path d="M550 72 L720 130"/><path d="M570 60 L880 130"/>
+    <path d="M410 182 V260"/><path d="M410 312 V390"/>
+    <path d="M620 182 L570 260" stroke-dasharray="3 3"/>
+    <path d="M730 182 V260" stroke-dasharray="3 3"/>
+    <path d="M250 182 V260" stroke-dasharray="3 3"/>
+    <path d="M480 285 H500"/><path d="M480 415 H500"/>
+  </g>
+</svg>
+<p class="meta" style="margin:6px 0 0">Every box except <code>orgs</code> carries <code>orgId</code>. Dashed = secondary reference (knowledge_chunks → knowledge, sandboxes ↔ agent, channel_lines ↔ messages by channel). Solid arrows = "belongs to".</p>
+</div>
+
+<h2 id="db-collections">Collections</h2>
+<p class="meta">Types: <code>web/src/lib/models.ts</code> · Validators and indexes: <code>web/src/lib/schema.ts</code>. <i>ref</i> = ObjectId reference. "?" = nullable.</p>
+
+<h3>Core</h3>
+<div class="coll"><h3><code>orgs</code> — the business customer</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>_id</td><td>ObjectId</td><td>is the <code>orgId</code> everywhere</td></tr>
+<tr><td>name, productDescription, brandVoice, hours</td><td>string</td><td>feed the agent prompt; edited on <code>/agent</code></td></tr>
+<tr><td>plan</td><td>free | pro</td><td></td></tr><tr><td>createdAt</td><td>date</td><td></td></tr></table></div>
+
+<div class="coll"><h3><code>users</code> — owner logins</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>orgId</td><td>ref orgs</td><td></td></tr>
+<tr><td>email</td><td>string</td><td>unique</td></tr>
+<tr><td>name, role</td><td>string; owner | admin</td><td></td></tr>
+<tr><td>authProviderId</td><td>string?</td><td>filled once an auth approach is chosen</td></tr></table></div>
+
+<div class="coll"><h3><code>agents</code> — exactly one per org</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>orgId</td><td>ref</td><td><b>unique</b></td></tr>
+<tr><td>status</td><td>enum</td><td>draft | provisioning | running | sleeping | error</td></tr>
+<tr><td>harness</td><td>hermes | fx | null</td><td></td></tr>
+<tr><td>persona</td><td>string</td><td></td></tr>
+<tr><td>guardrails</td><td>{maxDiscountPct, escalateOn[]}</td><td>enforced worker-side, not just prompted</td></tr>
+<tr><td>enabledChannels</td><td>{imessage, whatsapp, sms, voice}</td><td>bool each; only iMessage on at MVP</td></tr>
+<tr><td>sandboxId</td><td>string?</td><td>pointer to <code>sandboxes</code></td></tr></table></div>
+
+<div class="coll"><h3><code>contacts</code> — customer and lead record</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>orgId</td><td>ref</td><td></td></tr>
+<tr><td>handles[]</td><td>{channel, address}</td><td>min 1; address in E.164; <b>unique</b> per (org, channel, address)</td></tr>
+<tr><td>name, notes</td><td>string</td><td></td></tr>
+<tr><td>stage</td><td>enum</td><td>new | engaged | qualified | won | lost</td></tr>
+<tr><td>score</td><td>number 0–100</td><td></td></tr>
+<tr><td>facts[]</td><td>{text, sourceMessageId?, learnedAt}</td><td>what the agent learned, with provenance</td></tr></table></div>
+
+<div class="coll"><h3><code>conversations</code> — one per contact, spans channels</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>orgId, contactId</td><td>ref</td><td><b>unique</b> pair</td></tr>
+<tr><td>mode</td><td>agent | human</td><td>human = takeover; agent stays silent</td></tr>
+<tr><td>lastChannel</td><td>enum</td><td>default reply channel</td></tr>
+<tr><td>lastMessageAt, lastMessagePreview</td><td>date, string</td><td>denormalized for the inbox</td></tr></table></div>
+
+<div class="coll"><h3><code>messages</code> — every text (voice utterances later)</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>orgId, conversationId</td><td>ref</td><td></td></tr>
+<tr><td>channel</td><td>imessage | whatsapp | sms | voice</td><td></td></tr>
+<tr><td>direction, sender</td><td>in|out; customer|agent|owner</td><td>sender separates owner takeover from agent replies</td></tr>
+<tr><td>body</td><td>string</td><td></td></tr>
+<tr><td>channelMsgId</td><td>string</td><td><b>unique with channel</b>: inbound retries are idempotent</td></tr>
+<tr><td>deliveryStatus, deliveryError</td><td>sent|delivered|failed; string?</td><td></td></tr>
+<tr><td>attachments[]</td><td>{kind, url, mime, name, sizeBytes}</td><td>metadata + storage URL only, never bytes</td></tr>
+<tr><td>reactions[]</td><td>{type, by, ts}</td><td>tapbacks</td></tr>
+<tr><td>replyTo</td><td>ref messages?</td><td>iMessage threads</td></tr>
+<tr><td>ts</td><td>date</td><td></td></tr></table></div>
+
+<h3>Agent runtime &amp; channels</h3>
+<div class="coll"><h3><code>channel_lines</code> — Photon line per business</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>orgId, channel, provider</td><td>ref, enum, "photon"</td><td></td></tr>
+<tr><td>photonLineId</td><td>string?</td><td>unknown until we see Photon's provisioning API</td></tr>
+<tr><td>address</td><td>string</td><td><b>unique</b> with channel — resolves inbound line → org</td></tr>
+<tr><td>status, capabilities[]</td><td>pending|active|disabled; string[]</td><td></td></tr></table></div>
+
+<div class="coll"><h3><code>sandboxes</code> — Daytona state</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>orgId, daytonaId?</td><td>ref, string?</td><td>unique when set (partial index; nulls allowed)</td></tr>
+<tr><td>state</td><td>enum</td><td>creating | running | stopped | error | deleted</td></tr>
+<tr><td>snapshotVersion</td><td>string</td><td>baseline image version</td></tr>
+<tr><td>lastActiveAt?, costAccruedCents</td><td>date?, number</td><td></td></tr></table></div>
+
+<div class="coll"><h3><code>tool_calls</code> — audit of every agent action</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>orgId, conversationId?</td><td>ref</td><td></td></tr>
+<tr><td>tool, args, result</td><td>string, object, any</td><td></td></tr>
+<tr><td>status, ms</td><td>ok|error|blocked; number</td><td>blocked = guardrail stopped it</td></tr>
+<tr><td>approvedBy?, ts</td><td>ref users?, date</td><td></td></tr></table></div>
+
+<h3>Knowledge, usage, later channels</h3>
+<div class="coll"><h3><code>knowledge</code> + <code>knowledge_chunks</code></h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>knowledge: orgId, kind, title, content, sourceUrl?, version, status</td><td>kind: catalog|faq|doc|url</td><td>owner-supplied source of truth</td></tr>
+<tr><td>chunks: orgId, knowledgeId, idx, text, embedding?</td><td>embedding: number[]?</td><td>unique (knowledgeId, idx). <span class="pill warn">vector index not created yet</span> — pending embedding-model choice</td></tr></table></div>
+
+<div class="coll"><h3><code>usage</code> — daily rollup</h3><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td>orgId, day</td><td>ref, "YYYY-MM-DD" (UTC)</td><td><b>unique</b> pair; upsert with <code>$inc</code></td></tr>
+<tr><td>tokensIn/Out, messagesIn/Out, sandboxSec</td><td>number</td><td></td></tr></table></div>
+
+<div class="coll"><h3><code>templates</code> (WhatsApp) · <code>calls</code> (voice)</h3><table>
+<tr><th>Collection</th><th>Fields</th></tr>
+<tr><td>templates</td><td>orgId, channel, name, body, variables[], approvalStatus (draft|pending|approved|rejected); unique (orgId, channel, name)</td></tr>
+<tr><td>calls</td><td>orgId, contactId, conversationId, direction, status, startedAt, endedAt?, durationSec, recordingUrl?, summary, outcome. Utterances are stored as <code>messages</code> with <code>channel:"voice"</code></td></tr></table></div>
+
+<h2 id="db-indexes">Indexes &amp; access patterns</h2>
+<table>
+<tr><th>Query</th><th>Index</th></tr>
+<tr><td>Inbound: resolve line → org</td><td><code>channel_lines (channel, address)</code> unique</td></tr>
+<tr><td>Inbound: sender → contact</td><td><code>contacts (orgId, handles.channel, handles.address)</code> unique</td></tr>
+<tr><td>Contact → conversation</td><td><code>conversations (orgId, contactId)</code> unique</td></tr>
+<tr><td>Inbound dedupe</td><td><code>messages (channel, channelMsgId)</code> unique</td></tr>
+<tr><td>Inbox list</td><td><code>conversations (orgId, lastMessageAt -1)</code></td></tr>
+<tr><td>Open thread</td><td><code>messages (conversationId, ts)</code></td></tr>
+<tr><td>Recent activity per org</td><td><code>messages (orgId, ts -1)</code>, <code>tool_calls (orgId, ts -1)</code></td></tr>
+<tr><td>Pipeline / lead lists</td><td><code>contacts (orgId, stage)</code></td></tr>
+<tr><td>Agent / usage lookups</td><td><code>agents (orgId)</code> unique · <code>usage (orgId, day)</code> unique</td></tr>
+</table>
+<h3>Inbound message write path</h3>
+<pre><code>0. line = channel_lines.findOne({channel, address: toNumber})  -> orgId
+1. contact = findOneAndUpdate({orgId, handle}, {$setOnInsert:{...}}, {upsert:true})   // race-safe: unique index
+2. conversation = findOneAndUpdate({orgId, contactId}, {$setOnInsert:{mode:"agent"}}, {upsert:true})
+3. messages.insertOne({... channel, channelMsgId})   // E11000 => already processed, stop (commit point)
+4. conversations.updateOne({_id}, {$set:{lastMessageAt, lastMessagePreview, lastChannel}})
+5. mode === "agent" ? dispatch to agent : notify owner
+6. usage.updateOne({orgId, day}, {$inc:{messagesIn:1}}, {upsert:true})</code></pre>
+<p class="meta">No multi-document transaction needed: 1–2 are idempotent upserts, 3 is the commit point, 4 and 6 are safe to repeat.</p>
+
+<h2 id="db-guards">Guards (tested against Atlas)</h2>
+<table>
+<tr><th>Attempt</th><th>Result</th></tr>
+<tr><td>Insert contact with <code>stage:"bogus"</code></td><td>Rejected by validator (code 121)</td></tr>
+<tr><td>Second contact with an existing phone number</td><td>Rejected (E11000)</td></tr>
+<tr><td>Second agent for the same org</td><td>Rejected (E11000)</td></tr>
+<tr><td>Message with an existing (channel, channelMsgId)</td><td>Rejected (E11000)</td></tr>
+</table>
+
+<h2 id="db-review">Review log</h2>
+<table>
+<tr><th>#</th><th>Finding</th><th>Status</th></tr>
+<tr><td>R1</td><td>Dedupe index was <code>channelMsgId</code> alone; provider ids can collide</td><td><span class="pill">fixed</span> unique on (channel, channelMsgId)</td></tr>
+<tr><td>R2</td><td>No protection from duplicate contacts / conversations under concurrency</td><td><span class="pill">fixed</span> unique indexes + upsert write path</td></tr>
+<tr><td>R3</td><td>No auth; app serves first org</td><td><span class="pill warn">open</span> Clerk dropped, approach TBD. Don't deploy publicly</td></tr>
+<tr><td>R4</td><td>Tenant isolation relies on every query including <code>orgId</code></td><td><span class="pill warn">open</span> keep all access in query helpers; add two-org leakage test before real customers</td></tr>
+<tr><td>R5</td><td><code>facts</code> had no provenance</td><td><span class="pill">fixed</span> {text, sourceMessageId, learnedAt}</td></tr>
+<tr><td>R6</td><td>Phone numbers not normalized to E.164</td><td><span class="pill warn">open</span> normalize in the channel adapter; validator doesn't check format yet</td></tr>
+<tr><td>R7</td><td>Messages lacked attachments, reactions, replyTo, deliveryError</td><td><span class="pill">fixed</span></td></tr>
+<tr><td>R8</td><td>Embeddings must be per-chunk for vector search</td><td><span class="pill">partly</span> chunks collection exists; Atlas Vector Search index pending embedding model</td></tr>
+<tr><td>R9</td><td>No schema validation</td><td><span class="pill">fixed</span> <code>$jsonSchema</code> on all 14 collections. Future: share types between <code>web/</code> and <code>agent/</code></td></tr>
+<tr><td>R10</td><td>No delete-contact path or retention policy (messages are personal data)</td><td><span class="pill warn">open</span></td></tr>
+<tr><td>R11</td><td>Atlas IP allow-list vs Vercel/Daytona dynamic IPs</td><td><span class="pill warn">open</span> hackathon: 0.0.0.0/0 + strong password + least-privilege user; prod: private networking</td></tr>
+<tr><td>R12</td><td>Seed script was destructive</td><td><span class="pill">fixed</span> requires <code>--reset</code> when data exists</td></tr>
+</table>
+
+<h3>Open questions for the team</h3>
+<ul>
+<li>Conversations: one per contact forever (current) or close/reopen per topic?</li>
+<li>Contact = lead (current) or split into <code>leads</code> when one contact can have several deals?</li>
+<li>Shared schema package for <code>web/</code> and <code>agent/</code> (e.g. zod) so the two services can't drift?</li>
+</ul>
+
+<h2 class="part">Integrations</h2>
+<h2 id="int-photon">Photon (Spectrum)</h2>
+<ul>
+<li>SDK: <code>spectrum-ts</code> (MIT, TypeScript). Hosted path: <b>Spectrum Cloud</b>; sign up at app.photon.codes for <code>PROJECT_ID</code> + <code>PROJECT_SECRET</code>.</li>
+<li>Core loop: <code>Spectrum({projectId, projectSecret, providers:[imessage.config()]})</code> → <code>for await (const [space, message] of app.messages)</code> → <code>space.responding(...)</code> + <code>message.reply(...)</code>.</li>
+<li>Providers: iMessage, WhatsApp Business, Telegram, Slack, Terminal, voice (SIP), custom via <code>definePlatform</code>. iMessage supports typing indicators, reactions, threaded replies, groups.</li>
+<li>Needs a long-lived process (persistent stream) or Photon's webhook mode, so not plain Vercel serverless.</li>
+<li>Unknown: pricing, rate limits, API-driven line provisioning, multi-tenant model, voice STT/TTS owner. Ask Photon.</li>
+<li>Avoid <code>imessage-kit</code> (Mac-bound, AppleScript, 2s polling).</li>
+<li>Links: <a href="https://github.com/photon-hq/spectrum-ts">spectrum-ts</a> · <a href="https://photon.codes/docs/">docs</a></li>
+</ul>
+<h2 id="int-daytona">Daytona</h2>
+<ul>
+<li>SDK: <code>@daytona/sdk</code>; env <code>DAYTONA_API_KEY</code>, <code>DAYTONA_API_URL</code>, <code>DAYTONA_TARGET</code>. <code>daytona.create({...})</code> → <code>sandbox.process.executeCommand(...)</code>.</li>
+<li>Plan: one baseline snapshot, one sandbox per business, auto-stop when idle, state mirrored in <code>sandboxes</code>.</li>
+<li>Pending: connectors from the team. Confirm create params (snapshot, resources, auto-stop, labels) in the Sandbox reference.</li>
+<li>Links: <a href="https://www.daytona.io/docs/en/typescript-sdk">TypeScript SDK</a></li>
+</ul>
+<h2 id="int-harness">Agent harness</h2>
+<table>
+<tr><th></th><th>Hermes Agent</th><th>fx (via AI SDK harness)</th></tr>
+<tr><td>Daytona</td><td>Built-in terminal backend</td><td>Only Vercel sandbox adapter documented; we'd write Daytona's</td></tr>
+<tr><td>Memory / skills / cron</td><td>Built in</td><td>Build ourselves on Mongo</td></tr>
+<tr><td>Language</td><td>Python</td><td>TypeScript</td></tr>
+<tr><td>Maturity</td><td>Young, MIT</td><td>Experimental adapter</td></tr>
+</table>
+<p>Recommendation and spike plan: see PRD §7. Links: <a href="https://hermes-agent.nousresearch.com/docs/">Hermes docs</a> · <a href="https://ai-sdk.dev/providers/ai-sdk-harnesses/fx">fx adapter</a></p>
+
+<h2 class="part">Meta</h2>
+<h2 id="changelog">Changelog</h2>
+<table>
+<tr><th>Date</th><th>Change</th></tr>
+<tr><td>10-17</td><td>PRD v0.1 (<code>docs/PRD.html</code>): architecture, Photon/Daytona/harness research, phases</td></tr>
+<tr><td>10-17</td><td>Next.js console in <code>web/</code>: dashboard, inbox, contacts, agent settings; Mongo wired; seed script</td></tr>
+<tr><td>10-17</td><td>Atlas connected via <code>web/.env.local</code>; credentials file gitignored</td></tr>
+<tr><td>10-17</td><td>Database built out: 14 collections with validators and indexes (<code>schema.ts</code>, <code>pnpm db:setup</code>); contacts.facts and messages extended; this file created, replacing <code>docs/DB-DESIGN.html</code></td></tr>
+</table>
+
+<h2 id="howto">Extending this doc</h2>
+<ul>
+<li>New topic: add a nav group and an <code>&lt;h2 id=…&gt;</code> section; keep the "Doc index" table current.</li>
+<li>Schema changes: edit <code>models.ts</code> and <code>schema.ts</code> first, run <code>pnpm db:setup</code>, then update <b>Collections</b>, <b>Indexes</b> and the <b>Changelog</b> here.</li>
+<li>Record every decision in the <b>Decisions log</b> with the reason.</li>
+</ul>
+</main>
+</div>
+</body>
+</html>

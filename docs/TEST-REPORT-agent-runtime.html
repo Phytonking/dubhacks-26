@@ -1,0 +1,102 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Agent runtime test report</title><style>
+  :root{
+    --bg:#fafaf7; --fg:#1a1a17; --muted:#66655e; --line:#e3e1d8; --card:#fff;
+    --accent:#2f5d50; --accent-soft:#e4efe9; --warn:#9a5b00; --warn-soft:#fbf0dc; --bad:#9b2c2c;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 96px;display:grid;grid-template-columns:200px 1fr;gap:48px}
+  nav{position:sticky;top:0;align-self:start;padding-top:48px;font-size:14px}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:4px 0}
+  nav a:hover{color:var(--accent)}
+  nav .t{font-weight:600;color:var(--fg);margin-bottom:10px}
+  main{padding-top:48px;min-width:0}
+  h1{font-size:34px;line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:23px;margin:56px 0 12px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 6px}
+  p{margin:8px 0}
+  .meta{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-weight:600;margin-right:6px}
+  .pill.warn{background:var(--warn-soft);color:var(--warn)}
+  code{font-family:var(--mono);font-size:13px;background:#efede4;padding:1px 5px;border-radius:4px}
+  pre{background:#1d2421;color:#e8efe9;padding:16px 18px;border-radius:8px;overflow:auto;font:12.5px/1.55 var(--mono)}
+  pre code{background:none;padding:0;color:inherit}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:12px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f1efe6;font-weight:600}
+  .callout{background:var(--accent-soft);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{background:var(--warn-soft);border-color:var(--warn)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+  .card h3{margin-top:4px}
+  ul,ol{padding-left:22px;margin:8px 0}
+  li{margin:3px 0}
+  svg{max-width:100%;height:auto}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;overflow:auto}
+  footer{margin-top:64px;color:var(--muted);font-size:13px}
+  a{color:var(--accent)}
+  @media(max-width:860px){.wrap{grid-template-columns:1fr}nav{display:none}.grid2{grid-template-columns:1fr}}
+</style></head><body><div class="wrap" style="display:block;max-width:1000px"><main>
+<h1>Agent runtime: test report</h1>
+<p class="meta">Run 2026-10-17T22:11:16.117Z · Daytona sandbox + Modal LLM + Mongo (in-memory) · script: <code>agent/scripts/e2e.ts</code></p>
+<div class="callout"><strong>15/15 automated checks passed.</strong> A real Daytona sandbox was created from your API key, an agent ran inside it, answered 5 customer texts through Modal, and every message, tool call and token count was recorded. The sandbox was deleted afterwards. <strong>Not tested:</strong> real iMessage delivery, real phone calls, and Atlas (see "What was not tested").</div>
+
+<h2>Headline numbers</h2>
+<table><tbody>
+<tr><th>Create sandbox + agent ready (provision)</th><td>2.8 s</td></tr>
+<tr><th>Customer text to recorded reply</th><td>1.6 s (about 1.3 to 1.6 s typical)</td></tr>
+<tr><th>Voice-style turn, LLM + sandbox only</th><td>1.0 s (voice budget is 1.2 s including speech-to-text and text-to-speech, so this is already at the limit)</td></tr>
+<tr><th>Stop sandbox</th><td>808 ms</td></tr>
+<tr><th>Message to a stopped sandbox to reply (wake)</th><td>3.0 s</td></tr>
+<tr><th>Modal direct call</th><td>383 ms</td></tr>
+<tr><th>Records written</th><td>6 inbound, 6 outbound (incl. 1 blocked), 5 tool calls, 1625/399 tokens in/out</td></tr>
+</tbody></table>
+
+<h2>Results</h2>
+<table><thead><tr><th></th><th>Check</th><th>Time</th><th>Detail</th></tr></thead><tbody><tr><td><span class="pill">PASS</span></td><td>Modal endpoint answers directly</td><td>383 ms</td><td>HTTP 200 in 383 ms, 58 completion tokens, reasoning returned in separate field: true</td></tr><tr><td><span class="pill">PASS</span></td><td>Mongo schema + new message validators applied</td><td>453 ms</td><td>14 collections; dedupe index partial: {"channelMsgId":{"$type":"string"}}</td></tr><tr><td><span class="pill">PASS</span></td><td>Daytona API key valid (list sandboxes)</td><td>138 ms</td><td>authenticated; 1 existing sandbox(es) visible</td></tr><tr><td><span class="pill">PASS</span></td><td>provisionAgent: create sandbox, start agentd, reachable via preview URL, health check, assign line</td><td>2.8 s</td><td>total 2791 ms: claim_sandbox 831ms, upload_agentd 393ms, start_agent 362ms, await_reachable 514ms, health_check 678ms, assign_line 1ms</td></tr><tr><td><span class="pill">PASS</span></td><td>Sandbox env has no Spectrum/Daytona/Modal/Mongo secrets</td><td>401 ms</td><td>env ok (node v25.9.0); TURN_SECRET present; no Spectrum/Daytona/Modal/Mongo secrets</td></tr><tr><td><span class="pill">PASS</span></td><td>Inbound text -&gt; agent reply (uses knowledge) -&gt; both recorded</td><td>1.6 s</td><td>round trip 1551 ms (agent turn 1103 ms). Reply: "A basic tune-up is $89 and takes about 2 days. Want me to get you scheduled?"</td></tr><tr><td><span class="pill">PASS</span></td><td>Duplicate delivery of the same inbound message is ignored</td><td>10 ms</td><td>duplicate-key on (channel, channelMsgId): no new rows, agent not re-run</td></tr><tr><td><span class="pill">PASS</span></td><td>Multi-turn context (history reaches the agent)</td><td>2.7 s</td><td>turn 2 1312 ms, turn 3 1374 ms. Turn 3 reply: "You first asked about the basic tune-up! It's $89 and takes about 2 days."</td></tr><tr><td><span class="pill">PASS</span></td><td>Guardrail blocks an over-limit discount; stored as blocked, never sent</td><td>1 ms</td><td>discount 50% exceeds max 10%</td></tr><tr><td><span class="pill">PASS</span></td><td>Human takeover: inbound stored, agent stays silent</td><td>4 ms</td><td>inbound row handling=human, zero outbound rows</td></tr><tr><td><span class="pill">PASS</span></td><td>Agent does not invent facts it has no knowledge of</td><td>1.4 s</td><td>Reply: "I don't have info on Bromptons off the top of my head. Let me check with the team and get back to you!"</td></tr><tr><td><span class="pill">PASS</span></td><td>Voice-style turn (channel=voice): short spoken reply, latency</td><td>1.0 s</td><td>1032 ms, 21 words: "Hey there! We're open Monday through Saturday, ten a.m. to six p.m. Pacific Time. What can I help you with today?"  (voice target 1200 ms p50 incl. STT/TTS, not yet met if &gt; 1200)</td></tr><tr><td><span class="pill">PASS</span></td><td>Stop sandbox, then inbound message wakes it and gets a reply</td><td>3.9 s</td><td>stop 808 ms; inbound -&gt; wake -&gt; reply 3014 ms. Reply: "Yes, we do bike fittings! I don't have the exact pricing handy though, so let me check with the team and get back to you."</td></tr><tr><td><span class="pill">PASS</span></td><td>Completeness: every inbound/outbound attempt has a Mongo row; nothing stuck</td><td>2 ms</td><td>in 6/6 · out 6/6 · tool_calls 5 · tokens in/out 1625/399 · stuck 0</td></tr><tr><td><span class="pill">PASS</span></td><td>Cleanup: delete test sandbox</td><td>381 ms</td><td>deleted</td></tr></tbody></table>
+
+<h2>Provisioning steps</h2>
+<table><thead><tr><th>Step</th><th>Time</th></tr></thead><tbody><tr><td><code>claim_sandbox</code></td><td>831 ms</td></tr><tr><td><code>upload_agentd</code></td><td>393 ms</td></tr><tr><td><code>start_agent</code></td><td>362 ms</td></tr><tr><td><code>await_reachable</code></td><td>514 ms</td></tr><tr><td><code>health_check</code></td><td>678 ms</td></tr><tr><td><code>assign_line</code></td><td>1 ms</td></tr></tbody></table>
+<p>This is the "one go" job from the PRD (§5.4). Total 2.8 s, well inside the 60 s Deploy target. Daytona's default snapshot was used; a custom baseline snapshot is not built yet.</p>
+
+<h2>Conversation the test agent had</h2>
+<table><thead><tr><th>From</th><th>Text</th><th>Status</th><th>Round trip</th></tr></thead><tbody><tr><td>customer</td><td>How much is a basic tune-up and how long does it take?</td><td></td><td></td></tr><tr><td>agent</td><td>A basic tune-up is $89 and takes about 2 days. Want me to get you scheduled?</td><td>sent</td><td>1.6 s</td></tr><tr><td>customer</td><td>And what's the price of the gravel bike you carry?</td><td></td><td></td></tr><tr><td>agent</td><td>Our Trailhead Gravel GX is $1,450. It comes in sizes 49 to 58. Want to come in for a test ride?</td><td>sent</td><td>1.3 s</td></tr><tr><td>customer</td><td>Great, remind me what I asked about first?</td><td></td><td></td></tr><tr><td>agent</td><td>You first asked about the basic tune-up! It's $89 and takes about 2 days.</td><td>sent</td><td>1.4 s</td></tr><tr><td>customer</td><td>Hello? Is a human there?</td><td></td><td></td></tr><tr><td>customer</td><td>Do you sell Brompton folding bikes and what do they cost?</td><td></td><td></td></tr><tr><td>agent</td><td>I don't have info on Bromptons off the top of my head. Let me check with the team and get back to you!</td><td>sent</td><td>1.4 s</td></tr><tr><td>customer</td><td>Do you do bike fittings?</td><td></td><td></td></tr><tr><td>agent</td><td>Yes, we do bike fittings! I don't have the exact pricing handy though, so let me check with the team and get back to you.</td><td>sent</td><td>3.0 s</td></tr></tbody></table>
+
+<h2>What landed in the database</h2>
+<table><thead><tr><th>Dir</th><th>deliveryStatus</th><th>handling</th><th>Body</th><th>channelMsgId</th><th>Guardrail</th></tr></thead><tbody><tr><td>in</td><td><code>received</code></td><td>agent</td><td>How much is a basic tune-up and how long does it take?</td><td><code>in_001</code></td><td></td></tr><tr><td>out</td><td><code>sent</code></td><td>agent</td><td>A basic tune-up is $89 and takes about 2 days. Want me to get you scheduled?</td><td><code>lb_1_d168dd31</code></td><td>ok</td></tr><tr><td>in</td><td><code>received</code></td><td>agent</td><td>And what's the price of the gravel bike you carry?</td><td><code>in_002</code></td><td></td></tr><tr><td>out</td><td><code>sent</code></td><td>agent</td><td>Our Trailhead Gravel GX is $1,450. It comes in sizes 49 to 58. Want to come in for a test ride?</td><td><code>lb_2_c908d576</code></td><td>ok</td></tr><tr><td>in</td><td><code>received</code></td><td>agent</td><td>Great, remind me what I asked about first?</td><td><code>in_003</code></td><td></td></tr><tr><td>out</td><td><code>sent</code></td><td>agent</td><td>You first asked about the basic tune-up! It's $89 and takes about 2 days.</td><td><code>lb_3_8c3a805f</code></td><td>ok</td></tr><tr><td>out</td><td><code>blocked</code></td><td>agent</td><td>Sure, I can do 50% off today!</td><td><code>null</code></td><td>discount 50% exceeds max 10%</td></tr><tr><td>in</td><td><code>received</code></td><td>human</td><td>Hello? Is a human there?</td><td><code>in_004</code></td><td></td></tr><tr><td>in</td><td><code>received</code></td><td>agent</td><td>Do you sell Brompton folding bikes and what do they cost?</td><td><code>in_004b</code></td><td></td></tr><tr><td>out</td><td><code>sent</code></td><td>agent</td><td>I don't have info on Bromptons off the top of my head. Let me check with the team and get back to you!</td><td><code>lb_4_7ee5397a</code></td><td>ok</td></tr><tr><td>in</td><td><code>received</code></td><td>agent</td><td>Do you do bike fittings?</td><td><code>in_005</code></td><td></td></tr><tr><td>out</td><td><code>sent</code></td><td>agent</td><td>Yes, we do bike fittings! I don't have the exact pricing handy though, so let me check with the team and get back to you.</td><td><code>lb_5_8bda540d</code></td><td>ok</td></tr></tbody></table>
+<p>Every inbound message was stored before the agent saw it. Every reply was stored as <code>queued</code> first and ended <code>sent</code> with the provider id, except the over-limit discount, which was stored as <code>blocked</code> and never sent. The duplicate delivery and the human-takeover message created exactly the rows expected.</p>
+
+<h2>Findings that change the design</h2>
+<table><thead><tr><th>#</th><th>Finding</th><th>What I did</th></tr></thead><tbody>
+<tr><td>1</td><td><strong>Sandbox cannot reach the internet on this Daytona tier.</strong> Probe from inside a sandbox: npm registry reachable (200); Modal, example.com and modal.com all blocked (connection reset). This matches Daytona's tier rules, which cannot be overridden per sandbox.</td><td>Switched the design: the agent runs in the sandbox but the Modal call is made from our side. The sandbox builds the prompt and runs tools, we call Modal, the sandbox cleans the answer. This also means <strong>no Modal credential ever enters the sandbox</strong> (better than the shortcut we discussed). The earlier "sandbox dials home to a Hub / LLM gateway" design (PRD §5.2, §5.10) only works if the Daytona organisation is upgraded to a tier with full egress.</td></tr>
+<tr><td>2</td><td><strong>No tunnel needed.</strong> We reach the agent through Daytona's own preview URL for port 8080, protected by a per-sandbox secret plus Daytona's preview token.</td><td>Removed Cloudflare tunnel from the test.</td></tr>
+<tr><td>3</td><td><strong>First run, the agent invented a price</strong> ("bike fitting is $75") that was not in its knowledge.</td><td>Added an explicit "only state facts from the knowledge, otherwise say you will check with the team" rule. Re-run: for Brompton bikes and bike fittings the agent now says it will check. Still needs a worker-side check for invented numbers; prompt rules are not a guarantee.</td></tr>
+<tr><td>4</td><td><strong>Atlas refuses connections from this machine</strong> (TLS alert 80, IP <code>205.175.106.12</code>). The Atlas network access list does not include it.</td><td>Ran the message tests on an in-memory Mongo using the same schema validators. The updated message validators have <strong>not</strong> been applied to Atlas. Add the IP (or 0.0.0.0/0 for the hackathon) in Atlas, then run <code>pnpm db:setup</code> in <code>web/</code>.</td></tr>
+<tr><td>5</td><td>Model returns its reasoning in a separate <code>reasoning_content</code> field and puts leading blank lines in <code>content</code>.</td><td>The agent only forwards <code>content</code>, trimmed. Reasoning is dropped, never sent to a customer.</td></tr>
+<tr><td>6</td><td>Processes die when a sandbox stops (as the PRD assumed). The wake path restarts the agent and waits for it.</td><td>Wake took 3.0 s including the LLM call, under the 5 s target.</td></tr>
+<tr><td>7</td><td>Your Daytona account already contains one stopped sandbox with <code>agentOffice</code> labels that is not from this project.</td><td>Left untouched. My test sandboxes carry the label <code>app=sales-agent</code> and are deleted at the end of each run.</td></tr>
+</tbody></table>
+
+<h2>Photon check</h2>
+<p><code>spectrum-ts</code> connected to Spectrum Cloud with your project ID and secret in about 0.4 s (read-only, nothing sent). That confirms the credentials are valid and the SDK works. It does <strong>not</strong> confirm that an iMessage line exists on the project, or that messages arrive. Script: <code>agent/scripts/photon-probe.mts</code>.</p>
+
+<h2>What was not tested</h2>
+<ul>
+<li><strong>Real iMessage in or out.</strong> The test used a loopback channel so no real person was messaged. The Worker is written against a <code>ChannelAdapter</code>; the Spectrum adapter is not written yet.</li>
+<li><strong>Voice calls.</strong> Only a voice-style text turn through the same agent. The SIP gateway, speech-to-text and text-to-speech are not built. Photon's SIP path is documented but unverified end to end.</li>
+<li><strong>Atlas.</strong> Blocked by the network access list (finding 4).</li>
+<li><strong>Prod-shape pieces:</strong> custom baseline snapshot, warm pool, token rotation, nightly reconciler, auth on the web app, the Next.js Deploy button. Code for the Hub and LLM gateway exists (<code>agent/src/platform.ts</code>) but is not exercised here because of finding 1.</li>
+<li>Load, concurrency, and long-running soak.</li>
+</ul>
+
+<h2>Where the code is</h2>
+<table><tbody>
+<tr><td><code>agent/src/orchestrator.ts</code></td><td><code>provisionAgent</code>, <code>wake</code>, <code>destroy</code>; builds the allow-listed sandbox env and refuses to start if a platform secret would leak</td></tr>
+<tr><td><code>agent/sandbox/agentd.mjs</code></td><td>The program that runs inside the sandbox (prompt building, tools, answer cleanup)</td></tr>
+<tr><td><code>agent/src/sandbox-link.ts</code></td><td>Reaches the sandbox via Daytona preview URL; makes the Modal call</td></tr>
+<tr><td><code>agent/src/recorded-io.ts</code></td><td>The one path for inbound and outbound messages: write first, guardrails, reconcile</td></tr>
+<tr><td><code>agent/scripts/e2e.ts</code>, <code>report.ts</code></td><td>This test and this report. Run with <code>cd agent && pnpm e2e && pnpm report</code></td></tr>
+<tr><td><code>web/src/lib/schema.ts</code>, <code>models.ts</code></td><td>Message validators extended (new delivery states, nullable provider id, partial unique indexes)</td></tr>
+</tbody></table>
+</main></div></body></html>

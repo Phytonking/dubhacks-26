@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PRD — Agent Runtime (Daytona) + Photon Voice + Fast Onboarding</title>
+<style>
+  :root{
+    --bg:#fafaf7; --fg:#1a1a17; --muted:#66655e; --line:#e3e1d8; --card:#fff;
+    --accent:#2f5d50; --accent-soft:#e4efe9; --warn:#9a5b00; --warn-soft:#fbf0dc; --bad:#9b2c2c;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 96px;display:grid;grid-template-columns:200px 1fr;gap:48px}
+  nav{position:sticky;top:0;align-self:start;padding-top:48px;font-size:14px}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:4px 0}
+  nav a:hover{color:var(--accent)}
+  nav .t{font-weight:600;color:var(--fg);margin-bottom:10px}
+  main{padding-top:48px;min-width:0}
+  h1{font-size:34px;line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:23px;margin:56px 0 12px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 6px}
+  p{margin:8px 0}
+  .meta{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-weight:600;margin-right:6px}
+  .pill.warn{background:var(--warn-soft);color:var(--warn)}
+  code{font-family:var(--mono);font-size:13px;background:#efede4;padding:1px 5px;border-radius:4px}
+  pre{background:#1d2421;color:#e8efe9;padding:16px 18px;border-radius:8px;overflow:auto;font:12.5px/1.55 var(--mono)}
+  pre code{background:none;padding:0;color:inherit}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:12px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f1efe6;font-weight:600}
+  .callout{background:var(--accent-soft);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{background:var(--warn-soft);border-color:var(--warn)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+  .card h3{margin-top:4px}
+  ul,ol{padding-left:22px;margin:8px 0}
+  li{margin:3px 0}
+  svg{max-width:100%;height:auto}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;overflow:auto}
+  footer{margin-top:64px;color:var(--muted);font-size:13px}
+  a{color:var(--accent)}
+  @media(max-width:860px){.wrap{grid-template-columns:1fr}nav{display:none}.grid2{grid-template-columns:1fr}}
+</style>
+</head><body><div class="wrap"><nav><div class="t">Contents</div><a href="#1-summary">1. Summary</a><a href="#2-goals-non-goals">2. Goals / non-goals</a><a href="#3-key-technical-finding-voice-is-sip-not-app-messages">3. Key technical finding: voice is SIP, not app.messages</a><a href="#4-architecture">4. Architecture</a><a href="#5-daytona-sandbox">5. Daytona sandbox: the agent's home and its connection</a><a href="#6-message-capture">6. Message capture: every message in and out lands in MongoDB</a><a href="#7-agent-inside-the-sandbox">7. Agent inside the sandbox</a><a href="#8-sandbox-lifecycle">8. Sandbox lifecycle</a><a href="#9-connecting-to-the-main-app-onboarding-in-under-5-minutes">9. Connecting to the main app — onboarding in under 5 minutes</a><a href="#10-functional-requirements-voice">10. Functional requirements (voice)</a><a href="#11-security-privacy-compliance">11. Security, privacy, compliance</a><a href="#12-metrics">12. Metrics</a><a href="#13-phases">13. Phases</a><a href="#14-risks-and-open-questions">14. Risks and open questions</a><a href="#15-sources">15. Sources</a></nav><main>
+<h1>PRD — Agent Runtime (Daytona) + Photon Voice + Fast Onboarding</h1>
+<p class="meta">Status: Draft v0.1 · 2026-10-17 · Owner: Avi Agola · Companion to <code>PRD.html</code> (control plane) and <code>DB-DESIGN.html</code>.</p>
+<div class="callout warn"><strong>Provenance note.</strong> The "Photon Voice Agent PRD" chat transcript was not available in this workspace. This draft is built from <code>PRD.html</code>, <code>DB-DESIGN.html</code>, the code in <code>web/</code>, and Photon's public Spectrum Voice docs (read 2026-10-17). Anything the transcript decided that conflicts with this doc wins. Items marked <strong><span class="pill warn">VERIFY</span></strong> are unconfirmed.</div>
+<h2 id="1-summary">1. Summary</h2>
+<p>One business customer = one org = one agent = one Daytona sandbox. The sandbox hosts the agent brain (harness + tools + knowledge). Inside that agent, a <strong>voice capability</strong> lets the agent take and place phone calls through Photon's Spectrum Voice, using the same persona, knowledge, and contact memory as iMessage.</p>
+<p>The main app (Next.js + MongoDB) is the control plane. A new business should go from signup to a live agent that answers texts and calls in <strong>under 5 minutes of owner time and under 60 seconds of wait time after clicking Deploy</strong>.</p>
+<h2 id="2-goals-non-goals">2. Goals / non-goals</h2>
+<p><strong>Goals</strong></p>
+<ol><li>Self-serve: signup → describe product → Deploy → agent live on a real Photon line. No human on our side.</li><li>One isolated Daytona sandbox per agent, identical baseline, disposable.</li><li>Voice: inbound and outbound calls on the business's Photon iMessage line, answered by the same agent, transcripts in the same inbox next to texts.</li><li>Mongo is system of record. Sandbox holds no durable state.</li><li>Owner can watch live, take over, and kill.</li></ol>
+<p><strong>Non-goals (v1)</strong></p>
+<ul><li>Building our own telephony carrier. Photon supplies the line and SIP bridge.</li><li>Voice on WhatsApp (Photon voice supports iMessage lines only).</li><li>Multi-agent per business, custom-trained voice models, payments in call.</li></ul>
+<h2 id="3-key-technical-finding-voice-is-sip-not-app-messages">3. Key technical finding: voice is SIP, not <code>app.messages</code></h2>
+<p>From Photon's Spectrum Voice docs:</p>
+<ul><li>Voice is <strong>SIP + RTP</strong>, not part of the <code>spectrum-ts</code> SDK. There is no <code>voice.config()</code> provider; calls do <strong>not</strong> appear in <code>app.messages</code> or <code>app.webhook()</code>. SDK call control and webhooks are "coming soon" with no dates.</li><li><strong>Inbound:</strong> owner registers a per-line inbound route in the Photon dashboard with a SIP URI (<code>sips:</code> TLS port 5061, or <code>sip:</code> TCP 5060). Spectrum dials that URI. Our side must be a <strong>publicly reachable SIP endpoint</strong> with a trusted TLS cert (for <code>sips:</code>) and open RTP (UDP) port range. The URI user part is optional (<code>sips:agent@host</code>).</li><li><strong>Outbound:</strong> our SIP client registers to <code>sip.spectrum.photon.codes</code> (TLS 5061, TCP 5060 fallback) with project ID as username and project secret as password. Spectrum places the call from the iMessage line.</li><li>No UDP signaling, no SRTP (audio is unencrypted RTP), WhatsApp numbers unsupported. Voice-only lines "coming soon". A free business profile (1–2 business days) is recommended before production outbound.</li><li>No mention of codecs, STT/TTS, concurrency, or duration limits. <strong><span class="pill warn">VERIFY</span></strong> with Photon.</li></ul>
+<p><strong>Consequence:</strong> the Daytona sandbox cannot be the SIP endpoint itself. Sandboxes are per-tenant, ephemeral, auto-stop, and shouldn't hold Photon credentials or public SIP ports. We need a <strong>shared Voice Gateway</strong> outside the sandboxes that terminates SIP/RTP and bridges audio to the agent in the sandbox.</p>
+<h2 id="4-architecture">4. Architecture</h2>
+<pre><code>Customer ──iMessage──► Photon Cloud ──Spectrum stream──► Channel Worker ─┐
+Customer ──call──────► Photon Cloud ──SIP/RTP──────────► Voice Gateway ──┤
+                                                                         ▼
+Owner ─► Next.js (Vercel) ─► Orchestrator ──────────────► Daytona Sandbox (1 per org)
+              │                    │                       ├─ Agent Runtime (harness)
+              ▼                    ▼                       ├─ Tools / knowledge
+         MongoDB Atlas ◄───────────┴───── all writes ──────┘ └─ Voice session handler</code></pre>
+<p>Components:</p>
+<table><thead><tr><th>Component</th><th>Where</th><th>Role</th></tr></thead><tbody><tr><td>Next.js app</td><td>Vercel</td><td>Owner UI, auth, onboarding wizard, SSE. Calls Orchestrator.</td></tr><tr><td>Orchestrator</td><td>Always-on service (same host as worker is fine for MVP)</td><td>Provision/stop/wake sandboxes, assign Photon lines, meter, health. Only component holding Daytona + Photon admin creds.</td></tr><tr><td>Channel Worker</td><td>Always-on (Fly/Railway)</td><td>Holds Spectrum stream for text channels. Resolves line → org. Writes Mongo. Forwards to sandbox.</td></tr><tr><td>Voice Gateway</td><td>Always-on, public IP, TLS cert</td><td>SIP server (TLS 5061), RTP media, per-call STT/LLM/TTS pipeline. Resolves dialed line → org. Opens a session to that org's sandbox.</td></tr><tr><td>Daytona sandbox</td><td>Daytona, 1 per org</td><td>Runs the Agent Runtime. No platform secrets. Scoped short-lived token only.</td></tr><tr><td>MongoDB Atlas</td><td>Atlas</td><td>System of record.</td></tr></tbody></table>
+<p><strong>Voice Gateway implementation options (decide in spike):</strong></p>
+<ul><li><strong>A. LiveKit SIP + Agents</strong> (or Pipecat) — handles SIP trunk, jitter buffer, VAD, barge-in, STT/TTS plugins. Fastest to a good-sounding call. Recommended. <strong><span class="pill warn">VERIFY</span></strong> it can accept TLS/TCP SIP from Photon and register outbound to <code>sip.spectrum.photon.codes</code>.</li><li><strong>B. Asterisk/FreeSWITCH + custom bridge</strong> — more control, much more ops.</li><li><strong>C. Direct realtime speech-to-speech model</strong> (provider realtime API) with SIP bridged in — lowest latency, least control over tools/guardrails.</li></ul>
+<h3>4.1 Where the "brain" runs for a call</h3>
+<p>Two modes; pick by spike measurements:</p>
+<ol><li><strong>Brain-in-sandbox (default).</strong> Gateway does STT and TTS. Per utterance, it sends text to the sandbox's Agent Runtime over an authenticated WebSocket and streams reply tokens back to TTS. Keeps one agent definition across text and voice, so memory, tools, and guardrails are shared.</li><li><strong>Fast-path brain in gateway.</strong> Gateway runs a small voice-tuned LLM loop itself with the agent's config + knowledge snapshot from Mongo, and calls into the sandbox only for tools. Use only if sandbox round-trip blows the latency budget.</li></ol>
+<p>Latency budget (inbound turn, end-of-speech → first audio): <strong>≤ 1.2 s p50, ≤ 2.0 s p95</strong>. Requires a warm sandbox (see §8).</p>
+<h3>4.2 Call flow (inbound)</h3>
+<ol><li>Customer calls the business's iMessage-line number. Photon dials <code>sips:&lt;lineKey&gt;@voice.&lt;ourdomain&gt;:5061</code>.</li><li>Gateway accepts, reads <code>&lt;lineKey&gt;</code> from the SIP URI user part → <code>channel_lines</code> lookup → <code>orgId</code>. Unknown key → reject.</li><li>Gateway checks <code>agents.status</code> and <code>enabledChannels.voice</code>. If sandbox is stopped, <strong>wake it on INVITE</strong> (pre-warm during ringing) and play a short greeting from the gateway to cover the gap.</li><li>Resolve contact by caller number (E.164), create <code>calls</code> doc, attach to the contact's single conversation. Load prior history for the agent's context.</li><li>Loop: VAD → STT → agent turn (§4.1) → TTS. Barge-in cancels TTS and the in-flight turn.</li><li>Each utterance is written as a <code>messages</code> row (<code>channel:"voice"</code>, <code>callId</code>). Tool calls go to <code>tool_calls</code>.</li><li>Hang-up or handoff: write <code>calls.endedAt/durationSec/summary/outcome</code>; summarizer extracts facts into <code>contacts.facts</code> with <code>sourceMessageId</code>.</li></ol>
+<p>Human takeover on voice: owner clicks "Take over" → gateway bridges the call to the owner's phone (outbound SIP leg via Photon) or ends with "someone will call you back" per org setting.</p>
+<h3>4.3 Call flow (outbound)</h3>
+<p>Agent tool <code>place_call(contactId, goal)</code> runs <strong>in the sandbox</strong> but executes through the Orchestrator → Gateway (the sandbox never holds Photon credentials). Gateway dials via <code>sip.spectrum.photon.codes</code>. Gated by consent flag on the contact, owner-enabled <code>outboundVoice</code>, quiet hours, and rate limit. Off by default (regulatory, see §11).</p>
+<h2 id="5-daytona-sandbox">5. Daytona sandbox: the agent's home and its connection</h2>
+<div class="callout"><strong>One sentence:</strong> a Daytona sandbox is the agent's computer. We (the Orchestrator) own the key to that computer and can start, stop and delete it. The agent inside it holds no keys of ours: it holds one short-lived token, and it phones home to us over an outbound connection.</div>
+
+<div class="callout warn"><strong>Verified 2026-10-17 (see TEST-REPORT-agent-runtime.html):</strong> on our current Daytona tier a sandbox has <strong>no general outbound internet</strong> (npm reachable; Modal and other hosts blocked). The dial-home Hub and sandbox-to-LLM-gateway paths below therefore need a Daytona tier with full egress. Until then the working path is: Orchestrator reaches <code>agentd</code> through the Daytona preview URL (port 8080), and the Modal call is made by our side between a <code>/turn</code> (prompt + tools in sandbox) and a <code>/finalize</code> (answer cleanup in sandbox) request. Modal credentials never enter the sandbox in either path.</div>
+<h3>5.1 What lives where</h3>
+<table><thead><tr><th>Thing</th><th>Lives in</th><th>Why</th></tr></thead><tbody>
+<tr><td><code>DAYTONA_API_KEY</code>, Photon project secret, Mongo URI, LLM keys</td><td>Orchestrator / Gateway / Worker only</td><td>Sandbox is untrusted. It can be prompt-injected through customer messages.</td></tr>
+<tr><td>Agent program: harness, <code>agentd</code> supervisor, voice session handler, tool runtime</td><td><strong>Inside the sandbox</strong>, baked into the Daytona snapshot</td><td>Identical, fair baseline for every business. Fast start.</td></tr>
+<tr><td>Persona, guardrails, knowledge, contact context</td><td>Mongo. Pulled into <code>/workspace/config</code> at start through the Agent API</td><td>Changing config never requires rebuilding the snapshot.</td></tr>
+<tr><td>Scoped agent token (JWT: <code>orgId, agentId, sandboxId</code>, 1 h TTL)</td><td>Sandbox env var, refreshed over the hub socket</td><td>Only credential the agent has. Revoke by sandbox id.</td></tr>
+<tr><td>Transcripts, facts, tool-call audit, usage</td><td>Mongo (written through the Agent API)</td><td>Sandbox disk is disposable.</td></tr>
+<tr><td>Scratch files, caches</td><td>Sandbox disk (<code>/workspace/tmp</code>)</td><td>Lost on delete. Fine.</td></tr>
+</tbody></table>
+
+<h3>5.2 The two connections</h3>
+<div class="diagram"><pre><code>   CONTROL  (we reach the sandbox through Daytona's API)
+   Orchestrator ──DAYTONA_API_KEY──► Daytona API ──► Sandbox  (create · start · stop · delete · run agentd)
+
+   DATA  (the agent reaches us; outbound only)
+   Sandbox: agentd ──wss + agent JWT──► Agent Hub (in Orchestrator) ◄── Channel Worker / Voice Gateway
+                    └─ HTTPS + JWT ───► Agent API  ──► MongoDB</code></pre></div>
+<ul>
+<li><strong>Control path (Daytona SDK, <code>@daytona/sdk</code>).</strong> Only the Orchestrator talks to Daytona. It authenticates with <code>new Daytona({ apiKey, apiUrl, target })</code> and uses <code>create / start / stop / delete / get / list</code>, then <code>sandbox.process.createSession()</code> + <code>executeSessionCommand({ runAsync: true })</code> to launch <code>agentd</code> as a long-lived process.</li>
+<li><strong>Data path (agent dials home).</strong> <code>agentd</code> opens one outbound WebSocket to the <strong>Agent Hub</strong> and keeps it open. The Channel Worker and Voice Gateway push turns to the agent <em>down that socket</em> and receive streamed replies back. The Agent API (HTTPS) serves config, knowledge search, message writes, tool-call audit, and facts.</li>
+<li><strong>Why not call into the sandbox through a Daytona preview URL?</strong> Preview links exist (<code>getPreviewLink(port)</code> returns a URL plus a token header; <code>getSignedPreviewUrl</code> embeds the token, default 60 s expiry), but they put a public HTTP surface on every tenant, require token juggling per request, and can't tell us whether the agent is alive. Dial-home gives us: no inbound exposure, presence = socket open, one auth model. Keep preview links only as a debug tool for operators.</li>
+<li><strong>Egress lockdown.</strong> Create sandboxes with <code>networkBlockAll: false</code> plus an allow-list (<code>networkAllowList</code>, comma-separated CIDRs; Daytona also has a domain allow-list) limited to the Hub, Agent API, and LLM gateway. Daytona's tier rules can override sandbox-level settings on lower org tiers, so confirm our org tier before relying on this <span class="pill warn">VERIFY</span>.</li>
+</ul>
+
+<h3>5.3 The baseline snapshot (built once, shared by every agent)</h3>
+<p>A Daytona <em>snapshot</em> is the pre-built image every sandbox starts from. We build one per release:</p>
+<pre><code>// scripts/build-snapshot.mts   (run in CI on every agent-runtime release)
+import { Daytona } from "@daytona/sdk";
+const daytona = new Daytona();
+
+await daytona.snapshot.create({
+  name: `agent-base-${VERSION}`,                 // e.g. agent-base-2026.10.17-1  (name = version)
+  image: "node:22-bookworm-slim",                // must carry an explicit tag; :latest is rejected
+  resources: { cpu: 2, memory: 4, disk: 10 },    // identical for every business at a given tier
+});
+// Layers on top of the base image (via a Dockerfile / declarative Image): bash + GNU utils,
+// Hermes (or fx), agentd, voice session handler, tool runtime, pinned deps.
+// Dockerfile route is CLI-documented:  daytona snapshot create NAME --dockerfile ./Dockerfile</code></pre>
+<ul>
+<li><strong>Versioning:</strong> Daytona documents no version feature, so version lives in the snapshot name. <code>agents.snapshotVersion</code> and <code>sandboxes.snapshotVersion</code> record which one an agent runs.</li>
+<li><strong>Staleness:</strong> snapshots go inactive after 2 weeks unused and must be re-activated (<code>daytona.snapshot.activate(name)</code>). A daily job activates the current snapshot so Deploy never fails on it.</li>
+<li><strong>Warm pools:</strong> Daytona's docs mention warm pools for snapshots, where a create request "claims one warm sandbox from the pool instantly". Evaluate this <em>before</em> building our own pool (§9.1) <span class="pill warn">VERIFY</span> (configuration surface, per-org cost).</li>
+</ul>
+
+<h3>5.4 Initialize everything in one go</h3>
+<p><strong>"One go" means one idempotent call:</strong> <code>provisionAgent(orgId)</code>. The owner clicks Deploy (or the signup hook calls it early for a warm start); the Orchestrator does the rest. Creating the sandbox, starting the agent, getting it connected, and attaching its line are all steps of the same job, so they either all complete or the UI shows exactly which step to retry.</p>
+<pre><code>// orchestrator/provision-agent.ts
+async function provisionAgent(orgId: ObjectId) {
+  const agent = await agents.findOne({ orgId });                 // exactly one per org
+  await step(agent, "claim_sandbox", async () =&gt; {
+    // 1. Create (or claim from pool) the sandbox from the baseline snapshot.
+    const sandbox = await daytona.create(
+      {
+        name: `agent-${orgId}`,                                  // idempotency: get() by name before create()
+        snapshot: SNAPSHOT_NAME,                                 // agent-base-&lt;version&gt;
+        language: "typescript",
+        labels: { orgId: String(orgId), agentId: String(agent._id), snapshot: SNAPSHOT_NAME },
+        envVars: {                                               // NOT secrets: everything here is readable by the agent
+          ORG_ID: String(orgId),
+          AGENT_ID: String(agent._id),
+          HUB_URL: process.env.AGENT_HUB_URL!,                   // wss://hub.&lt;ourdomain&gt;/agent
+          AGENT_API_URL: process.env.AGENT_API_URL!,
+          AGENT_TOKEN: mintAgentJwt({ orgId, agentId: agent._id, ttl: "1h" }),
+        },
+        autoStopInterval: 15,                                    // MINUTES idle (SDK default 15; 0 disables)
+        autoArchiveInterval: 7 * 24 * 60,                        // minutes
+        networkAllowList: EGRESS_ALLOW_CIDRS,                    // Hub, Agent API, LLM gateway
+      },
+      { timeout: 90 },                                           // seconds
+    );
+    await sandboxes.insertOne({ orgId, daytonaId: sandbox.id, state: "creating",
+                                snapshotVersion: SNAPSHOT_NAME, createdAt: new Date(),
+                                lastActiveAt: null, costAccruedCents: 0 });
+    await agents.updateOne({ _id: agent._id }, { $set: { sandboxId: sandbox.id } });
+  });
+
+  await step(agent, "start_agent", async () =&gt; {
+    const sb = await daytona.get(`agent-${orgId}`);
+    await sb.process.createSession("agentd");                    // long-lived process via a session
+    await sb.process.executeSessionCommand("agentd",
+      { command: "agentd start --config /workspace/config", runAsync: true });
+    // agentd: fetch config + knowledge from Agent API, boot harness, dial the Hub, send "hello".
+  });
+
+  await step(agent, "await_hello", () =&gt; hub.waitForAgent(agent._id, { timeoutMs: 30_000 }));
+  await step(agent, "health_check", () =&gt; hub.send(agent._id, { type: "ping-prompt" }));   // canned LLM turn
+  await step(agent, "assign_line", () =&gt; lines.assign(orgId));                          // Photon pool (§9.1)
+  await step(agent, "register_routing", () =&gt; router.refresh(orgId));
+  await agents.updateOne({ _id: agent._id }, { $set: { status: "running" } });
+}</code></pre>
+<p><code>step()</code> writes <code>{name, status, startedAt, error}</code> to <code>agents.deploy.steps[]</code> and skips steps already marked done, which is what makes the whole job safely re-runnable and gives the UI its progress stepper.</p>
+
+<h3>5.5 Boot sequence inside the sandbox</h3>
+<table><thead><tr><th>#</th><th>Who</th><th>What</th><th>Budget</th></tr></thead><tbody>
+<tr><td>1</td><td>Daytona</td><td>Sandbox created from snapshot, state <code>started</code>. (Pool claim: near-instant. Cold create: measure.)</td><td>&lt; 10 s <span class="pill warn">VERIFY</span></td></tr>
+<tr><td>2</td><td>Orchestrator</td><td>Start <code>agentd</code> in a Daytona process session (<code>runAsync</code>).</td><td>&lt; 1 s</td></tr>
+<tr><td>3</td><td><code>agentd</code></td><td>Reads env, calls <code>GET /config</code> and <code>GET /knowledge/search</code> warm-up on the Agent API with <code>AGENT_TOKEN</code>.</td><td>&lt; 2 s</td></tr>
+<tr><td>4</td><td><code>agentd</code></td><td>Starts the harness with persona + guardrails + channel capabilities, loads knowledge index into memory.</td><td>&lt; 5 s</td></tr>
+<tr><td>5</td><td><code>agentd</code></td><td>Opens <code>wss</code> to Hub, sends <code>hello {agentId, sandboxId, snapshotVersion}</code>. Hub marks agent <em>online</em>.</td><td>&lt; 1 s</td></tr>
+<tr><td>6</td><td>Hub</td><td>Sends canned prompt; agent replies. Health check passes.</td><td>&lt; 3 s</td></tr>
+<tr><td>7</td><td><code>agentd</code></td><td>Heartbeat every 15 s (<code>POST /heartbeat</code> or socket ping). Calls <code>sandbox.refreshActivity()</code> equivalent through the Orchestrator so active conversations keep it from auto-stopping.</td><td>ongoing</td></tr>
+</tbody></table>
+
+<h3>5.6 Stop, wake, and token rotation</h3>
+<ul>
+<li><strong>Stop.</strong> Daytona auto-stops after <code>autoStopInterval</code> idle minutes (default 15). Processes die with the sandbox, so <code>agentd</code> does not survive a stop. Hub sees the socket drop, agent state becomes <code>sleeping</code>.</li>
+<li><strong>Wake.</strong> On an inbound text or call, Worker/Gateway asks the Orchestrator to wake the agent: <code>daytona.start(sandbox, 60)</code>, then re-run the <code>start_agent</code> step (create session + <code>agentd start</code>), then wait for <code>hello</code>. The message waits in the per-conversation queue; the Worker shows the typing indicator meanwhile. Whether Daytona can relaunch a process automatically on start is not documented <span class="pill warn">VERIFY</span>; if not, the Orchestrator does it as above.</li>
+<li><strong>Token rotation.</strong> JWT lasts 1 h; Hub pushes a fresh one down the socket before expiry. Revocation = Hub drops the socket and Agent API rejects that <code>sandboxId</code>.</li>
+<li><strong>Kill.</strong> <code>daytona.delete(sandbox, 60, true)</code>; mark <code>sandboxes.state="deleted"</code>; disable lines.</li>
+<li><strong>Upgrade.</strong> New agents get the new snapshot name. Existing agents move on their next idle stop: delete, re-provision from the new snapshot (state is all in Mongo, so this is safe).</li>
+</ul>
+
+<h3>5.7 Failure modes</h3>
+<table><thead><tr><th>Failure</th><th>Detection</th><th>Response</th></tr></thead><tbody>
+<tr><td>Snapshot inactive / missing</td><td><code>create()</code> error</td><td>Activate and retry once; alert if still failing.</td></tr>
+<tr><td>Create timeout</td><td>90 s timeout</td><td>Retry step; delete half-created sandbox by name; surface Retry button.</td></tr>
+<tr><td><code>agentd</code> crashes</td><td>Socket drops while sandbox <code>started</code></td><td>Orchestrator relaunches in a new session; after 3 crashes in 5 min, mark <code>error</code> and alert owner.</td></tr>
+<tr><td>Agent never says hello</td><td>30 s wait</td><td>Pull session logs (<code>getSessionCommandLogs</code>) into <code>agents.deploy.error</code>; retry.</td></tr>
+<tr><td>Orphans (sandbox without agent, or the reverse)</td><td>Nightly reconciler: <code>daytona.list({labels})</code> vs <code>sandboxes</code></td><td>Delete orphans, re-provision missing.</td></tr>
+<tr><td>Daytona API down</td><td>Errors on control calls</td><td>Running agents unaffected (data path is separate). New deploys queue and retry.</td></tr>
+</tbody></table>
+
+<h3>5.8 One-time platform setup (run once per environment)</h3>
+<p>Everything that must exist before the first customer can click Deploy. Scripted as <code>pnpm platform:bootstrap</code> so a fresh environment is one command:</p>
+<ol>
+<li>Create Daytona API key and set <code>DAYTONA_API_KEY</code>, <code>DAYTONA_API_URL</code>, <code>DAYTONA_TARGET</code> in the Orchestrator (not in Vercel's browser-exposed env, not in sandboxes).</li>
+<li>Build and activate the baseline snapshot (§5.3). Record its name in config.</li>
+<li>Stand up the Agent Hub, Agent API, Channel Worker and Voice Gateway on an always-on host with public TLS (<code>wss://hub…</code>, <code>sips:…:5061</code>).</li>
+<li>Generate the agent-JWT signing key; give Hub and Agent API the verifier.</li>
+<li>Seed the Photon line pool: each line gets a <code>lineKey</code>, an inbound SIP route in the Photon dashboard pointing at our Gateway, and a <code>channel_lines</code> row with <code>status:"pool"</code>.</li>
+<li>(Optional) Pre-warm K sandboxes, or configure Daytona warm pools on the snapshot.</li>
+<li>Run the end-to-end smoke test: create a test org, <code>provisionAgent</code>, send a text, place a call, delete.</li>
+</ol>
+<p>Per-customer onboarding is then only <code>provisionAgent(orgId)</code>, with nothing manual.</p>
+
+<h3>5.9 Environment variables and secrets: what we send into the sandbox</h3>
+<p>One manifest decides every variable's tier. The Orchestrator builds the sandbox env <em>only</em> from the <code>sandbox</code> and <code>scoped</code> tiers; anything not listed is never sent. Platform secrets are loaded by the Orchestrator, Worker and Gateway and do not appear in the sandbox env, its files, or its logs.</p>
+<table><thead><tr><th>Variable</th><th>Tier</th><th>Sent to sandbox?</th><th>Source</th></tr></thead><tbody>
+<tr><td><code>SPECTRUM_PROJECT_ID</code>, <code>SPECTRUM_PROJECT_SECRET</code></td><td>platform</td><td><strong>No.</strong> Used by Worker (Spectrum stream) and Gateway (SIP username/password to <code>sip.spectrum.photon.codes</code>).</td><td>Orchestrator host env (today: <code>web/.env.local</code>)</td></tr>
+<tr><td><code>DAYTONA_API_KEY</code>, <code>DAYTONA_API_URL</code>, <code>DAYTONA_TARGET</code></td><td>platform</td><td>No</td><td>Orchestrator host env</td></tr>
+<tr><td><code>MONGODB_URI</code>, <code>MONGODB_DB</code></td><td>platform</td><td>No. The sandbox uses the Agent API.</td><td>Orchestrator / Worker / Gateway / web</td></tr>
+<tr><td><code>MODAL_PROXY_TOKEN_ID</code>, <code>MODAL_PROXY_TOKEN_SECRET</code>, <code>MODAL_API_ENDPOINT</code></td><td>platform</td><td><strong>No.</strong> Modal inference credentials, held by the LLM gateway, which sends them as <code>Authorization: Bearer &lt;ID&gt;.&lt;SECRET&gt;</code>.</td><td>LLM gateway host (today: <code>web/.env.local</code>)</td></tr>
+<tr><td><code>AGENT_JWT_SIGNING_KEY</code></td><td>platform</td><td>No (Hub and Agent API hold the verifier)</td><td>Orchestrator</td></tr>
+<tr><td><code>ORG_ID</code>, <code>AGENT_ID</code>, <code>SANDBOX_NAME</code></td><td>sandbox</td><td>Yes</td><td>Per deploy</td></tr>
+<tr><td><code>HUB_URL</code>, <code>AGENT_API_URL</code></td><td>sandbox</td><td>Yes</td><td>Platform config</td></tr>
+<tr><td><code>LLM_BASE_URL</code> (our LLM gateway, not Modal), <code>LLM_MODEL</code> (<code>Qwen/Qwen3.8-2.4T-A95B</code>)</td><td>sandbox</td><td>Yes</td><td>Platform config / per-agent setting</td></tr>
+<tr><td><code>AGENT_TOKEN</code></td><td>scoped</td><td>Yes. 1 h JWT for one <code>{orgId, agentId, sandboxId}</code>. Rotated over the Hub socket.</td><td>Minted per deploy and per wake</td></tr>
+<tr><td><code>LLM_API_TOKEN</code></td><td>scoped</td><td>Yes. Per-business token the LLM gateway checks, meters, and swaps for the Modal credential.</td><td>Minted per deploy</td></tr>
+</tbody></table>
+<pre><code>// orchestrator/sandbox-env.ts
+const SANDBOX_ENV_KEYS = ["ORG_ID","AGENT_ID","SANDBOX_NAME","HUB_URL","AGENT_API_URL","LLM_BASE_URL","LLM_MODEL"] as const;
+
+export function buildSandboxEnv(agent: Agent, platform: Record&lt;string,string&gt;) {
+  const env: Record&lt;string,string&gt; = {};
+  for (const k of SANDBOX_ENV_KEYS) env[k] = required(platform, k);   // missing key = fail the deploy
+  env.AGENT_TOKEN   = mintAgentJwt({ orgId: agent.orgId, agentId: agent._id, ttl: "1h" });
+  env.LLM_API_TOKEN = mintLlmToken({ orgId: agent.orgId, budget: agent.plan });
+  assertNoPlatformSecrets(env);   // throws if any value equals SPECTRUM_PROJECT_SECRET, DAYTONA_API_KEY, MONGODB_URI, ...
+  return env;                      // passed as daytona.create({ envVars: env })
+}</code></pre>
+<ul>
+<li><strong>Allow-list, not block-list:</strong> new variables are not sent until someone adds them to the manifest.</li>
+<li><strong>Leak check:</strong> <code>assertNoPlatformSecrets</code> compares every outgoing value against the loaded platform secrets and aborts the deploy on a match. The smoke test also greps the sandbox env and process list for them.</li>
+<li><strong>Change after deploy:</strong> config changes (persona, model) go through <code>GET /config</code> on the Agent API, not env vars, so no restart is needed. Env changes only apply on the next provision or wake.</li>
+<li><strong>If we choose to send a raw secret anyway</strong> (for example the LLM key as a shortcut for the demo): Daytona's <code>create()</code> has a separate <code>secrets</code> parameter, but its semantics are not documented in what I read <span class="pill warn">VERIFY</span>. Treat anything in the sandbox as readable by the agent, and by anyone who can prompt-inject it.</li>
+</ul>
+
+<h3>5.10 LLM inference: Modal behind our LLM gateway</h3>
+<p>Inference runs on a Modal-hosted endpoint that speaks the OpenAI-compatible <code>POST /v1/chat/completions</code> API. Modal authenticates with one proxy token pair (<code>ID.SECRET</code> as a Bearer token), which is a single account-wide credential. So the sandbox must never call Modal directly:</p>
+<pre><code>Sandbox (harness) ──LLM_BASE_URL + LLM_API_TOKEN──► LLM gateway (ours, thin) ──Bearer MODAL_ID.MODAL_SECRET──► Modal endpoint
+                                                       checks token · enforces per-org budget · logs usage → Mongo usage</code></pre>
+<ul>
+<li><strong>LLM gateway</strong> is a small pass-through service (can live in the Orchestrator host). It validates <code>LLM_API_TOKEN</code>, maps it to an org, forwards the request body to <code>MODAL_API_ENDPOINT/v1/chat/completions</code> with the Modal credential, streams the response back, and records <code>tokensIn/tokensOut</code> into <code>usage</code> per org. It also lets us cap spend and cut one business off without touching the others.</li>
+<li><strong>Sandbox egress allow-list</strong> includes the LLM gateway, not Modal.</li>
+<li><strong>Request shape</strong> (from the Modal example): <code>model</code>, <code>messages</code>, <code>temperature</code>, <code>max_tokens</code>, <code>top_p</code>, <code>stream</code>, <code>reasoning_effort</code>. The harness (Hermes or fx) must be pointed at an OpenAI-compatible base URL; confirm each supports a custom base URL <span class="pill warn">VERIFY</span>.</li>
+<li><strong>Per-channel defaults:</strong> text <code>stream:true</code>, <code>reasoning_effort</code> medium or lower; voice <code>stream:true</code>, lowest reasoning setting and short <code>max_tokens</code>. The example's <code>xhigh</code> / <code>max_tokens: 2048</code> would blow the 1.2 s voice turn budget (§4.1). Make these per-agent settings the gateway can clamp.</li>
+<li><strong>Reasoning output</strong> (if the model returns it) must be stripped before the reply is sent to a customer or spoken, and kept out of <code>messages.body</code>. Store it, if at all, on the <code>tool_calls</code>/turn audit record <span class="pill warn">VERIFY</span> response field names.</li>
+<li><strong>Cold starts:</strong> Modal endpoints can scale to zero. Measure first-token latency cold and warm in spike (b) and decide on a keep-warm setting for voice-enabled orgs.</li>
+<li><strong>Model naming:</strong> the endpoint URL says <code>qwen-3-8</code> while the model id is <code>Qwen/Qwen3.8-2.4T-A95B</code>. Use the model id exactly as given; confirm with the endpoint owner that they match.</li>
+</ul>
+
+<h2 id="6-message-capture">6. Message capture: every message in and out lands in MongoDB</h2>
+<div class="callout"><strong>Guarantee:</strong> every inbound and outbound message, on every channel, has a row in <code>messages</code> <em>before</em> the platform treats it as handled, and no message can reach a customer without passing through the one code path that writes that row. The agent in the sandbox is not trusted to do the recording; the platform does it around the agent.</div>
+
+<h3>6.1 Why this holds: one choke point per direction</h3>
+<ul>
+<li><strong>The sandbox cannot send.</strong> It has no Photon credentials and no route to Photon (egress allow-list, §5.2). Its only way to speak to a customer is to return a reply over the Hub socket.</li>
+<li><strong>The Channel Worker (text) and Voice Gateway (calls) are the only components that talk to Photon.</strong> Both call a shared library, <code>recordedIO</code>, and nothing else touches Spectrum or SIP. Owner takeover replies from the web app also go through the Worker, so they are recorded the same way (<code>sender:"owner"</code>).</li>
+<li>Mongo, not the sandbox, is the record. If a sandbox dies mid-turn, the inbound message is already stored and the turn is retried.</li>
+</ul>
+
+<h3>6.2 Inbound: write first, then act</h3>
+<ol>
+<li>Spectrum delivers an event (<code>for await … of app.messages</code>) or the Gateway receives a call utterance.</li>
+<li><strong>Persist before anything else:</strong> upsert contact, upsert conversation, <code>insertOne</code> the message (<code>direction:"in"</code>, <code>deliveryStatus:"received"</code>). The unique index on <code>(channel, channelMsgId)</code> makes Photon redeliveries idempotent: a duplicate-key error means "already stored, skip".</li>
+<li>Only after the insert succeeds does the Worker dispatch to the agent (or push to the owner if <code>mode:"human"</code>). If the insert fails, the Worker does <strong>not</strong> acknowledge or process the event, and retries with backoff.</li>
+<li>Unknown line, opted-out contact, or group message the agent ignores are still stored, with a <code>handling</code> field (<code>agent | ignored | opted_out | rejected</code>) saying what we did. Nothing is dropped silently.</li>
+</ol>
+<p><span class="pill warn">VERIFY</span> If Mongo is down, does Spectrum redeliver unacknowledged messages, or are they lost? Not stated in the docs we read. Mitigation regardless: a small local write-ahead spool (append-only file on the Worker host) takes the event first and drains to Mongo when it returns; the Worker's health check fails if the spool is non-empty for more than 60 s.</p>
+
+<h3>6.3 Outbound: record intent, send, confirm</h3>
+<ol>
+<li><strong>Intent row first.</strong> Before sending, <code>recordedIO.send()</code> inserts the message with <code>deliveryStatus:"queued"</code>, a generated <code>clientMsgId</code> (unique, our idempotency key), the <code>agentTurnId</code> that produced it, and the guardrail verdict.</li>
+<li>Guardrail validators run (discount ceilings, hours, prohibited claims). A blocked reply is stored with <code>deliveryStatus:"blocked"</code> and a reason, then not sent. Blocked messages are visible to the owner.</li>
+<li>Set <code>"sending"</code>, call Photon, then store the provider's id as <code>channelMsgId</code> and set <code>"sent"</code>. Delivery receipts update to <code>"delivered"</code> or <code>"failed"</code> with <code>deliveryError</code>.</li>
+<li><strong>Crash safety.</strong> A reconciler scans for rows stuck in <code>queued</code>/<code>sending</code> for more than 30 s. It checks for a provider id (when Photon exposes one for a send) and either marks <code>sent</code>, retries with the same <code>clientMsgId</code>, or marks <code>failed</code> for the owner to see. This gives at-least-once delivery with a record of every attempt; it cannot give exactly-once, since a crash between Photon accepting and our write is possible <span class="pill warn">VERIFY</span> whether Spectrum <code>reply()</code> returns a stable message id we can store.</li>
+<li>Long replies split into several bubbles produce one row per bubble, linked by <code>replyGroupId</code>.</li>
+</ol>
+
+<h3>6.4 Voice, tools, and the rest of the trail</h3>
+<ul>
+<li><strong>Voice:</strong> each final STT utterance and each agent TTS reply is a <code>messages</code> row (<code>channel:"voice"</code>, <code>callId</code>) written as the turn completes, not at hang-up, so a dropped call still leaves its transcript. The <code>calls</code> doc is created at INVITE and finalized at BYE; a reconciler closes calls left <code>active</code> after a Gateway crash.</li>
+<li><strong>Tool calls:</strong> the Agent API writes <code>tool_calls</code> for every call the agent makes (args, result, status, ms) before returning the result to the agent. A tool call with no audit row cannot happen because the tool runner lives behind the API.</li>
+<li><strong>Attachments:</strong> metadata and object-storage URL in the message; bytes never in Mongo (DB-DESIGN R7).</li>
+<li><strong>Reactions and edits:</strong> stored on the message (<code>reactions[]</code>), never overwrite the original body.</li>
+</ul>
+
+<h3>6.5 Mongo-side durability</h3>
+<ul>
+<li>Writes use <code>writeConcern: { w: "majority", j: true }</code> for <code>messages</code>, <code>calls</code> and <code>tool_calls</code>, so an acknowledged message survives a primary failover.</li>
+<li>Atlas continuous backup with point-in-time restore on; retention window chosen with the privacy policy (DB-DESIGN R10).</li>
+<li><code>messages</code> is append-mostly: only <code>deliveryStatus</code>, <code>deliveryError</code>, <code>reactions</code> and <code>handling</code> are updated. Deletion happens only through the audited "delete contact" cascade. The Worker's Mongo user has no permission to delete or update other fields.</li>
+<li>Every row carries <code>orgId</code>; <code>recordedIO</code> takes <code>orgId</code> from the authenticated line, never from the payload.</li>
+</ul>
+
+<h3>6.6 Proving it: completeness checks</h3>
+<table><thead><tr><th>Check</th><th>How</th><th>Alert</th></tr></thead><tbody>
+<tr><td>Counters agree</td><td>Worker increments in-memory counters (<code>in_received</code>, <code>out_attempted</code>) per org per minute; compare to rows inserted in <code>messages</code> for the same window.</td><td>Any mismatch &gt; 0 for 5 min.</td></tr>
+<tr><td>No stuck sends</td><td>Query <code>messages</code> where <code>deliveryStatus ∈ {queued, sending}</code> and age &gt; 60 s.</td><td>Any row.</td></tr>
+<tr><td>Provider ↔ Mongo diff</td><td>Nightly: pull Photon-side history per line if their API exposes it, diff against Mongo by <code>channelMsgId</code> <span class="pill warn">VERIFY</span>.</td><td>Any missing id.</td></tr>
+<tr><td>Orphan calls</td><td><code>calls</code> in <code>active</code> longer than max call duration.</td><td>Any row.</td></tr>
+<tr><td>Spool backlog</td><td>Worker write-ahead spool size/age.</td><td>&gt; 60 s.</td></tr>
+<tr><td>Pre-launch test</td><td>Chaos test in CI: kill the Worker, Mongo primary, and sandbox at random while a script sends N messages each way; assert every message appears exactly once in <code>messages</code> and none are sent without a row.</td><td>Blocks release.</td></tr>
+</tbody></table>
+
+<h3>6.7 Schema changes this requires</h3>
+<p>The current <code>messages</code> validator (<code>web/src/lib/schema.ts</code>) does not allow this yet:</p>
+<ul>
+<li><code>deliveryStatus</code> enum is <code>sent | delivered | failed</code>. Extend to <code>received | queued | sending | sent | delivered | failed | blocked</code>.</li>
+<li><code>channelMsgId</code> is required, but a queued outbound message does not have one yet. Make it nullable, and change the unique index to a <strong>partial</strong> index (only where <code>channelMsgId</code> is a string). Add a unique index on <code>clientMsgId</code>.</li>
+<li>Add: <code>clientMsgId</code>, <code>agentTurnId</code>, <code>replyGroupId</code>, <code>handling</code>, <code>guardrail{verdict, reason}</code>, <code>attempts</code>, <code>callId</code>.</li>
+<li>Index <code>(deliveryStatus, ts)</code> for the stuck-send reconciler.</li>
+<li>Dedicated Mongo roles: Worker/Gateway (insert + limited update on messages/calls/tool_calls), Web app (read, plus owner-send via the Worker), no component has drop/delete outside the cascade job.</li>
+</ul>
+
+<h2 id="7-agent-inside-the-sandbox">7. Agent inside the sandbox</h2>
+<p>How the sandbox is created, connected and booted is in §5. This section covers what the agent does once it is running.</p>
+<p>Per <code>PRD.html</code> §7, harness is Hermes behind an <code>AgentRuntime</code> interface (fx is the alternative); this PRD does not change that decision. The sandbox adds a <strong>voice session handler</strong>:</p>
+<ul><li><code>POST /session/:callId/turn</code> (WebSocket preferred): input <code>{utterance, partial?, channelCaps}</code>, output stream of <code>text-delta | tool-call | done | handoff</code>.</li><li>Channel capabilities passed in context: for voice, short spoken-style replies, no markdown/URLs read aloud, spell numbers, confirm before irreversible actions.</li><li>Voice-specific tools: <code>send_text_followup</code> (iMessage the link/summary during or after the call), <code>transfer_to_owner</code>, <code>end_call</code>, <code>schedule_callback</code>.</li></ul>
+<p><strong>Sandbox contents (baseline snapshot, versioned):</strong> runtime, harness, agent bootstrap, voice session handler. <strong>Mounted at start, not baked:</strong> persona, guardrails, knowledge (pulled from Mongo with the scoped token). <strong>Network egress:</strong> Orchestrator + LLM gateway + Mongo-facing API only (verify Daytona's egress controls).</p>
+<p><strong>Sandbox ↔ platform auth:</strong> sandbox boots with a short-lived JWT scoped to <code>{orgId, agentId, sandboxId}</code>. It calls a thin <strong>Agent API</strong> (hosted by Orchestrator or Next.js) rather than connecting to Mongo directly, so tenancy is enforced server-side and the DB password never enters the sandbox. Agent API endpoints: <code>GET /config</code>, <code>GET /knowledge/search</code>, <code>POST /messages</code>, <code>POST /tool-calls</code>, <code>POST /facts</code>, <code>POST /heartbeat</code>.</p>
+<h2 id="8-sandbox-lifecycle">8. Sandbox lifecycle</h2>
+<p>States already modeled: <code>creating | running | stopped | error | deleted</code> (<code>sandboxes</code>), <code>draft | provisioning | running | sleeping | error</code> (<code>agents</code>).</p>
+<table><thead><tr><th>Event</th><th>Action</th></tr></thead><tbody><tr><td>Deploy clicked</td><td>Create from latest snapshot, inject env + token, start harness, health check, mark <code>running</code>.</td></tr><tr><td>Idle (no text/call for N min)</td><td>Daytona auto-stop; agent → <code>sleeping</code>. Durable state is in Mongo.</td></tr><tr><td>Inbound text</td><td>Worker sends wake; target first reply &lt; 5 s from cold.</td></tr><tr><td>Inbound call</td><td>Wake on INVITE; gateway covers with greeting. <strong>Business-hours keep-warm option</strong> for orgs with voice enabled. Cold start must never reach the caller as dead air.</td></tr><tr><td>Snapshot upgrade</td><td>Rolling: new sandboxes use new snapshot; existing ones restart on next idle. Record <code>snapshotVersion</code>.</td></tr><tr><td>Kill</td><td>Orchestrator stops and deletes sandbox, disables lines, rejects calls.</td></tr></tbody></table>
+<p>Daytona specifics to confirm in the SDK reference <strong><span class="pill warn">VERIFY</span></strong>: snapshot param names, wake behavior (does <code>agentd</code> relaunch on start, or must the Orchestrator re-run it — see §5.6), per-sandbox resource caps, egress allow-lists, labels for metering.</p>
+<h2 id="9-connecting-to-the-main-app-onboarding-in-under-5-minutes">9. Connecting to the main app — onboarding in under 5 minutes</h2>
+<h3>9.1 Principle: provision from pools, not on demand</h3>
+<p>Anything slow or manual is done <strong>ahead of time</strong>; Deploy only <em>assigns</em> and <em>starts</em>.</p>
+<ul><li><strong>Warm sandbox pool:</strong> first try Daytona-native warm pools on the snapshot (§5.3); otherwise the Orchestrator keeps K pre-created sandboxes from the current snapshot, unassigned and stopped/idle. Deploy = claim one + inject org config. Fallback to cold create if pool empty.</li><li><strong>Photon line pool:</strong> Photon inbound voice routes are registered in the dashboard today <strong>[VERIFY: any API?]</strong>, so lines are pre-provisioned and pre-routed. Each line's route points at our gateway with its own <code>lineKey</code> in the URI user part (<code>sips:&lt;lineKey&gt;@voice.&lt;domain&gt;:5061</code>). Deploy assigns a free line to the org (<code>channel_lines.orgId</code>, <code>status:"active"</code>). Zero Photon console work at onboarding time.</li><li>If Photon later offers line-provisioning and voice-route APIs, replace pool with on-demand; the interface stays <code>LineProvider.assign(orgId)</code>.</li></ul>
+<h3>9.2 Owner flow</h3>
+<table><thead><tr><th>Step</th><th>Owner sees</th><th>System does</th><th>Target</th></tr></thead><tbody><tr><td>1. Sign up</td><td>Email/Google (Clerk)</td><td>Create <code>orgs</code>, <code>users</code>, <code>agents{status:draft}</code>. Kick off sandbox claim in background.</td><td>20 s</td></tr><tr><td>2. Describe business</td><td>Name, product, tone, hours, optional URL or file upload</td><td>Save to <code>orgs</code>/<code>agents</code>; ingest knowledge async (<code>knowledge</code>, <code>knowledge_chunks</code>).</td><td>2 min</td></tr><tr><td>3. Try it</td><td>Playground chat (and "call me" web test later) against the real harness</td><td>Sandbox already warm from step 1.</td><td>1 min</td></tr><tr><td>4. Deploy</td><td>One button: <strong>Go live</strong></td><td>See 7.3. Progress stepper streamed via SSE.</td><td>≤ 60 s</td></tr><tr><td>5. Share</td><td>Shows the business's number/handle, QR code, "text this number" and "call this number"</td><td><code>channel_lines.address</code>.</td><td>instant</td></tr><tr><td>6. Optional</td><td>Guardrails, voice on/off, hours, escalation phone</td><td>Writes <code>agents.guardrails/enabledChannels</code>.</td><td>skippable</td></tr></tbody></table>
+<h3>9.3 Deploy transaction (idempotent state machine)</h3>
+<p><code>POST /api/agent/deploy</code> → Orchestrator job, each step recorded on <code>agents.deploy.steps[]</code> so the UI stepper and retries are trivial:</p>
+<ol><li><code>claim_sandbox</code> — create (or claim a pooled) Daytona sandbox from the baseline snapshot with labels, env and scoped JWT; write <code>sandboxes</code> doc; set <code>agents.sandboxId</code> (§5.4).</li><li><code>start_agent</code> — launch <code>agentd</code> in a Daytona process session; it pulls config and knowledge from the Agent API.</li><li><code>await_hello</code> — wait for <code>agentd</code> to dial the Agent Hub (§5.2).</li><li><code>health_check</code> — canned prompt round-trip through the Hub.</li><li><code>assign_line</code> — claim a free <code>channel_lines</code> row from the pool (iMessage, plus voice route if enabled); <code>status:"active"</code>.</li><li><code>register_routing</code> — Worker/Gateway pick up the new <code>(line → orgId)</code> mapping.</li><li><code>smoke_test</code> — optional test iMessage to the owner's phone; mark agent <code>running</code>.</li></ol>
+<p>Each step is idempotent and retried; failure leaves the agent in <code>error</code> with the failing step shown and a <strong>Retry</strong> button. Orphans (sandbox without agent, line without org) reaped by a nightly reconciler.</p>
+<h3>9.4 Contracts between main app and agent platform</h3>
+<p>Keep these narrow so web/ and agent/ can evolve separately (and adopt a shared <code>packages/schema</code> per DB-DESIGN decision 4):</p>
+<pre><code>Next.js → Orchestrator   (server-to-server, signed)
+  POST /agents/:agentId/deploy | stop | restart | wake
+  GET  /agents/:agentId/status         -&gt; {state, sandbox, lines[], steps[]}
+  POST /agents/:agentId/call           -&gt; outbound call request (owner-initiated)
+Orchestrator → Next.js
+  Mongo writes (agents/sandboxes/channel_lines status) → change stream → SSE
+Sandbox → Agent API  (scoped JWT)
+  GET /config · GET /knowledge/search · POST /messages · POST /tool-calls · POST /facts · POST /heartbeat
+Worker/Gateway → Mongo
+  contacts / conversations / messages / calls (same write path as DB-DESIGN §4)</code></pre>
+<p>Next.js never talks to Daytona or Photon directly. Orgs resolve from session, never from URL params.</p>
+<h3>9.5 Changes to existing code/schema</h3>
+<ul><li><code>agents</code>: add <code>deploy{steps[], startedAt, error}</code>, <code>voice{enabled, greeting, transferNumber, outboundEnabled}</code>, <code>snapshotVersion</code>.</li><li><code>channel_lines</code>: add <code>lineKey</code> (unique), <code>voiceRoute{registered, sipUri}</code>, allow <code>status:"pool"</code> with <code>orgId:null</code> (relax validator: <code>orgId</code> nullable for pooled lines).</li><li><code>sandboxes</code>: allow <code>orgId:null</code> for pool members; add <code>pool:bool</code>, <code>lastHeartbeatAt</code>.</li><li><code>calls</code>: add <code>provider:"photon-sip"</code>, <code>sipCallId</code>, <code>transcriptMessageIds</code>, <code>costCents</code>, <code>endReason</code>.</li><li><code>messages</code>: add <code>callId</code> (optional ObjectId); <code>channel:"voice"</code> already allowed.</li><li><code>contacts</code>: add <code>consent{voice, text, updatedAt}</code>, <code>optedOut</code>.</li><li><code>usage</code>: add <code>voiceSec</code>, <code>sttSec</code>, <code>ttsChars</code>.</li><li>New routes: <code>/agent</code> gets Deploy/Stop + stepper; <code>/onboarding</code> wizard; <code>/calls</code>, <code>/calls/[id]</code>.</li><li>Fix before voice: E.164 normalization at the SIP boundary (caller ID formats), per DB-DESIGN R6.</li></ul>
+<h2 id="10-functional-requirements-voice">10. Functional requirements (voice)</h2>
+<table><thead><tr><th>#</th><th>Requirement</th><th>Priority</th></tr></thead><tbody><tr><td>V1</td><td>Answer inbound call on business line within 2 rings; greet with business name.</td><td>P0</td></tr><tr><td>V2</td><td>Turn latency ≤ 1.2 s p50 end-of-speech → audio.</td><td>P0</td></tr><tr><td>V3</td><td>Barge-in: caller speech interrupts TTS within 300 ms.</td><td>P0</td></tr><tr><td>V4</td><td>Same contact/conversation as texts; agent references prior texts.</td><td>P0</td></tr><tr><td>V5</td><td>Live transcript visible in owner inbox during the call; recording optional.</td><td>P0</td></tr><tr><td>V6</td><td>Human takeover/transfer to owner number.</td><td>P0</td></tr><tr><td>V7</td><td>Call summary, outcome, extracted facts and lead stage update on hangup.</td><td>P1</td></tr><tr><td>V8</td><td>Send iMessage follow-up from inside call (link, address, summary).</td><td>P1</td></tr><tr><td>V9</td><td>Voicemail/after-hours behavior per <code>hours</code>.</td><td>P1</td></tr><tr><td>V10</td><td>Outbound calls with consent gating, quiet hours, rate limits.</td><td>P2</td></tr><tr><td>V11</td><td>Max call duration, concurrency cap per org, spend cap, kill switch.</td><td>P0</td></tr><tr><td>V12</td><td>Call-recording disclosure line when recording is on.</td><td>P0 if recording</td></tr></tbody></table>
+<h2 id="11-security-privacy-compliance">11. Security, privacy, compliance</h2>
+<ul><li><strong>Audio is unencrypted RTP</strong> between Photon and us (no SRTP). Document it; keep gateway in a trusted network path; revisit when Photon supports SRTP.</li><li>Photon project secret lives only in Orchestrator/Gateway/Worker. Never in sandbox.</li><li>Gateway rejects any INVITE not from Photon's source (IP allow-list <strong><span class="pill warn">VERIFY</span></strong> + SIP digest if available) and any unknown <code>lineKey</code>.</li><li>Per-org isolation: every Gateway/Agent API query takes <code>orgId</code> derived from the authenticated line or JWT, never from request body.</li><li>Guardrails (discount ceilings, prohibited claims, escalation triggers) enforced <strong>outside the LLM</strong> in the Agent API / gateway validators; applies to voice too.</li><li>Prompt injection by voice (caller says "ignore your instructions"): same tool allow-list and approval rules as text.</li><li>TCPA / call-recording consent / AI disclosure: inbound-first; outbound voice off by default; recording off by default; legal review before enabling. State-by-state two-party consent applies.</li><li>Retention and delete-contact cascade must include <code>calls</code> and recordings (DB-DESIGN R10).</li></ul>
+<h2 id="12-metrics">12. Metrics</h2>
+<ul><li>Onboarding: signup→live median (target &lt; 5 min owner time; &lt; 60 s Deploy), Deploy success rate (&gt; 98%), step failure breakdown.</li><li>Voice: answer rate, turn latency p50/p95, barge-in correctness, dropped-call rate, calls/org/day, handoff rate, owner-rated call quality.</li><li>Cost per agent-day: sandbox seconds + tokens + STT/TTS + Photon line.</li><li>Reliability: sandbox cold-start p95, wake-on-INVITE gap heard by caller (target 0 s dead air).</li></ul>
+<h2 id="13-phases">13. Phases</h2>
+<table><thead><tr><th>Phase</th><th>Scope</th><th>Exit</th></tr></thead><tbody><tr><td>0 · Spikes (2 days)</td><td>(a) SIP hello-world: Photon → our endpoint (LiveKit/Pipecat) → echo, inbound + outbound. (b) STT/TTS/LLM turn latency, brain-in-sandbox vs in-gateway. (c) Daytona create/wake/stop timings, pool claim time. (d) Ask Photon: API for line + voice-route provisioning, tenancy model, concurrency, codec, SRTP/UDP roadmap, pricing. (e) Hermes programmatic turn API.</td><td>Gateway option, brain mode, and pool design chosen with numbers.</td></tr><tr><td>1 · Deploy path (text)</td><td>Orchestrator, sandbox pool, Agent API, deploy state machine + UI stepper, line pool for iMessage.</td><td>New org goes live on iMessage in &lt; 60 s Deploy with no manual steps.</td></tr><tr><td>2 · Voice inbound</td><td>Gateway, <code>lineKey</code> routing, voice session handler, calls/transcripts in inbox, takeover, caps.</td><td>Real call to a business's number answered by its agent; transcript next to texts.</td></tr><tr><td>3 · Voice polish</td><td>Warm-on-INVITE, keep-warm schedule, follow-up texts, summaries → facts, after-hours.</td><td>p50 latency and zero dead-air targets met.</td></tr><tr><td>4 · Outbound + hardening</td><td>Consent gating, quiet hours, metering, kill switch, cross-tenant tests, load test.</td><td>Pilot customers.</td></tr><tr><td>Later</td><td>WhatsApp text, voice-only lines, SDK call control and webhooks (when Photon ships). Migrate gateway to SDK path if it simplifies.</td><td></td></tr></tbody></table>
+<h2 id="14-risks-and-open-questions">14. Risks and open questions</h2>
+<table><thead><tr><th>#</th><th>Risk / question</th><th>Next step</th></tr></thead><tbody><tr><td>1</td><td><strong>Photon provisioning:</strong> can lines and inbound voice routes be created via API? Today: dashboard. Blocks "super fast" onboarding at scale; pool covers MVP/hackathon scale only.</td><td>Ask Photon (spike d).</td></tr><tr><td>2</td><td><strong>Photon tenancy:</strong> one project per business, or one project with many lines? Affects creds, billing, isolation.</td><td>Ask Photon.</td></tr><tr><td>3</td><td>Photon voice is documented as SIP only; SDK/webhook call control "coming soon". We build and operate a SIP gateway meanwhile.</td><td>Prefer LiveKit/Pipecat; keep gateway behind an interface so SDK path can replace it.</td></tr><tr><td>4</td><td>Latency of brain-in-sandbox over WebSocket plus cold start.</td><td>Spike b/c; fast-path fallback.</td></tr><tr><td>5</td><td>Unencrypted RTP, no SRTP.</td><td>Disclose; trusted network; track Photon roadmap.</td></tr><tr><td>6</td><td>Number of concurrent calls per line / project unknown.</td><td>Ask Photon; enforce our own caps.</td></tr><tr><td>7</td><td>Cost: warm sandboxes + STT/TTS minutes per org.</td><td>Cost model after spikes; keep-warm only for voice-enabled orgs during business hours.</td></tr><tr><td>8</td><td>Regulatory exposure for AI voice calls and recording.</td><td>Legal review before outbound and recording.</td></tr><tr><td>9</td><td>Hermes vs fx unresolved.</td><td>Phase 0 spike per <code>PRD.html</code> §7.</td></tr><tr><td>10</td><td>Daytona egress control, wake semantics, and param names not verified.</td><td>Read Sandbox reference during spike c.</td></tr><tr><td>11</td><td>iMessage voice is a call over an iMessage-registered number: confirm what callers dial and what their phone shows (PSTN number? FaceTime audio?).</td><td>Ask Photon; test on real devices.</td></tr><tr><td>12</td><td><strong>Daytona unknowns:</strong> cold-create time, warm-pool configuration, whether processes relaunch on start, egress rules by org tier, concurrent-sandbox limits and per-sandbox cost. Daytona docs do not state startup times.</td><td>Spike c; measure before promising the 60 s Deploy target.</td></tr><tr><td>13</td><td><strong>Message completeness:</strong> unknown whether Spectrum redelivers on failure or returns stable ids for sends; a crash between Photon accepting and our write can leave a sent message without a final id. Mitigated by write-ahead rows, spool and reconciler (§6), not eliminated.</td><td>Ask Photon; chaos-test in Phase 1.</td></tr></tbody></table>
+<h2 id="15-sources">15. Sources</h2>
+<ul><li>Photon Spectrum Voice: <a href="https://photon.codes/docs/spectrum-ts/providers/voice">https://photon.codes/docs/spectrum-ts/providers/voice</a> (also <code>/inbound-calls</code>, <code>/outbound-calls</code>, <code>/troubleshooting</code>)</li><li>Daytona TypeScript SDK: <a href="https://www.daytona.io/docs/typescript-sdk/daytona">https://www.daytona.io/docs/typescript-sdk/daytona</a></li><li><code>docs/PRD.html</code>, <code>docs/DB-DESIGN.html</code>, <code>web/src/lib/schema.ts</code></li></ul>
+<footer>Living document — edit in repo at docs/PRD-agent-runtime-photon-voice.html</footer></main></div></body></html>

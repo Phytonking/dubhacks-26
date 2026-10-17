@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRD — Sales Agent Control Plane (v0.1)</title>
+<style>
+  :root{
+    --bg:#fafaf7; --fg:#1a1a17; --muted:#66655e; --line:#e3e1d8; --card:#fff;
+    --accent:#2f5d50; --accent-soft:#e4efe9; --warn:#9a5b00; --warn-soft:#fbf0dc; --bad:#9b2c2c;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 96px;display:grid;grid-template-columns:200px 1fr;gap:48px}
+  nav{position:sticky;top:0;align-self:start;padding-top:48px;font-size:14px}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:4px 0}
+  nav a:hover{color:var(--accent)}
+  nav .t{font-weight:600;color:var(--fg);margin-bottom:10px}
+  main{padding-top:48px;min-width:0}
+  h1{font-size:34px;line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:23px;margin:56px 0 12px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 6px}
+  p{margin:8px 0}
+  .meta{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-weight:600;margin-right:6px}
+  .pill.warn{background:var(--warn-soft);color:var(--warn)}
+  code{font-family:var(--mono);font-size:13px;background:#efede4;padding:1px 5px;border-radius:4px}
+  pre{background:#1d2421;color:#e8efe9;padding:16px 18px;border-radius:8px;overflow:auto;font:12.5px/1.55 var(--mono)}
+  pre code{background:none;padding:0;color:inherit}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:12px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f1efe6;font-weight:600}
+  .callout{background:var(--accent-soft);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{background:var(--warn-soft);border-color:var(--warn)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+  .card h3{margin-top:4px}
+  ul,ol{padding-left:22px;margin:8px 0}
+  li{margin:3px 0}
+  svg{max-width:100%;height:auto}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;overflow:auto}
+  footer{margin-top:64px;color:var(--muted);font-size:13px}
+  a{color:var(--accent)}
+  @media(max-width:860px){.wrap{grid-template-columns:1fr}nav{display:none}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="t">Contents</div>
+  <a href="#summary">1. Summary</a>
+  <a href="#goals">2. Goals / non-goals</a>
+  <a href="#users">3. Users &amp; stories</a>
+  <a href="#arch">4. Architecture</a>
+  <a href="#photon">5. Photon</a>
+  <a href="#daytona">6. Daytona sandboxes</a>
+  <a href="#harness">7. Harness: fx vs Hermes</a>
+  <a href="#data">8. MongoDB data model</a>
+  <a href="#app">9. Next.js app</a>
+  <a href="#security">10. Security</a>
+  <a href="#phases">11. Phases</a>
+  <a href="#risks">12. Risks / open Qs</a>
+  <a href="#sources">13. Sources</a>
+</nav>
+
+<main>
+<p class="meta"><span class="pill">Draft v0.1</span><span class="pill warn">DubHacks '26</span> 2026-10-17 · owner: Avi Agola</p>
+<h1>Sales Agent Control Plane</h1>
+<p class="meta">A Next.js dashboard where a business owner configures, deploys, and supervises AI sales agents that talk to customers by text and voice, for any product the owner describes.</p>
+
+<h2 id="summary">1. Summary</h2>
+<p><b>Model: one business customer = one org = one agent = one Daytona sandbox.</b> Business owner signs in, describes their product (or uploads a catalog / docs / FAQ), and clicks <em>Deploy</em>. We provision the sandbox, start the harness, and attach a Photon iMessage line for that business. <b>Channel rollout is staged: iMessage first and done well, then WhatsApp (Photon's WhatsApp Business provider), then SMS and voice later.</b> The data model and worker are channel-agnostic from day one so each new channel is an adapter, not a rewrite. All data (business profile, knowledge, contacts, every text and call, transcripts, leads, tool calls, usage) is written to <b>MongoDB</b> as the system of record. The owner reads and acts on all of it in the Next.js app: watch conversations and calls live, review leads, take over any thread.</p>
+<div class="callout"><b>Stack decisions already made:</b> MongoDB for all persistence · Next.js for the owner app · Photon (Spectrum) for channels · Daytona for one sandbox per agent. <b>Open:</b> harness (fx vs Hermes) — recommendation in §7.</div>
+
+<h2 id="goals">2. Goals / non-goals</h2>
+<div class="grid2">
+<div class="card"><h3>Goals (MVP)</h3>
+<ul>
+<li>Product-agnostic: agent behavior comes from owner-supplied config + knowledge, not code.</li>
+<li>Exactly one agent per business customer, one Daytona sandbox, fair and isolated.</li>
+<li><b>MVP: iMessage only, polished</b> (typing indicators, threads, reactions, groups, attachments, dedupe, ordering). <b>Next: WhatsApp.</b> Later: SMS, voice. All via Photon; same persona, knowledge, and contact memory across channels.</li>
+<li>MongoDB is the system of record for everything: all businesses, all contacts, all conversations, calls, transcripts, leads, audit.</li>
+<li>Owner sees only their own data in the Next.js app: live inbox (text + calls), human takeover, lead capture.</li>
+<li>Full audit log of every tool call the agent makes.</li>
+</ul></div>
+<div class="card"><h3>Non-goals (MVP)</h3>
+<ul>
+<li>Payments / checkout inside chat.</li>
+<li>Multi-seat teams, RBAC beyond owner/admin.</li>
+<li>Custom-trained models.</li>
+<li>Building our own channel gateway (Photon does that).</li>
+<li>SMS and voice in the MVP (designed for, built later). WhatsApp is the first expansion, not MVP.</li>
+<li>Mobile app for the owner.</li>
+</ul></div>
+</div>
+
+<h2 id="users">3. Users &amp; stories</h2>
+<table>
+<tr><th>Persona</th><th>Story</th></tr>
+<tr><td>Business owner</td><td>I describe my product and tone once; the agent answers customers correctly on iMessage without me.</td></tr>
+<tr><td>Business owner</td><td>I see every text and call transcript in one inbox, which leads are warm, and can jump in at any time.</td></tr>
+<tr><td>Business owner</td><td>(Later) A customer who iMessages Monday and WhatsApps Friday gets one continuous conversation history.</td></tr>
+<tr><td>Business owner</td><td>I set guardrails (discount ceiling, hours, escalation triggers) and the agent cannot exceed them.</td></tr>
+<tr><td>End customer</td><td>I text a number and get a fast, useful reply; I can ask for a human.</td></tr>
+<tr><td>Operator (us)</td><td>I can see sandbox health, cost per agent, and kill any agent.</td></tr>
+</table>
+
+<h2 id="arch">4. Architecture</h2>
+<div class="diagram">
+<svg viewBox="0 0 900 430" font-family="-apple-system,Segoe UI,sans-serif" font-size="13">
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="#66655e"/></marker></defs>
+  <g stroke="#c9c6b8" fill="#fff">
+    <rect x="10" y="20" width="170" height="70" rx="8"/>
+    <rect x="10" y="150" width="170" height="70" rx="8"/>
+    <rect x="240" y="20" width="200" height="110" rx="8" fill="#e4efe9" stroke="#2f5d50"/>
+    <rect x="240" y="200" width="200" height="80" rx="8"/>
+    <rect x="500" y="20" width="190" height="70" rx="8" fill="#e4efe9" stroke="#2f5d50"/>
+    <rect x="500" y="150" width="390" height="150" rx="8" stroke-dasharray="5 4"/>
+    <rect x="520" y="185" width="165" height="90" rx="8" fill="#fbf0dc" stroke="#9a5b00"/>
+    <rect x="705" y="185" width="165" height="90" rx="8" fill="#fbf0dc" stroke="#9a5b00"/>
+    <rect x="240" y="340" width="200" height="60" rx="8" fill="#f1efe6"/>
+    <rect x="10" y="340" width="170" height="60" rx="8"/>
+    <rect x="720" y="20" width="170" height="70" rx="8"/>
+  </g>
+  <g fill="#1a1a17">
+    <text x="95" y="50" text-anchor="middle" font-weight="600">Business owner</text><text x="95" y="70" text-anchor="middle" fill="#66655e">browser</text>
+    <text x="95" y="180" text-anchor="middle" font-weight="600">Customers</text><text x="95" y="200" text-anchor="middle" fill="#66655e">iMessage → WhatsApp → …</text>
+    <text x="340" y="48" text-anchor="middle" font-weight="600">Next.js app (Vercel)</text>
+    <text x="340" y="70" text-anchor="middle" fill="#66655e">dashboard · API routes</text>
+    <text x="340" y="88" text-anchor="middle" fill="#66655e">auth · agent CRUD · SSE</text>
+    <text x="340" y="106" text-anchor="middle" fill="#66655e">talks to Orchestrator</text>
+    <text x="340" y="234" text-anchor="middle" font-weight="600">Channel worker</text>
+    <text x="340" y="254" text-anchor="middle" fill="#66655e">long-lived Node/Bun proc</text>
+    <text x="340" y="270" text-anchor="middle" fill="#66655e">Spectrum app.messages loop</text>
+    <text x="595" y="48" text-anchor="middle" font-weight="600">Orchestrator</text>
+    <text x="595" y="68" text-anchor="middle" fill="#66655e">provision · route · meter</text>
+    <text x="805" y="48" text-anchor="middle" font-weight="600">Photon Cloud</text>
+    <text x="805" y="68" text-anchor="middle" fill="#66655e">Spectrum · lines · SIP</text>
+    <text x="510" y="168" fill="#66655e">Daytona</text>
+    <text x="602" y="215" text-anchor="middle" font-weight="600">Sandbox A</text>
+    <text x="602" y="235" text-anchor="middle" fill="#66655e">harness + tools</text>
+    <text x="602" y="251" text-anchor="middle" fill="#66655e">agent 1</text>
+    <text x="787" y="215" text-anchor="middle" font-weight="600">Sandbox B</text>
+    <text x="787" y="235" text-anchor="middle" fill="#66655e">harness + tools</text>
+    <text x="787" y="251" text-anchor="middle" fill="#66655e">agent 2</text>
+    <text x="340" y="365" text-anchor="middle" font-weight="600">MongoDB Atlas</text>
+    <text x="340" y="383" text-anchor="middle" fill="#66655e">single source of truth</text>
+    <text x="95" y="365" text-anchor="middle" font-weight="600">LLM provider</text>
+    <text x="95" y="383" text-anchor="middle" fill="#66655e">AI Gateway / direct</text>
+  </g>
+  <g stroke="#66655e" fill="none" marker-end="url(#a)" stroke-width="1.4">
+    <path d="M180 55 H240"/>
+    <path d="M440 55 H500"/>
+    <path d="M690 55 H720"/>
+    <path d="M805 90 V150 H440 V230" />
+    <path d="M180 185 L720 90" stroke-dasharray="3 3"/>
+    <path d="M440 240 H500 V230 H520"/>
+    <path d="M595 90 V185"/>
+    <path d="M340 130 V340"/>
+    <path d="M340 280 V340"/>
+    <path d="M520 255 L180 360" stroke-dasharray="3 3"/>
+  </g>
+</svg>
+</div>
+
+<h3>Call flow (inbound voice) — LATER PHASE, not in MVP</h3>
+<ol>
+<li>Customer calls the business's Photon line (SIP) → call audio reaches the Channel worker via the Spectrum voice provider.</li>
+<li>Worker creates a <code>calls</code> doc, resolves the same <code>contactId</code> used for texts, and loads that contact's prior history.</li>
+<li>Speech-to-text turns audio into utterances; each utterance goes to the same harness session; reply text goes to text-to-speech and back on the call. (Who supplies STT/TTS — Photon or us — is an open question, §12.)</li>
+<li>Each utterance is stored as a <code>messages</code> row (<code>channel:"voice"</code>, <code>callId</code>); call summary, duration, and outcome written when the call ends.</li>
+</ol>
+
+<h3>Message flow (inbound text: iMessage in MVP; WhatsApp follows the same path)</h3>
+<ol>
+<li>Customer texts the agent's Photon line → Photon Cloud streams it to the <b>Channel worker</b> over the Spectrum connection (<code>app.messages</code>).</li>
+<li>Worker resolves <code>(line, sender)</code> → <code>orgId</code> (the business's single agent) + <code>contactId</code> + <code>conversationId</code> in MongoDB; stores the inbound message with its channel (<code>imessage</code> now; <code>whatsapp</code> next).</li>
+<li>If conversation is in <code>human</code> mode → push to owner via SSE, stop. Otherwise forward to the agent's sandbox harness session.</li>
+<li>Harness runs the loop (LLM + tools inside sandbox); streams parts back.</li>
+<li>Worker applies guardrails, sends via <code>message.reply()</code> inside <code>space.responding()</code> (typing indicator), stores the outbound message + tool-call audit rows.</li>
+<li>Dashboard updates via change streams → SSE.</li>
+</ol>
+
+<div class="callout warn"><b>Why a separate Channel worker:</b> Spectrum consumes a persistent stream (<code>for await … of app.messages</code>). That does not fit Vercel serverless functions. Host the worker on any always-on runtime (Fly/Railway/a small Daytona sandbox of our own). Photon also documents a <b>Webhooks</b> mode with Hono/Express/Elysia adapters; if it fits our scale, the worker could be replaced by a Next.js route handler. Spike this first.</div>
+
+<h2 id="photon">5. Photon</h2>
+<p>Photon's product for us is <b>Spectrum</b> (<code>spectrum-ts</code>, MIT, TypeScript): one agent codebase, many channels. <b>Spectrum Cloud</b> is the hosted path (signup at app.photon.codes → project ID + secret). Self-host options exist (<code>@spectrum-ts/imessage-local</code>, own gRPC endpoints) but local iMessage is Mac-bound and not production-scalable.</p>
+<table>
+<tr><th>Capability</th><th>Status from docs</th></tr>
+<tr><td>iMessage, WhatsApp Business, Telegram, Slack, Terminal providers</td><td>Packaged: <code>@spectrum-ts/&lt;platform&gt;</code></td></tr>
+<tr><td>Typing indicators, reactions, threaded replies, groups (iMessage)</td><td>Documented</td></tr>
+<tr><td>Voice calls (LATER)</td><td>Documented as a provider: SIP over TLS/TCP using Spectrum iMessage lines. <b>Details not read yet.</b></td></tr>
+<tr><td>Webhooks (HTTP inbound)</td><td>Documented, native + Fusor</td></tr>
+<tr><td>Custom channel</td><td><code>definePlatform</code></td></tr>
+<tr><td>Pricing, rate limits, multi-tenant model (project per customer vs one project many lines), attachments</td><td><b>Unknown</b> — not in public pages we read. Ask Photon (dashboard or ryan@photon.codes).</td></tr>
+</table>
+<div class="callout"><b>Staged channels: iMessage → WhatsApp → SMS/voice.</b> Spectrum is built so the same <code>app.messages</code> loop serves every provider; adding a channel is adding a provider entry (e.g. <code>@spectrum-ts/whatsapp-business</code>) plus a thin adapter on our side. We normalize everything into one <code>contact → conversation → message</code> model in Mongo, tagged with <code>channel</code>, so the owner app and harness never branch on channel except for capability differences.</div>
+
+<h3>Channel adapter (what makes WhatsApp cheap to add)</h3>
+<pre><code>interface ChannelAdapter {
+  channel: "imessage" | "whatsapp" | "sms" | "voice";
+  capabilities: { typing: boolean; reactions: boolean; threads: boolean;
+                  groups: boolean; attachments: boolean;
+                  freeformWindow?: "unlimited" | "24h"; requiresTemplates?: boolean };
+  normalizeInbound(space, message): InboundMessage;   // -> our model
+  send(space, out: OutboundMessage): Promise&lt;SentReceipt&gt;;
+}</code></pre>
+<p>The worker holds a registry of adapters keyed by channel. The harness is told the active channel's capabilities in its context (e.g. keep replies short, no markdown on iMessage).</p>
+
+<h3>Phase 1 definition of "iMessage mastered"</h3>
+<ul>
+<li>Reliable inbound/outbound on a dedicated Photon iMessage line, per business, with dedupe on <code>channelMsgId</code> and in-order handling per conversation (queue per conversation, one in-flight agent turn).</li>
+<li>Typing indicator while the agent works (<code>space.responding</code>), natural reply pacing, long replies split into message-sized chunks.</li>
+<li>Threaded replies, reactions (read and send), attachments in and out, group chats handled explicitly (reply only when addressed, or off by default).</li>
+<li>Delivery/failure handling and retry; an owner-visible failed-send state.</li>
+<li>Human takeover: while <code>mode=human</code>, the agent stays silent and owner replies go out through the same line.</li>
+<li>Opt-out ("stop") handled automatically; first-contact greeting and business hours behavior.</li>
+<li>Everything persisted to Mongo; owner can see it live in the inbox.</li>
+</ul>
+
+<h3>WhatsApp (next) — what changes</h3>
+<ul>
+<li>Provider: Photon's <code>whatsapp-business</code> (WhatsApp Business Platform). Expect Meta business verification per business and a registered number; owner onboarding gains a "connect WhatsApp" step.</li>
+<li>WhatsApp restricts free-form messages outside a customer-service window and requires approved templates for business-initiated messages. These are Meta rules as I understand them; confirm exact limits through Photon's provider docs. The adapter's <code>freeformWindow</code> / <code>requiresTemplates</code> capabilities and a <code>templates</code> collection cover this.</li>
+<li>No Mongo schema change beyond new <code>channel</code> value, line capabilities, and templates. Same contact can have both an iMessage and WhatsApp handle.</li>
+</ul>
+<h3>Connection sketch</h3>
+<pre><code>import { Spectrum } from "spectrum-ts";
+import { imessage } from "spectrum-ts/providers/imessage";
+
+const app = await Spectrum({
+  projectId: process.env.PROJECT_ID,
+  projectSecret: process.env.PROJECT_SECRET,
+  providers: [imessage.config()],
+});
+
+for await (const [space, message] of app.messages) {
+  await space.responding(async () => {
+    const agent = await router.resolve(space, message);     // Mongo lookup
+    const reply = await agent.handle(message);              // sandbox harness
+    await message.reply(reply);
+  });
+}</code></pre>
+<p class="meta">Example above is adapted from the Spectrum README; <code>router</code> and <code>agent</code> are ours.</p>
+<div class="callout"><b>Avoid:</b> Photon's older <code>imessage-kit</code> (reads macOS <code>chat.db</code>, sends via AppleScript, polls every 2s, no typing indicators, tied to one Mac). Fine for demos, wrong for a product.</div>
+
+<h2 id="daytona">6. Daytona sandboxes</h2>
+<p>One agent = one Daytona sandbox, created from a <b>baseline snapshot</b> (pre-built image: runtime, harness, common CLI tools) so every agent starts from the same fair environment. SDK: <code>@daytona/sdk</code>.</p>
+<pre><code>import { Daytona } from "@daytona/sdk";
+const daytona = new Daytona();                       // DAYTONA_API_KEY etc.
+const sandbox = await daytona.create({
+  language: "typescript",
+  envVars: { AGENT_ID: agent.id },
+  // snapshot / resources / autoStop / labels: verify exact param names in Sandbox ref
+});
+const r = await sandbox.process.executeCommand("echo ready");</code></pre>
+<table>
+<tr><th>Concern</th><th>Plan</th></tr>
+<tr><td>Baseline</td><td>Single named snapshot, versioned. Agent config + knowledge mounted at start, not baked in.</td></tr>
+<tr><td>Idle cost</td><td>Auto-stop on inactivity; wake on inbound message (cold-start latency to measure, target &lt; 5s for first reply).</td></tr>
+<tr><td>State</td><td>Sandbox is disposable. Durable state (memory, transcripts) lives in MongoDB, never only on sandbox disk.</td></tr>
+<tr><td>Fairness</td><td>Identical CPU/mem/disk quotas per tier; per-sandbox label for metering.</td></tr>
+<tr><td>Egress</td><td>Restrict network to LLM gateway + owner-approved domains where Daytona supports it (verify).</td></tr>
+<tr><td>Secrets</td><td>LLM keys stay on host/gateway; sandbox gets scoped short-lived token only.</td></tr>
+</table>
+<p class="meta">Daytona docs pages I read did not list create params or exec details in full; confirm against the Sandbox reference before implementing.</p>
+
+<h2 id="harness">7. Harness: fx vs Hermes</h2>
+<p>"Harness" = the agent loop (prompting, tool use, memory, compaction) wrapped around the model. Both candidates are open source.</p>
+<table>
+<tr><th></th><th>fx (Vercel)</th><th>Hermes Agent (Nous Research)</th></tr>
+<tr><td>What it is</td><td>Lightweight open-source <b>coding</b> agent; exposed through AI SDK <code>HarnessAgent</code> (<code>@ai-sdk/harness-fx</code>). Marked <b>experimental</b>.</td><td>Open-source general agent harness, MIT, Python. Self-improving: writes its own skills, curates memory.</td></tr>
+<tr><td>Language fit</td><td>TypeScript — matches Next.js/Spectrum stack.</td><td>Python process; integrate over CLI / API / gateway.</td></tr>
+<tr><td>Sandbox model</td><td>Runtime on <b>host</b>; file/shell tools run in sandbox. Only a Vercel sandbox adapter is documented; <b>Daytona adapter would be ours to write</b> (needs Bash + GNU utils in sandbox).</td><td><b>Daytona is a built-in terminal backend</b> (alongside local, Docker, SSH, Modal, Singularity, Vercel Sandbox). Hibernates when idle.</td></tr>
+<tr><td>Channels</td><td>None — we bridge Spectrum ourselves.</td><td>Own gateway (Telegram, Discord, Slack, WhatsApp, Signal, Teams…). <b>No Photon provider</b>, so we still bridge Spectrum → Hermes.</td></tr>
+<tr><td>Memory / skills</td><td>Session-level; we build persistence in Mongo.</td><td>Built-in: FTS5 recall, Honcho user modeling, agentskills.io skills, cron, subagents.</td></tr>
+<tr><td>MCP</td><td>HTTP/SSE only, no stdio.</td><td>Not confirmed in pages read.</td></tr>
+<tr><td>Tooling shape</td><td>read/write/edit/bash/grep/glob/ls only. No custom tools except via MCP.</td><td>Broad tool set; extendable via skills.</td></tr>
+<tr><td>Models</td><td>Through Vercel AI Gateway.</td><td>Provider-agnostic.</td></tr>
+<tr><td>Maturity risk</td><td>Experimental adapter, breaking changes expected.</td><td>Young (released Feb 2026), fast-moving; API-server/ACP docs not verified.</td></tr>
+</table>
+
+<div class="callout">
+<b>Recommendation: start with Hermes, behind our own <code>AgentRuntime</code> interface.</b>
+<ul>
+<li>Sales agents are conversational, long-lived, and benefit from persistent memory + skills (learn objections, product facts). fx is a coding agent; most of its tool surface is irrelevant to selling.</li>
+<li>Daytona is first-class in Hermes; with fx we'd write and maintain the adapter.</li>
+<li>Both lack a Photon bridge, so that cost is equal.</li>
+</ul>
+<b>Pick fx instead if:</b> you want a pure-TypeScript stack, tight AI SDK / AI Gateway integration, and agents whose job is mostly running code in the sandbox rather than conversation.
+</div>
+<div class="callout warn"><b>Before committing, 1-day spike for each:</b> (1) Hermes: how do we feed it a message and get a reply programmatically (API server / ACP / CLI one-shot)? Per-agent isolation via profiles or one install per sandbox? (2) fx: does a custom Daytona <code>SandboxSession</code> take under a day? (3) Latency of first reply from a stopped sandbox. Decide with measured numbers.</div>
+
+<h3>Runtime interface (keeps the choice reversible)</h3>
+<pre><code>interface AgentRuntime {
+  start(agent: AgentConfig): Promise&lt;SessionHandle&gt;;
+  send(s: SessionHandle, msg: InboundMessage): AsyncIterable&lt;AgentEvent&gt;; // text-delta, tool-call, done
+  stop(s: SessionHandle): Promise&lt;void&gt;;
+}
+// impls: HermesRuntime, FxRuntime</code></pre>
+
+<h2 id="data">8. MongoDB data model</h2>
+<p><b>Everything is stored in MongoDB Atlas</b>: business customers, agent config, knowledge, contacts, every message and call across iMessage/SMS/voice, transcripts, leads, tool-call audit, sandbox state, usage. The only things outside Mongo are transient (sandbox disk, call audio in flight) and optionally call recordings in object storage referenced by URL from Mongo. Harness-side memory is treated as a cache: durable facts the agent learns about a contact or product are written back to Mongo. Every doc carries <code>orgId</code>; every query is scoped by it (one DB, shared collections, tenant-scoped).</p>
+<table>
+<tr><th>Collection</th><th>Key fields</th><th>Indexes</th></tr>
+<tr><td><code>orgs</code> (business customers)</td><td>name, product description, brand voice, hours, plan, createdAt</td><td>—</td></tr>
+<tr><td><code>users</code></td><td>orgId, email, role</td><td>email unique</td></tr>
+<tr><td><code>agents</code> (exactly one per org)</td><td>orgId, status (draft|provisioning|running|sleeping|error), harness, persona, guardrails{maxDiscount, hours, escalateOn[]}, enabledChannels{imessage (MVP), whatsapp (next), sms, voice (later)}, sandboxId, snapshotVersion</td><td><b>orgId unique</b></td></tr>
+<tr><td><code>knowledge</code></td><td>orgId, kind (catalog|faq|doc|url), content/chunks[], embedding?, version</td><td>orgId; vector index (later)</td></tr>
+<tr><td><code>channel_lines</code></td><td>orgId, photonLineId, address (number/handle), channel, capabilities[], status, whatsapp{wabaId, verification}? (WhatsApp phase)</td><td>address unique</td></tr>
+<tr><td><code>templates</code> (WhatsApp phase)</td><td>orgId, channel, name, body, variables[], approvalStatus</td><td>orgId+channel</td></tr>
+<tr><td><code>contacts</code></td><td>orgId, handles[] (phone, iMessage id), name, stage, score, notes, facts[] (agent-learned)</td><td>orgId+handles</td></tr>
+<tr><td><code>conversations</code></td><td>orgId, contactId, mode (agent|human), state, lastChannel, lastMessageAt. One open conversation per contact spans channels.</td><td>orgId+lastMessageAt, contactId</td></tr>
+<tr><td><code>messages</code></td><td>conversationId, orgId, channel (imessage|whatsapp|sms|voice), direction, body, attachments[], reactions[], replyTo?, deliveryStatus, callId?, channelMsgId, ts</td><td>conversationId+ts; channelMsgId unique (dedupe)</td></tr>
+<tr><td><code>calls</code> (voice phase)</td><td>orgId, contactId, conversationId, direction, startedAt, durationSec, recordingUrl?, summary, outcome, status</td><td>orgId+startedAt</td></tr>
+<tr><td><code>tool_calls</code></td><td>orgId, conversationId, tool, args, result, ms, approved?</td><td>orgId+ts</td></tr>
+<tr><td><code>sandboxes</code></td><td>orgId, daytonaId, state, createdAt, lastActiveAt, costAccrued</td><td>orgId, state</td></tr>
+<tr><td><code>usage</code></td><td>orgId, day, tokensIn/Out, imessages, sms, voiceMin, sandboxSec</td><td>orgId+day</td></tr>
+</table>
+<p>Realtime: Mongo change streams on <code>messages</code> / <code>conversations</code> → SSE to the dashboard (Atlas supports this; confirm the worker host can hold the stream).</p>
+
+<h2 id="app">9. Next.js owner app</h2>
+<h3>Routes (App Router)</h3>
+<table>
+<tr><th>Route</th><th>Purpose</th></tr>
+<tr><td><code>/login</code>, <code>/onboarding</code></td><td>Auth, org creation, "describe your product" wizard</td></tr>
+<tr><td><code>/dashboard</code></td><td>Agent status, sandbox state, today's texts and calls, hot leads</td></tr>
+<tr><td><code>/agent</code></td><td>The business's single agent: product description, tone, guardrails, channels on/off, deploy/stop, logs</td></tr>
+<tr><td><code>/agent/knowledge</code></td><td>Upload / edit catalog, FAQ, docs, URLs</td></tr>
+<tr><td><code>/agent/playground</code></td><td>Test chat against the real harness (Terminal provider) before going live</td></tr>
+<tr><td><code>/inbox</code></td><td>All contacts' conversations across iMessage/SMS/voice, live; call transcripts inline; takeover button flips <code>mode</code> to human</td></tr>
+<tr><td><code>/contacts</code>, <code>/contacts/[id]</code></td><td>Contact list, full cross-channel history, agent-learned facts, lead stage</td></tr>
+<tr><td><code>/calls</code> (voice phase)</td><td>Call log with transcript, summary, outcome, recording</td></tr>
+<tr><td><code>/usage</code></td><td>Texts, calls, tokens, voice minutes, sandbox cost</td></tr>
+<tr><td><code>/admin</code></td><td>Operator only: all businesses, all sandboxes, kill switch</td></tr>
+</table>
+<h3>Internal API</h3>
+<ul>
+<li><code>GET|PATCH /api/agent</code> · <code>POST /api/agent/deploy|stop</code> (org resolved from session; no agent id in URL)</li>
+<li><code>POST /api/conversations/:id/takeover|release|send</code></li>
+<li><code>GET /api/stream</code> — SSE of conversation/message events for the org</li>
+</ul>
+<p><b>Auth:</b> use a managed provider (Clerk via Vercel Marketplace is the lowest-effort option). <b>UI:</b> shadcn/ui + Tailwind.</p>
+
+<h2 id="security">10. Security &amp; safety</h2>
+<ul>
+<li>Sandbox = untrusted. No platform secrets inside; scoped, short-lived tokens only.</li>
+<li>Guardrails enforced <b>outside</b> the LLM (worker-side validators on discounts, hours, prohibited claims), not just in the prompt.</li>
+<li>Prompt injection from customer messages assumed. Tools that mutate state (refund, discount, send email) need allow-lists and, where configured, owner approval.</li>
+<li>Per-org data isolation in every Mongo query; test cross-tenant access explicitly.</li>
+<li><b>Compliance:</b> SMS/iMessage/voice outreach is regulated (TCPA, opt-out handling, call recording consent). Inbound-first in MVP; STOP/opt-out honored automatically; outbound campaigns gated until reviewed. This needs real legal input.</li>
+<li>Full audit trail in <code>tool_calls</code>; kill switch per agent and per org.</li>
+</ul>
+
+<h2 id="phases">11. Phases</h2>
+<table>
+<tr><th>Phase</th><th>Scope</th><th>Exit criteria</th></tr>
+<tr><td><b>0 · Spikes</b> (1–2 days)</td><td>Spectrum iMessage hello-world on one real line (typing, reply, reaction, attachment, group) · how iMessage lines get provisioned per business · Daytona create/exec/stop timing · Hermes programmatic send · fx + Daytona adapter feasibility · Photon webhook vs stream</td><td>Harness chosen with numbers; worker hosting chosen</td></tr>
+<tr><td><b>1 · Skeleton</b></td><td>Next.js app, auth, Mongo models with <code>orgId</code> scoping, org onboarding that creates the single agent, playground wired to a local runtime</td><td>Owner can sign up, describe their business, and chat with their agent in browser</td></tr>
+<tr><td><b>2 · iMessage live (MVP)</b></td><td>Daytona provisioning, Channel worker with <code>ChannelAdapter</code> + iMessage adapter, Photon iMessage line per business, contacts/conversations/messages in Mongo, inbox with live stream + takeover, full "iMessage mastered" checklist (§5)</td><td>Real customers iMessage a business's line, agent replies naturally, everything in Mongo, owner sees it live and can take over. Run for days without dropped/duplicate/out-of-order messages</td></tr>
+<tr><td><b>3 · Sales features on iMessage</b></td><td>Knowledge ingest, lead capture/scoring, guardrails, usage page</td><td>Demo for 2 different product types with zero code changes</td></tr>
+<tr><td><b>4 · WhatsApp</b></td><td>Add Photon WhatsApp Business provider + adapter, "connect WhatsApp" onboarding, templates + service-window logic, same contact merged across iMessage/WhatsApp</td><td>Same agent answers on WhatsApp; owner inbox shows both channels per contact</td></tr>
+<tr><td><b>5 · SMS &amp; Voice</b></td><td>SMS channel decision (Photon fallback vs own provider), voice provider, STT/TTS path, <code>calls</code> + transcripts, call log page</td><td>Inbound call answered by the same agent; transcript in the inbox next to that contact's texts</td></tr>
+<tr><td><b>6 · Harden</b></td><td>Metering, kill switch, rate limits, outbound with consent, evals</td><td>Pilot customers</td></tr>
+</table>
+
+<h2 id="risks">12. Risks &amp; open questions</h2>
+<table>
+<tr><th>#</th><th>Item</th><th>Owner / next step</th></tr>
+<tr><td>1</td><td>Photon: pricing, rate limits, lines-per-project, tenancy model for many business owners; API-driven iMessage line provisioning per business (blocks self-serve onboarding); iMessage group-chat and attachment behavior; WhatsApp Business onboarding flow and who handles Meta verification; SMS vs iMessage exposed as distinct channel (later)</td><td>Ask Photon</td></tr>
+<tr><td>2</td><td>(Later phase) Photon voice: SIP detail, STT/TTS who provides, latency, can the same harness drive it?</td><td>Read provider docs; may need our own STT/TTS pipeline</td></tr>
+<tr><td>3</td><td>Hermes integration surface (API server/ACP), per-agent isolation</td><td>Phase 0 spike</td></tr>
+<tr><td>4</td><td>fx is experimental; no Daytona adapter</td><td>Phase 0 spike</td></tr>
+<tr><td>5</td><td>Sandbox cold-start vs reply latency expectations on iMessage</td><td>Measure; consider keep-warm for active agents</td></tr>
+<tr><td>6</td><td>Cost per agent (sandbox + tokens + Photon line)</td><td>Model after spikes</td></tr>
+<tr><td>7</td><td>One always-available sandbox per business adds up at scale; auto-stop + wake-on-message vs live voice calls (a call can't tolerate cold start: keep warm or pre-warm on ring)</td><td>Revisit with cost model</td></tr>
+<tr><td>9</td><td>Shared-collection tenancy means one bug can leak across businesses; decide if enterprise tier needs DB-per-tenant</td><td>Tenant-scoped data-access layer + cross-tenant tests from Phase 1</td></tr>
+<tr><td>8</td><td>Regulatory exposure of automated SMS/voice sales</td><td>Legal review before outbound</td></tr>
+</table>
+<p class="meta">Facts about products above come from public docs and third-party write-ups read on 2026-10-17; Photon, Hermes and Daytona details marked "unknown/verify" were not confirmed.</p>
+
+<h2 id="sources">13. Sources</h2>
+<ul>
+<li><a href="https://github.com/photon-hq/spectrum-ts">photon-hq/spectrum-ts</a> · <a href="https://photon.codes/docs/">Photon docs</a> · <a href="https://photon.codes/blog/frontier-agent-interaction-on-imessage-tech-overview">Photon iMessage tech overview</a></li>
+<li><a href="https://ai-sdk.dev/providers/ai-sdk-harnesses/fx">AI SDK fx harness adapter</a> · <a href="https://vercel.com/changelog/fx-ai-sdk-harness-adapter">Vercel changelog</a></li>
+<li><a href="https://hermes-agent.nousresearch.com/docs/">Hermes Agent docs</a> · <a href="https://runtimewire.com/article/nous-research-hermes-agent-open-harness-sovereignty">RuntimeWire on Hermes</a></li>
+<li><a href="https://www.daytona.io/docs/en/typescript-sdk">Daytona TypeScript SDK</a> · <a href="https://www.daytona.io/docs/en/guides/openai/openai-agents-sdk-with-sandboxes/">Daytona + OpenAI Agents SDK guide</a></li>
+</ul>
+<footer>Sales Agent Control Plane · PRD v0.1 · living document — edit in repo at <code>docs/PRD.html</code></footer>
+</main>
+</div>
+</body>
+</html>
