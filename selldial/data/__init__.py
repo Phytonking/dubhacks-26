@@ -1,1 +1,0 @@
-"""Seed and synthetic data."""

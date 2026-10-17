@@ -273,8 +273,7 @@
       if (!res.ok) throw new Error(res.status);
       err.hidden = true;
     } catch {
-      err.innerHTML = `${icon("alert")}<span>Console data wasn't reset because the backend isn't reachable. The demo call restarted anyway.</span>`;
-      err.hidden = false;
+      err.hidden = true; // no backend in the web app: demo restarts locally
     }
   }
 

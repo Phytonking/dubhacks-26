@@ -2,7 +2,6 @@
 
 - `web/` — Next.js owner console (dashboard, inbox, contacts, agent settings). MongoDB-backed.
 - `agent/` — agent runtime: Daytona sandbox orchestrator (`provisionAgent`, wake, destroy), in-sandbox `agentd`, recorded message I/O (Mongo write-first), Modal LLM calls, e2e test + report. Photon channel adapter and voice gateway not built yet.
-- `selldial/` — Selldial reasoning dashboard and sign-in console (plain HTML on a Python FastAPI mock backend), specs in `selldial/PRODUCT.md` and `selldial/DESIGN.md`. Run: `cd selldial && pip install -r requirements.txt && make dev`.
 - `docs/PRD.html` — product plan. `docs/PRD-agent-runtime-photon-voice.html` — Daytona agent runtime, Photon voice, onboarding. `docs/TEST-REPORT-agent-runtime.html` — latest e2e results.
 - `database information/documentation.html` — living docs: database design, setup, decisions, integrations, changelog.
 
