@@ -7,6 +7,7 @@ for (const k of ["AGENT_ID", "TURN_SECRET"]) {
 }
 const CAPS = {
   imessage: "iMessage: short, natural, 1-3 sentences, no markdown, no bullet lists.",
+  sms: "SMS: plain text only, under 300 characters, no emojis, no markdown. One short paragraph.",
   voice: "Phone call: spoken style, 1-2 short sentences, no markdown or URLs, spell out numbers.",
 };
 const searchKnowledge = (knowledge, q) => {

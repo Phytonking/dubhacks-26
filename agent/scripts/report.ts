@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 const { at, results, extra } = JSON.parse(readFileSync("test-results/results.json", "utf8"));
 const css = readFileSync("../docs/PRD.html", "utf8").match(/<style>[\s\S]*?<\/style>/)![0];
 const esc = (s: unknown) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+let photonLive: any = null; try { photonLive = JSON.parse(readFileSync("test-results/photon-live.json", "utf8")); } catch {}
 const pass = results.filter((r: any) => r.ok).length;
 const ms = (n: number) => (n >= 1000 ? (n / 1000).toFixed(1) + " s" : n + " ms");
 const rows = results.map((r: any) => `<tr><td>${r.ok ? '<span class="pill">PASS</span>' : '<span class="pill warn">FAIL</span>'}</td><td>${esc(r.name)}</td><td>${ms(r.ms)}</td><td>${esc(r.detail)}</td></tr>`).join("");
@@ -50,14 +51,12 @@ const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta n
 <tr><td>7</td><td>Your Daytona account already contains one stopped sandbox with <code>agentOffice</code> labels that is not from this project.</td><td>Left untouched. My test sandboxes carry the label <code>app=sales-agent</code> and are deleted at the end of each run.</td></tr>
 </tbody></table>
 
-<h2>Photon check</h2>
-<p><code>spectrum-ts</code> connected to Spectrum Cloud with your project ID and secret in about 0.4 s (read-only, nothing sent). That confirms the credentials are valid and the SDK works. It does <strong>not</strong> confirm that an iMessage line exists on the project, or that messages arrive. Script: <code>agent/scripts/photon-probe.mts</code>.</p>
-
+${photonLive ? `<h2>Photon live check (real API, read-only)</h2><p class="meta">Run ${esc(photonLive.at)} · <code>agent/scripts/photon-live.mts</code> · sends nothing, creates nothing</p><table><thead><tr><th></th><th>Check</th><th>Detail</th></tr></thead><tbody>${photonLive.results.map((r: any) => `<tr><td>${r.ok ? '<span class="pill">PASS</span>' : '<span class="pill warn">FAIL</span>'}</td><td>${esc(r.name)}</td><td>${esc(r.detail)}</td></tr>`).join("")}</tbody></table><p>The live socket subscribed with the project API key. The Photon event path (message.received, sendMessage routing, delivery events, cursor) is tested offline in the e2e table above with mocked sends, because a real round trip needs a handset texting the line.</p>` : ""}
 <h2>What was not tested</h2>
 <ul>
-<li><strong>Real iMessage in or out.</strong> The test used a loopback channel so no real person was messaged. The Worker is written against a <code>ChannelAdapter</code>; the Spectrum adapter is not written yet.</li>
-<li><strong>Voice calls.</strong> Only a voice-style text turn through the same agent. The SIP gateway, speech-to-text and text-to-speech are not built. Photon's SIP path is documented but unverified end to end.</li>
-<li><strong>Atlas.</strong> Blocked by the network access list (finding 4).</li>
+<li><strong>A real iMessage round trip.</strong> The Photon adapter, event consumer and delivery handling are written and tested with synthetic events and a mocked send. A real round trip needs a handset: an end-user handle assigned to the shared line, then a text to the assigned number.</li>
+<li><strong>Voice calls.</strong> Only a voice-style text turn through the same agent. Photon voice profiles and SIP routing are available over the API but not exercised; speech-to-text, text-to-speech and the LiveKit agent are not built.</li>
+<li><strong>Atlas.</strong> Connected and schema applied since; this e2e still runs on an in-memory Mongo.</li>
 <li><strong>Prod-shape pieces:</strong> custom baseline snapshot, warm pool, token rotation, nightly reconciler, auth on the web app, the Next.js Deploy button. Code for the Hub and LLM gateway exists (<code>agent/src/platform.ts</code>) but is not exercised here because of finding 1.</li>
 <li>Load, concurrency, and long-running soak.</li>
 </ul>
@@ -67,6 +66,7 @@ const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta n
 <tr><td><code>agent/src/orchestrator.ts</code></td><td><code>provisionAgent</code>, <code>wake</code>, <code>destroy</code>; builds the allow-listed sandbox env and refuses to start if a platform secret would leak</td></tr>
 <tr><td><code>agent/sandbox/agentd.mjs</code></td><td>The program that runs inside the sandbox (prompt building, tools, answer cleanup)</td></tr>
 <tr><td><code>agent/src/sandbox-link.ts</code></td><td>Reaches the sandbox via Daytona preview URL; makes the Modal call</td></tr>
+<tr><td><code>agent/src/photon.ts</code>, <code>photon-worker.ts</code></td><td>Photon beta client (HTTP + Socket.IO events with Mongo-persisted replay cursor), event router, delivery-status handling</td></tr>
 <tr><td><code>agent/src/recorded-io.ts</code></td><td>The one path for inbound and outbound messages: write first, guardrails, reconcile</td></tr>
 <tr><td><code>agent/scripts/e2e.ts</code>, <code>report.ts</code></td><td>This test and this report. Run with <code>cd agent && pnpm e2e && pnpm report</code></td></tr>
 <tr><td><code>web/src/lib/schema.ts</code>, <code>models.ts</code></td><td>Message validators extended (new delivery states, nullable provider id, partial unique indexes)</td></tr>
