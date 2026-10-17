@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Selldial Sign In</title>
+  <script>try { if (localStorage.getItem("selldial:theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch {}</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="landing.css">
+</head>
+<body>
+  <!-- The real live screen, playing the demo call, as the backdrop -->
+  <div class="backdrop" aria-hidden="true">
+    <iframe src="live.html?speed=1.5" title="" tabindex="-1" loading="eager"></iframe>
+  </div>
+  <div class="shard shard-top" aria-hidden="true"></div>
+  <div class="shard shard-bottom" aria-hidden="true"></div>
+
+  <header class="masthead">
+    <a class="brand" href="./" aria-label="Selldial">
+      <img src="logo.svg" alt="" width="26" height="36">
+      <span>Selldial</span>
+    </a>
+    <span class="rule" aria-hidden="true"></span>
+    <span class="product">Sales console</span>
+  </header>
+
+  <main class="welcome" aria-labelledby="welcome-title">
+    <h1 id="welcome-title">Welcome</h1>
+    <p class="oneliner">The phone line that sells honestly, tells customers when to wait, and shows its math.</p>
+
+    <div class="choices">
+      <a class="choice tmobile" href="console.html#/home" data-provider="T-Mobile">
+        <svg class="tmark" viewBox="0 0 48 48" aria-hidden="true">
+          <rect x="7" y="22" width="6" height="6" rx="1"/>
+          <rect x="35" y="22" width="6" height="6" rx="1"/>
+          <path d="M11 9h26v8h-3.2c-.4-2.6-1.8-3.8-4.6-3.8H27V35c0 2.3.8 3 3.3 3V41H17.7v-3c2.5 0 3.3-.7 3.3-3V13.2h-2.2c-2.8 0-4.2 1.2-4.6 3.8H11Z"/>
+        </svg>
+        <span>Log in with T&#8209;Mobile</span>
+      </a>
+      <a class="choice other" href="console.html#/home" data-provider="Email">
+        <svg class="pmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
+        <span>Log in via another provider</span>
+      </a>
+    </div>
+
+    <p class="fine">Demo sign-in: no credentials are collected. All customer data is synthetic. <a href="console.html#/about">About Selldial</a></p>
+  </main>
+
+  <script>
+    // Scale the 1440x900 live screen to cover the viewport.
+    const fit = () => document.documentElement.style.setProperty("--backdrop-scale", Math.max(innerWidth / 1440, innerHeight / 900));
+    fit(); addEventListener("resize", fit);
+    // Demo sign-in: remember the provider for the console's profile, then continue.
+    document.querySelectorAll(".choice").forEach((a) => a.addEventListener("click", () => {
+      try { localStorage.setItem("selldial:provider", a.dataset.provider); } catch {}
+    }));
+  </script>
+</body>
+</html>
