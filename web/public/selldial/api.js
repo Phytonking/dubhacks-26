@@ -6,6 +6,8 @@
  *   POST /api/approvals/{id}/resend     -> re-text the owner
  *   POST /api/approvals/{id}/cancel     -> release the Visa hold
  *   POST /api/handoffs/{id}/claim       -> body {"agent": "<name>"}
+ *   POST /api/promos                    -> body {code, max_pct | max_cents, max_uses, requires}; returns the saved code
+ *   POST /api/promos/{code}/remove      -> remove a code
  *
  * If the backend is unreachable, the console runs on demo data and actions update local state.
  */
@@ -61,21 +63,24 @@ window.SelldialAPI = (() => {
       audit("human", "approval.cancelled", ap.conversation, "Visa hold released");
     },
 
-    async savePromo(promo) {
-      const saved = (await post("/api/promos", promo)) || { ...promo, code: promo.code.trim().toUpperCase() };
-      const list = state.policy.discounts;
-      const i = list.findIndex((d) => d.code === saved.code);
-      if (i >= 0) list[i] = { ...list[i], ...saved };
-      else list.push(saved);
-      audit("human", i >= 0 ? "promo.updated" : "promo.created", "-", saved.code);
-      return saved;
-    },
-
     async claimHandoff(id, agent) {
       await post(`/api/handoffs/${id}/claim`, { agent });
       const h = state.handoffs.find((x) => x.id === id);
       h.claimed_by = agent;
       audit("human", "handoff.claimed", h.conversation, agent);
+    },
+
+    async savePromo(promo) {
+      const saved = (await post("/api/promos", promo)) || promo;
+      state.policy.discounts.push(saved);
+      audit("human", "promo.created", "-", saved.code);
+      return saved;
+    },
+
+    async removePromo(code) {
+      await post(`/api/promos/${code}/remove`);
+      state.policy.discounts = state.policy.discounts.filter((d) => d.code !== code);
+      audit("human", "promo.removed", "-", code);
     },
   };
 })();

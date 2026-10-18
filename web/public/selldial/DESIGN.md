@@ -90,7 +90,7 @@ Rules:
 
 **Sales:** most recent sales first. Columns: customer, item, amount, region, date, payment (Paid by agent or Not paid). Filters: region, time, customer, payment status. One simple row layout, no charts, no dense math tables.
 
-**Settings:** a simple page or slide-over with only what is real: Offers and discounts, Spend and approvals, Verification and handoff, and Channels (Voice and SMS and iMessage only; no RCS, no Web chat). No Appearance. Editable controls change local state only and say "Not saved in demo."
+**Settings:** a simple page or slide-over with only what is real: Offers and discounts, Spend and approvals, Verification and handoff, and Channels (Voice, SMS, iMessage and WhatsApp only; no RCS, no Web chat). No Appearance. Editable controls change local state only and say "Not saved in demo."
 
 **About:** a short, well-set page: what Selldial is, how a purchase goes, the trust rules (owner approval, spend limits, audit log). Clean typography, generous space.
 
