@@ -6,7 +6,7 @@
   <title>Selldial Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="icon" href="selldial-logo-icon.png" type="image/png">
   <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="styles.css">
@@ -18,8 +18,13 @@
         <img class="logo" src="selldial-logo-icon.png" alt="" width="25" height="30">
         <span class="brand-name">Selldial</span>
       </a>
-      <nav class="nav-links" id="nav"></nav>
-      <a class="signout" href="index.html">Sign out</a>
+      <button class="menu-btn" type="button" data-menu aria-expanded="false" aria-controls="nav-panel">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>Menu
+      </button>
+      <div class="nav-panel" id="nav-panel">
+        <nav class="nav-links" id="nav" aria-label="Main"></nav>
+        <a class="signout" href="index.html">Sign out</a>
+      </div>
     </aside>
 
     <main class="main">

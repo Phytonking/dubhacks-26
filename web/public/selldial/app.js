@@ -92,15 +92,23 @@
     return c.intent;
   }
 
+  const arrowLink = (label, attrs, aria = "") => `<button class="link-btn" type="button" ${attrs} ${aria ? `aria-label="${esc(aria)}"` : ""}>${label}${icon("arrow")}</button>`;
+
   function reviewRow(s, c) {
-    return `<li class="review-row">
-      <div class="review-main">
+    return `<li class="line review-line">
+      <div class="line-main">
         <div class="row-head"><span class="title">${esc(c.customer)}</span><span class="chip"><span class="dot bad"></span>${reviewKind(c)}</span></div>
         <div class="small muted">${esc(reviewReason(s, c))}</div>
       </div>
-      <span class="small muted num">${ago(c.started)}</span>
-      <button class="btn" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">Open</button>
+      <div class="line-side"><span class="small muted num">${ago(c.started)}</span>${arrowLink("Open", `data-conv="${esc(c.id)}"`, `Open conversation with ${c.customer}`)}</div>
     </li>`;
+  }
+
+  function recentRow(c) {
+    return `<li class="line"><button class="line-btn" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">
+      <span class="line-main"><span class="title">${esc(c.customer)}</span><span class="small muted">${esc(c.intent)} · ${channelKind(c)}</span></span>
+      <span class="line-side"><span class="chip-col">${outcomeChip(c)}</span><span class="small muted num">${ago(c.started)}</span></span>
+    </button></li>`;
   }
 
   function renderHome(s) {
@@ -109,23 +117,26 @@
     const hello = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     const recent = s.conversations.filter((c) => c.status !== "live").slice(0, 5);
+    const n = k.review.length;
+    const lead = n ? `${plural(n, "conversation")} ${n === 1 ? "needs" : "need"} you.` : "Nothing needs you.";
+    const figure = (label, value, cls = "") => `<div><dt>${label}</dt><dd class="num ${cls}">${value}</dd></div>`;
     return `
-      <div class="greeting"><h2>${hello}, ${esc(profile().name)}</h2><span class="muted">${today}</span></div>
-      <div class="grid kpis">
-        <div class="card kpi"><div class="label">Calls handled</div><div class="value num">${k.handled}</div><div class="hint">voice and text today</div></div>
-        <div class="card kpi"><div class="label">Sales paid</div><div class="value num">${k.paid}</div><div class="hint">${money(k.paidCents)} paid by agent</div></div>
-        <div class="card kpi"><div class="label">Not paid</div><div class="value num">${k.notPaid}</div><div class="hint">after a purchase attempt</div></div>
-        <div class="card kpi accent"><div class="label">Saved for customers</div><div class="value num">${money(k.saved)}</div><div class="hint">by advising to wait</div></div>
-      </div>
-      <div class="card section">
-        <div class="card-head"><h2>Needs review</h2><span class="small muted num">${k.review.length}</span></div>
-        ${k.review.length ? `<ul class="list">${k.review.map((c) => reviewRow(s, c)).join("")}</ul>` : `<div class="empty">Nothing needs review. Every call went well.</div>`}
-      </div>
-      <div class="card section">
-        <div class="card-head"><h2>Recent conversations</h2><button class="btn ghost" type="button" data-go="conversations">View all</button></div>
-        <div class="table-wrap"><table><tbody>${recent.map((c) => convRow(c)).join("")}</tbody></table></div>
-      </div>
-      ${k.live ? `<p class="active-line small">${icon("phone")}<b>Active now</b><span class="muted">${esc(k.live.customer)} is on a ${esc(CHANNEL[k.live.channel] === "Voice" ? "call" : "text thread")} about ${esc(k.live.intent.charAt(0).toLowerCase() + k.live.intent.slice(1))}.</span></p>` : ""}`;
+      <section class="hero">
+        <p class="eyebrow">${hello}, ${esc(profile().name)} <span aria-hidden="true">·</span> ${today}</p>
+        <h2 class="hero-line">${lead} <span>${money(k.paidCents)} paid by the agent today.</span></h2>
+        <dl class="figures">
+          ${figure("Calls handled", k.handled)}${figure("Sales paid", k.paid)}${figure("Not paid", k.notPaid)}${figure("Saved for customers", money(k.saved), "save")}
+        </dl>
+        ${k.live ? `<p class="active-line small">${icon("phone")}<b>Active now</b><span class="muted">${esc(k.live.customer)} is on a ${esc(CHANNEL[k.live.channel] === "Voice" ? "call" : "text thread")} about ${esc(k.live.intent.charAt(0).toLowerCase() + k.live.intent.slice(1))}.</span></p>` : ""}
+      </section>
+      <section class="block">
+        <header class="block-head"><h2>Needs review</h2><span class="small muted num">${n}</span></header>
+        ${n ? `<ul class="lines">${k.review.map((c) => reviewRow(s, c)).join("")}</ul>` : `<p class="empty">Nothing needs review. Every call went well.</p>`}
+      </section>
+      <section class="block">
+        <header class="block-head"><h2>Recent conversations</h2>${arrowLink("View all", 'data-go="conversations"')}</header>
+        <ul class="lines">${recent.map(recentRow).join("")}</ul>
+      </section>`;
   }
 
   function renderConversations(s) {
@@ -415,12 +426,17 @@
   // ---------- shell ----------
   const current = () => { const v = location.hash.replace("#/", ""); return VIEWS[v] ? v : "home"; };
 
+  function setMenu(open) {
+    $(".nav").classList.toggle("open", open);
+    $("[data-menu]").setAttribute("aria-expanded", String(open));
+  }
+
   function render() {
     const s = api.state, v = current(), k = stats(s), view = VIEWS[v];
     const counts = { home: k.review.length };
     $("#nav").innerHTML = Object.entries(VIEWS).map(([key, x]) => `
       <button class="nav-link" data-go="${key}" ${key === v ? 'aria-current="page"' : ""}>
-        <span>${x.label}</span>${counts[key] ? `<span class="badge">${counts[key]}</span>` : ""}
+        <span>${x.label}</span>${counts[key] ? `<span class="count" title="${counts[key]} need review"><span class="sr-only">${counts[key]} need review</span><span aria-hidden="true">${counts[key]}</span></span>` : ""}
       </button>`).join("");
     $("#view-title").textContent = view.title ? view.title() : view.label;
     $("#avatar").textContent = profile().name.trim().charAt(0).toUpperCase();
@@ -429,13 +445,14 @@
   }
 
   document.addEventListener("click", async (e) => {
-    const el = e.target.closest("[data-go],[data-close],[data-conv],[data-cust],[data-conv-clear],[data-cust-clear],[data-sale-clear],[data-promo-open],[data-promo-cancel],[data-promo-remove]");
+    const el = e.target.closest("[data-menu],[data-go],[data-close],[data-conv],[data-cust],[data-conv-clear],[data-cust-clear],[data-sale-clear],[data-promo-open],[data-promo-cancel],[data-promo-remove]");
     if (!el) return;
     const d = el.dataset;
     const opener = el.matches("tr") ? el.querySelector(".row-link") || el : el;
     try {
-      if ("close" in d) closeDrawer();
-      else if (d.go) location.hash = `#/${d.go}`;
+      if ("menu" in d) setMenu(!$(".nav").classList.contains("open"));
+      else if ("close" in d) closeDrawer();
+      else if (d.go) { setMenu(false); location.hash = `#/${d.go}`; }
       else if ("convClear" in d) { ui.convOutcome = "all"; ui.convQuery = ""; render(); }
       else if ("saleClear" in d) { ui.saleRegion = "all"; ui.saleTime = "30"; ui.salePay = "all"; ui.saleQuery = ""; render(); }
       else if ("custClear" in d) { ui.custRegion = "all"; ui.custStatus = "all"; ui.custQuery = ""; render(); }
@@ -500,14 +517,14 @@
 
   $("#drawer-backdrop").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") return closeDrawer();
+    if (e.key === "Escape") { if ($(".nav").classList.contains("open")) { setMenu(false); return $("[data-menu]").focus(); } return closeDrawer(); }
     if (e.key !== "Tab" || !$("#drawer").classList.contains("open")) return;
     const focusable = [...$("#drawer").querySelectorAll("button, [href], input, [tabindex]:not([tabindex='-1'])")];
     const first = focusable[0], last = focusable[focusable.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
-  window.addEventListener("hashchange", () => { closeDrawer(); render(); });
+  window.addEventListener("hashchange", () => { setMenu(false); closeDrawer(); render(); });
 
   const byRecent = (s) => s.conversations.sort((a, b) => a.started - b.started);
   api.load().then(() => { byRecent(api.state); render(); });
