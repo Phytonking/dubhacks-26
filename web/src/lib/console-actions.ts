@@ -71,6 +71,29 @@ export async function removePromo(code: string) {
   return { ok: true };
 }
 
+/**
+ * A deal the customer accepted is Pending until someone confirms it was paid. This records that as an order,
+ * which is what the console counts as a sale. One order per conversation (re-confirming updates it, never duplicates).
+ * Nothing here charges a card: the amount is what the team collected or confirmed outside the agent.
+ */
+export async function markOrderPaid(conversationId: string, body: Document) {
+  const { _id: orgId } = await getCurrentOrg();
+  const db = await getDb();
+  const conv = await db.collection<Document>("conversations").findOne({ _id: oid(conversationId), orgId });
+  if (!conv) throw new HttpError(404, "no conversation with that id");
+  const amountCents = Math.round(Number(body.amount_cents));
+  if (!Number.isFinite(amountCents) || amountCents <= 0 || amountCents > 100_000_00) throw new HttpError(400, "amount must be between $0.01 and $100,000");
+  const deal = await db.collection<Document>("notifications").findOne({ orgId, conversationId: conv._id, kind: "deal" }, { sort: { createdAt: -1 } });
+  const item = String(body.item ?? "").trim().slice(0, 160) || String(deal?.message ?? "").replace(/^Customer accepted:\s*/i, "").slice(0, 160) || "Order";
+  const now = new Date();
+  await db.collection<Document>("orders").updateOne(
+    { orgId, conversationId: conv._id },
+    { $set: { contactId: conv.contactId, amountCents, item, status: "paid", source: "owner_confirmed", updatedAt: now }, $setOnInsert: { createdAt: now } },
+    { upsert: true },
+  );
+  return { ok: true };
+}
+
 export async function run(fn: () => Promise<unknown>) {
   try {
     return Response.json(await fn());

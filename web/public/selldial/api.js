@@ -96,6 +96,15 @@ window.SelldialAPI = (() => {
       audit("human", "approval.cancelled", ap.conversation, "Visa hold released");
     },
 
+    // Confirm a pending deal was paid: the backend records the order, which the console counts as a sale.
+    async markPaid(conversationId, { amount_cents, item }) {
+      await post(`/api/conversations/${conversationId}/order`, { amount_cents, item });
+      if (mode === "live") return refresh();
+      const c = state.conversations.find((x) => x.id === conversationId);
+      c.outcome = "purchased"; c.status = "closed"; c.amount_cents = amount_cents; c.item = item || c.item;
+      audit("human", "order.paid", conversationId, c.item || "");
+    },
+
     async claimHandoff(id, agent) {
       await post(`/api/handoffs/${id}/claim`, { agent });
       if (mode === "live") return refresh();

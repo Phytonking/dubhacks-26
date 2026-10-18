@@ -491,6 +491,10 @@
     showDrawer(`${drawerHead(c.customer, `${channelKind(c)} · ${ago(c.started)}`, from)}
       <div class="drawer-body">
         <section class="report-head"><p class="section-label">Summary</p><p class="summary">${esc(c.summary || c.intent)}</p></section>
+        ${c.status === "awaiting_approval" && c.outcome !== "purchased" ? `<section class="report-sec" aria-label="Pending order"><p class="section-label">Pending order</p>
+          <p class="small muted">${esc(c.item || "The customer accepted a deal.")} Once it is paid, confirm it here so it counts as a sale.</p>
+          <form class="pf-actions" data-mark-paid-form="${esc(c.id)}"><label class="money-input"><span aria-hidden="true">$</span><input name="amount" type="number" min="0.01" step="any" inputmode="decimal" aria-label="Amount paid in dollars" required></label>
+          <button class="btn primary" type="submit">Mark paid</button></form></section>` : ""}
         <section class="transcript-main" aria-label="Transcript">
           <p class="section-label">Transcript <span class="muted">${plural(talk.length, "message")}</span></p>
           <div class="transcript" id="transcript">${transcriptHtml(talk)}</div>
@@ -670,6 +674,18 @@
     el.setSelectionRange(pos, pos);
   });
 
+  document.addEventListener("submit", async (e) => {
+    const f = e.target.closest("[data-mark-paid-form]");
+    if (!f) return;
+    e.preventDefault();
+    const dollars = Number(new FormData(f).get("amount"));
+    if (!(dollars > 0)) return toast("Enter the amount that was paid");
+    const id = f.dataset.markPaidForm, c = api.state.conversations.find((x) => x.id === id);
+    try {
+      await api.markPaid(id, { amount_cents: Math.round(dollars * 100), item: c?.item });
+      closeDrawer(); render(); toast("Recorded as a paid sale");
+    } catch (err) { toast(err.message); }
+  });
   $("#drawer-backdrop").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { if ($(".nav").classList.contains("open")) { setMenu(false); return $("[data-menu]").focus(); } return closeDrawer(); }
