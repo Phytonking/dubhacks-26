@@ -70,7 +70,7 @@
     settings: { label: "Settings", render: renderSettings },
     about: { label: "About", render: renderAbout },
   };
-  const ui = { convOutcome: "all", convQuery: "", saleRegion: "all", saleTime: "30", salePay: "all", saleQuery: "", custQuery: "", custRegion: "all", custStatus: "all", set: {}, promoForm: null };
+  const ui = { convOutcome: "all", convQuery: "", saleTab: "list", saleRegion: "all", saleTime: "30", salePay: "all", saleQuery: "", custQuery: "", custRegion: "all", custStatus: "all", set: {}, promoForm: null };
 
   function convRow(c) {
     return `<tr class="clickable" data-conv="${esc(c.id)}">
@@ -207,47 +207,129 @@
     return days === 1 ? "Yesterday" : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
 
+  // Region and time narrow both tabs, so the list and the charts always count the same sales.
+  const salesInScope = (s) => s.conversations.filter(isSale).sort((a, b) => a.started - b.started)
+    .filter((c) => c.started < Number(ui.saleTime) * DAY)
+    .filter((c) => ui.saleRegion === "all" || c.region === ui.saleRegion);
+  const isPaid = (c) => c.outcome === "purchased";
+  const optHtml = (v, cur, label) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
+
   function renderSales(s) {
-    const q = ui.saleQuery.trim().toLowerCase();
-    const all = s.conversations.filter(isSale).sort((a, b) => a.started - b.started);
-    const regions = [...new Set(all.map((c) => c.region))].sort();
-    const rows = all
-      .filter((c) => c.started < Number(ui.saleTime) * DAY)
-      .filter((c) => ui.saleRegion === "all" || c.region === ui.saleRegion)
-      .filter((c) => ui.salePay === "all" || (ui.salePay === "paid") === (c.outcome === "purchased"))
-      .filter((c) => !q || c.customer.toLowerCase().includes(q));
-    const paid = rows.filter((c) => c.outcome === "purchased").length;
-    const opt = (v, cur, label) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
-    const pay = (c) => c.outcome === "purchased" ? `<span class="chip"><span class="dot ok"></span>Paid by agent</span>` : `<span class="chip"><span class="dot bad"></span>Not paid</span>`;
+    const scope = salesInScope(s);
+    const regions = [...new Set(s.conversations.filter(isSale).map((c) => c.region))].sort();
+    const list = ui.saleTab === "list";
+    const tab = (id, label) => `<button class="tab" type="button" role="tab" id="tab-${id}" data-sale-tab="${id}" aria-selected="${ui.saleTab === id}" aria-controls="sale-panel"${ui.saleTab === id ? "" : ' tabindex="-1"'}>${label}</button>`;
     return `
+      <div class="tabs" role="tablist" aria-label="Sales views">${tab("list", "Sales")}${tab("analytics", "Analytics")}</div>
       <div class="filters" style="margin-bottom:12px">
-        <label class="select"><span>Region</span><select data-ui="saleRegion">${opt("all", ui.saleRegion, "All regions")}${regions.map((x) => opt(x, ui.saleRegion, x)).join("")}</select></label>
-        <label class="select"><span>Time</span><select data-ui="saleTime">${Object.entries(TIMES).map(([v, l]) => opt(v, ui.saleTime, l)).join("")}</select></label>
-        <label class="select"><span>Payment</span><select data-ui="salePay">${opt("all", ui.salePay, "All payments")}${opt("paid", ui.salePay, "Paid by agent")}${opt("notpaid", ui.salePay, "Not paid")}</select></label>
-        <input class="search push" id="sale-search" type="search" aria-label="Search customer" placeholder="Search customer" value="${esc(ui.saleQuery)}">
+        <label class="select"><span>Region</span><select data-ui="saleRegion">${optHtml("all", ui.saleRegion, "All regions")}${regions.map((x) => optHtml(x, ui.saleRegion, x)).join("")}</select></label>
+        <label class="select"><span>Time</span><select data-ui="saleTime">${Object.entries(TIMES).map(([v, l]) => optHtml(v, ui.saleTime, l)).join("")}</select></label>
+        ${list ? `<label class="select"><span>Payment</span><select data-ui="salePay">${optHtml("all", ui.salePay, "All payments")}${optHtml("paid", ui.salePay, "Paid by agent")}${optHtml("notpaid", ui.salePay, "Not paid")}</select></label>
+        <input class="search push" id="sale-search" type="search" aria-label="Search customer" placeholder="Search customer" value="${esc(ui.saleQuery)}">` : ""}
       </div>
+      <div id="sale-panel" role="tabpanel" aria-labelledby="tab-${ui.saleTab}">${list ? renderSaleList(scope) : renderAnalytics(scope)}</div>`;
+  }
+
+  function renderSaleList(scope) {
+    const q = ui.saleQuery.trim().toLowerCase();
+    const rows = scope
+      .filter((c) => ui.salePay === "all" || (ui.salePay === "paid") === isPaid(c))
+      .filter((c) => !q || c.customer.toLowerCase().includes(q));
+    const paid = rows.filter(isPaid).length;
+    const pay = (c) => isPaid(c) ? `<span class="chip"><span class="dot ok"></span>Paid by agent</span>` : `<span class="chip"><span class="dot bad"></span>Not paid</span>`;
+    return `
       <p class="small muted" style="margin:0 0 12px">${plural(rows.length, "sale")} · ${paid} paid by agent · ${rows.length - paid} not paid</p>
       <div class="card table-card"><div class="table-wrap flat"><table class="conv-table">
         <thead><tr><th>Customer</th><th class="hide-sm">Item</th><th class="right">Amount</th><th class="hide-sm">Region</th><th class="hide-sm">Date</th><th>Payment</th></tr></thead>
         <tbody>${rows.map((c) => `<tr class="clickable" data-conv="${esc(c.id)}">
           <td><button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open sale to ${esc(c.customer)}">${esc(c.customer)}</button><div class="small muted show-sm">${esc(c.item)} · ${saleDate(c.started)}</div></td>
           <td class="hide-sm">${esc(c.item)}</td>
-          <td class="right num">${money(c.amount_cents)}</td>
+          <td class="right money">${money(c.amount_cents)}</td>
           <td class="hide-sm">${esc(c.region)}</td>
           <td class="hide-sm muted num">${saleDate(c.started)}</td>
           <td>${pay(c)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No sales match. <button class="btn ghost" type="button" data-sale-clear>Clear filters</button></td></tr>`}</tbody>
       </table></div></div>`;
   }
 
+  // ---------- analytics: plain SVG and CSS, counted from the same sales as the list ----------
+  const chartBlock = (title, takeaway, body) => `<section class="chart"><h3>${title}</h3><p class="small muted">${takeaway}</p>${body}</section>`;
+  const sumCents = (rows) => rows.reduce((n, c) => n + (c.amount_cents || 0), 0);
+  const group = (rows, key) => rows.reduce((m, c) => ((m[key(c)] ||= []).push(c), m), {});
+  const hbars = (items) => { // items: [{label, value, note}]; bar width is relative to the largest
+    const max = Math.max(...items.map((i) => i.value), 1);
+    return `<ul class="hbars">${items.map((i) => `<li><span class="hb-label">${esc(i.label)}</span><span class="hb-track"><span class="hb-fill" style="width:${Math.max(2, (i.value / max) * 100)}%"></span></span><span class="hb-note">${i.note}</span></li>`).join("")}</ul>`;
+  };
+
+  function renderAnalytics(rows) {
+    if (!rows.length) return `<p class="empty">No sales in this range. <button class="btn ghost" type="button" data-sale-clear>Clear filters</button></p>`;
+    const days = Number(ui.saleTime), paid = rows.filter(isPaid), notPaid = rows.length - paid.length;
+    const span = days === 1 ? "the last 24 hours" : `the last ${days} days`;
+
+    // 1. Sales per day (per hour when the range is one day), paid and not paid stacked.
+    const unit = days === 1 ? 60 : DAY, n = days === 1 ? 24 : days, W = 20, H = 150;
+    const buckets = Array.from({ length: n }, () => ({ paid: 0, notPaid: 0 }));
+    rows.forEach((c) => { buckets[n - 1 - Math.floor(c.started / unit)][isPaid(c) ? "paid" : "notPaid"]++; });
+    const top = Math.max(...buckets.map((b) => b.paid + b.notPaid), 1);
+    const busiest = buckets.reduce((m, b, i) => (b.paid + b.notPaid > m.t ? { i, t: b.paid + b.notPaid } : m), { i: 0, t: 0 });
+    const bucketName = (i) => {
+      const ago = n - 1 - i;
+      if (days === 1) return ago ? `${ago}h ago` : "the last hour";
+      return ago === 0 ? "today" : new Date(Date.now() - ago * DAY * 60000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    };
+    const bars = buckets.map((b, i) => {
+      const hp = (b.paid / top) * H, hn = (b.notPaid / top) * H, x = i * W + 3;
+      return `<g><title>${bucketName(i)}: ${b.paid} paid, ${b.notPaid} not paid</title><rect x="${x}" y="0" width="14" height="${H}" fill="transparent"/>${b.paid ? `<rect x="${x}" y="${H - hp}" width="14" height="${hp}" fill="var(--ok)"/>` : ""}${b.notPaid ? `<rect x="${x}" y="${H - hp - hn}" width="14" height="${hn}" fill="var(--bad)"/>` : ""}</g>`;
+    }).join("");
+    const grid = Array.from({ length: top }, (_, k) => { const y = H - ((k + 1) / top) * H; return `<line x1="0" x2="${n * W}" y1="${y}" y2="${y}" stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/>`; }).join("");
+    const perDay = chartBlock(days === 1 ? "Sales per hour" : "Sales per day",
+      `${paid.length} paid by agent and ${notPaid} not paid in ${span}. Busiest ${days === 1 ? "hour" : "day"}: ${bucketName(busiest.i)}, ${plural(busiest.t, "sale")}.`,
+      `<svg class="bars-svg" viewBox="0 0 ${n * W} ${H}" preserveAspectRatio="none" role="img" aria-label="Paid and not paid sales per ${days === 1 ? "hour" : "day"}">${grid}${bars}<line x1="0" x2="${n * W}" y1="${H}" y2="${H}" stroke="var(--color-muted)" stroke-width="1" vector-effect="non-scaling-stroke"/></svg>
+      <div class="axis small muted"><span>${days === 1 ? "24h ago" : `${days} days ago`}</span><span>${days === 1 ? "Now" : "Today"}</span></div>
+      <div class="legend small"><span><span class="dot ok"></span>Paid by agent</span><span><span class="dot bad"></span>Not paid</span><span class="muted">Grid lines: 1 sale each</span></div>`);
+
+    // 2. Revenue paid by the agent, by region.
+    const byRegion = Object.entries(group(paid, (c) => c.region)).map(([r, cs]) => ({ label: r, cents: sumCents(cs) })).sort((a, b) => b.cents - a.cents);
+    const revenue = chartBlock("Revenue by region",
+      !byRegion.length ? "Nothing was paid by the agent in this range."
+        : byRegion.length === 1 ? `The agent was paid ${money(byRegion[0].cents)} in ${byRegion[0].label}.`
+        : `${byRegion[0].label} brings in the most: ${money(byRegion[0].cents)} of ${money(sumCents(paid))} paid by the agent.`,
+      byRegion.length ? hbars(byRegion.map((r) => ({ label: r.label, value: r.cents, note: `<span class="mono">${money(r.cents)}</span>` }))) : "");
+
+    // 3. Payment rate: paid / attempted, with a small trend across the range.
+    const pct = (x) => `${Math.round(x * 100)}%`;
+    const size = days === 30 ? 6 : 1, count = days === 1 ? 0 : Math.ceil(days / size);
+    const pts = Array.from({ length: count }, (_, i) => rows.filter((c) => Math.floor(c.started / (size * DAY)) === count - 1 - i))
+      .map((cs) => cs.length ? cs.filter(isPaid).length / cs.length : null);
+    const real = pts.map((v, i) => ({ v, i })).filter((p) => p.v != null);
+    let trend = `<p class="small muted">Pick a longer range to see a trend.</p>`, note = "";
+    if (real.length >= 2) {
+      const x = (i) => 4 + (i / Math.max(count - 1, 1)) * 152, y = (v) => 4 + (1 - v) * 40;
+      const line = real.map((p) => `${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(" "), end = real[real.length - 1];
+      trend = `<svg class="spark" viewBox="0 0 160 48" role="img" aria-label="Payment rate over time, from ${pct(real[0].v)} to ${pct(end.v)}"><polyline points="${line}" fill="none" stroke="var(--color-violet)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${x(end.i).toFixed(1)}" cy="${y(end.v).toFixed(1)}" r="3.5" fill="var(--color-violet)"/></svg>`;
+      const d = Math.round((end.v - real[0].v) * 100);
+      note = d === 0 ? "about the same as at the start of the range" : `${d > 0 ? "up" : "down"} ${Math.abs(d)} points since the start of the range`;
+    }
+    const payRate = chartBlock("Payment rate",
+      `${paid.length} of ${plural(rows.length, "attempted sale")} ${paid.length === 1 ? "was" : "were"} paid by the agent${note ? `, ${note}` : ""}.`,
+      `<div class="rate"><span class="rate-fig">${pct(paid.length / rows.length)}</span>${trend}</div>`);
+
+    // 4. Top items sold: paid sales, ranked by revenue.
+    const items = Object.entries(group(paid, (c) => c.item)).map(([item, cs]) => ({ item, n: cs.length, cents: sumCents(cs) })).sort((a, b) => b.cents - a.cents || b.n - a.n).slice(0, 5);
+    const topItems = chartBlock("Top items sold",
+      items.length ? `${items[0].item} leads with ${money(items[0].cents)} from ${plural(items[0].n, "sale")}.` : "Nothing was paid by the agent in this range.",
+      items.length ? hbars(items.map((i) => ({ label: i.item, value: i.cents, note: `<span class="mono">${money(i.cents)}</span> <span class="muted">· ${i.n}</span>` }))) : "");
+
+    return `<div class="analytics">${perDay}${revenue}${payRate}${topItems}</div>`;
+  }
+
   // ---------- settings (local state only: nothing here is saved) ----------
   const SET_DEFAULTS = { limit: 1500, askOwner: true, handoffAsk: true, fails: "3", voice: true, sms: true, imessage: true, whatsapp: true };
   const setting = (k) => (k in ui.set ? ui.set[k] : k.startsWith("offer:") ? true : SET_DEFAULTS[k]);
-  const NOT_SAVED = `<span class="hint">Not saved in demo</span>`, READ_ONLY = `<span class="hint">Read-only in demo</span>`;
   const toggle = (key, label) => `<label class="toggle"><input type="checkbox" data-set="${esc(key)}"${setting(key) ? " checked" : ""}><span class="track" aria-hidden="true"></span><span class="sr-only">${esc(label)}</span><span class="toggle-text">${setting(key) ? "On" : "Off"}</span></label>`;
-  const setRow = (title, desc, control, hint) => `<li class="set-row">
+  const setRow = (title, desc, control) => `<li class="set-row">
     <div class="grow"><div class="title">${title}</div>${desc ? `<div class="small muted">${desc}</div>` : ""}</div>
-    <div class="set-control">${control}${hint}</div></li>`;
-  const setCard = (title, sub, rows) => `<section class="card"><div class="card-head"><div><h2>${title}</h2><div class="small muted">${sub}</div></div></div><ul class="list">${rows}</ul></section>`;
+    <div class="set-control">${control}</div></li>`;
+  const setCard = (title, sub, rows) => `<section class="block"><header class="block-head"><h2>${title}</h2></header><p class="small muted set-sub">${sub}</p><ul class="lines">${rows}</ul></section>`;
 
   const amountText = (d) => d.max_pct != null ? `${d.max_pct}%` : money(d.max_cents, d.max_cents % 100 === 0);
   const offerDesc = (d) => d.added
@@ -272,7 +354,7 @@
         <input id="pf-uses" name="uses" type="number" min="1" step="1" inputmode="numeric" value="${esc(f.uses)}"${bad("uses")}>${err("uses")}</div>
       <div class="pf-field"><label for="pf-requires">Requirement <span class="muted">(optional)</span></label>
         <input id="pf-requires" name="requires" value="${esc(f.requires)}" placeholder="New lines only" maxlength="80" autocomplete="off"></div>
-      <div class="pf-actions"><button class="btn primary" type="submit">Add code</button><button class="btn ghost" type="button" data-promo-cancel>Cancel</button><span class="hint">Not saved in demo</span></div>
+      <div class="pf-actions"><button class="btn primary" type="submit">Add code</button><button class="btn ghost" type="button" data-promo-cancel>Cancel</button></div>
     </form>`;
   }
 
@@ -290,19 +372,20 @@
     const offers = s.policy.discounts.map((d) => setRow(
       `<span class="mono">${esc(d.code)}</span>`,
       offerDesc(d),
-      `<div class="ctl-row">${toggle(`offer:${d.code}`, `${d.code} offered`)}${d.added ? `<button class="btn ghost" type="button" data-promo-remove="${esc(d.code)}" aria-label="Remove ${esc(d.code)}">Remove</button>` : ""}</div>`, NOT_SAVED)).join("")
+      `<div class="ctl-row">${toggle(`offer:${d.code}`, `${d.code} offered`)}${d.added ? `<button class="btn ghost" type="button" data-promo-remove="${esc(d.code)}" aria-label="Remove ${esc(d.code)}">Remove</button>` : ""}</div>`)).join("")
       + `<li class="promo-add">${ui.promoForm ? promoForm(ui.promoForm) : `<button class="btn" type="button" data-promo-open>${icon("plus")}Add promo code</button>`}</li>`;
     const spend = setRow("Owner approval limit", "Purchases above this need a text YES from the account owner.",
-        `<label class="money-input"><span aria-hidden="true">$</span><input type="number" min="0" step="50" inputmode="numeric" data-set="limit" aria-label="Owner approval limit in dollars" value="${esc(setting("limit"))}"></label>`, NOT_SAVED)
-      + setRow("Ask the owner above the limit", "When off, over-limit purchases are declined.", toggle("askOwner", "Ask the owner above the limit"), NOT_SAVED)
-      + setRow("How the owner replies", "By text: YES to approve, NO to decline.", `<span class="muted">Text reply</span>`, READ_ONLY);
-    const verify = setRow("Verify before account changes", "The agent checks a PIN first, every time.", `<span class="muted">Always on</span>`, READ_ONLY)
+        `<label class="money-input"><span aria-hidden="true">$</span><input type="number" min="0" step="50" inputmode="numeric" data-set="limit" aria-label="Owner approval limit in dollars" value="${esc(setting("limit"))}"></label>`)
+      + setRow("Ask the owner above the limit", "When off, over-limit purchases are declined.", toggle("askOwner", "Ask the owner above the limit"))
+      + setRow("How the owner replies", "By text: YES to approve, NO to decline.", `<span class="muted">Text reply</span>`);
+    const verify = setRow("Verify before account changes", "The agent checks a PIN first, every time.", `<span class="muted">Always on</span>`)
       + setRow("Hand off after failed PIN attempts", "Then a person takes the conversation.",
-        `<select class="set-select" data-set="fails" aria-label="Failed PIN attempts before handoff">${["2", "3", "5"].map((n) => `<option value="${n}"${setting("fails") === n ? " selected" : ""}>${n} attempts</option>`).join("")}</select>`, NOT_SAVED)
-      + setRow("Hand off when asked", "If the customer asks for a person, the agent passes them on.", toggle("handoffAsk", "Hand off when asked"), NOT_SAVED);
+        `<select class="set-select" data-set="fails" aria-label="Failed PIN attempts before handoff">${["2", "3", "5"].map((n) => `<option value="${n}"${setting("fails") === n ? " selected" : ""}>${n} attempts</option>`).join("")}</select>`)
+      + setRow("Hand off when asked", "If the customer asks for a person, the agent passes them on.", toggle("handoffAsk", "Hand off when asked"));
     const channels = [["voice", "Voice", "Phone calls"], ["sms", "SMS", "Text messages"], ["imessage", "iMessage", "Messages on Apple devices"], ["whatsapp", "WhatsApp", "Chats on WhatsApp"]]
-      .map(([k, name, desc]) => setRow(name, desc, toggle(k, `${name} enabled`), NOT_SAVED)).join("");
+      .map(([k, name, desc]) => setRow(name, desc, toggle(k, `${name} enabled`))).join("");
     return `<div class="settings">
+      <p class="set-note small">${icon("alert")}Changes here are not saved in this demo.</p>
       ${setCard("Offers and discounts", "The agent can offer only these codes, and never above the maximum.", offers)}
       ${setCard("Spend and approvals", "When the owner has to say yes.", spend)}
       ${setCard("Verification and handoff", "How the agent protects an account and when it steps back.", verify)}
@@ -317,7 +400,7 @@
       ["Pay and confirm", "After a YES, checkout runs and a receipt is texted to the customer."],
     ];
     const rules = [
-      ["Owner approval", "No purchase above the limit goes through without a text YES."],
+      ["Owner approval", "No purchase above $1,500 goes through without a text YES from the account owner."],
       ["Spend limits", "The agent can't pass the household limit or offer a discount outside the policy."],
       ["Audit log", "Every action is recorded: what happened, who did it and why."],
     ];
@@ -328,11 +411,11 @@
       </header>
       <section>
         <h3 class="about-h">How a purchase goes</h3>
-        <ol class="about-steps">${steps.map(([t, d], i) => `<li class="card"><span class="step-n mono">0${i + 1}</span><b>${t}</b><span class="muted">${d}</span></li>`).join("")}</ol>
+        <ol class="about-steps">${steps.map(([t, d], i) => `<li><span class="step-n mono">0${i + 1}</span><b>${t}</b><span class="muted">${d}</span></li>`).join("")}</ol>
       </section>
       <section>
         <h3 class="about-h">Trust rules</h3>
-        <ul class="about-rules card">${rules.map(([t, d]) => `<li><b>${t}</b><span class="muted">${d}</span></li>`).join("")}</ul>
+        <ul class="about-rules">${rules.map(([t, d]) => `<li><b>${t}</b><span class="muted">${d}</span></li>`).join("")}</ul>
       </section>
       <p class="about-note small muted">Demo data only. All customers and payments are synthetic.</p>
     </div>`;
@@ -485,7 +568,7 @@
   }
 
   document.addEventListener("click", async (e) => {
-    const el = e.target.closest("[data-menu],[data-go],[data-close],[data-conv],[data-cust],[data-conv-clear],[data-cust-clear],[data-sale-clear],[data-promo-open],[data-promo-cancel],[data-promo-remove]");
+    const el = e.target.closest("[data-menu],[data-go],[data-close],[data-conv],[data-cust],[data-conv-clear],[data-cust-clear],[data-sale-clear],[data-sale-tab],[data-promo-open],[data-promo-cancel],[data-promo-remove]");
     if (!el) return;
     const d = el.dataset;
     const opener = el.matches("tr") ? el.querySelector(".row-link") || el : el;
@@ -494,6 +577,7 @@
       else if ("close" in d) closeDrawer();
       else if (d.go) { setMenu(false); location.hash = `#/${d.go}`; }
       else if ("convClear" in d) { ui.convOutcome = "all"; ui.convQuery = ""; render(); }
+      else if (d.saleTab) { ui.saleTab = d.saleTab; render(); $(`[data-sale-tab="${d.saleTab}"]`).focus(); }
       else if ("saleClear" in d) { ui.saleRegion = "all"; ui.saleTime = "30"; ui.salePay = "all"; ui.saleQuery = ""; render(); }
       else if ("custClear" in d) { ui.custRegion = "all"; ui.custStatus = "all"; ui.custQuery = ""; render(); }
       else if ("promoOpen" in d) { ui.promoForm = { code: "", kind: "cents", amount: "", uses: "", requires: "", errors: {} }; render(); $("#pf-code").focus(); }
@@ -527,7 +611,7 @@
         max_pct: f.kind === "pct" ? Number(f.amount) : null, max_cents: f.kind === "cents" ? Math.round(Number(f.amount) * 100) : null,
         max_uses: f.uses.trim() ? Number(f.uses) : null });
       ui.promoForm = null;
-      render(); toast(`${code} added to this list. Not saved in demo.`); $("[data-promo-open]").focus();
+      render(); toast(`${code} added to the list.`); $("[data-promo-open]").focus();
     } catch (err) {
       toast(err.message);
     }

@@ -97,7 +97,7 @@ The owner approval limit in the synthetic data is **$1,500.00** everywhere (Sett
 
 **Customers:** most recent customers first. Columns: name, phone, region, status, last conversation. Filters: region, name, number, status. Nothing else. Clicking a row opens a small drawer with name, number, region, status and their conversations. No churn risk, no financing.
 
-**Sales:** most recent sales first. Columns: customer, item, amount, region, date, payment (Paid by agent or Not paid). Filters: region, time, customer, payment status. One simple row layout, no charts, no dense math tables. Money in any table is JetBrains Mono, right-aligned, always two decimals, and the same weight as the row's title.
+**Sales:** most recent sales first. Columns: customer, item, amount, region, date, payment (Paid by agent or Not paid). Filters: region, time, customer, payment status. One simple row layout, no dense math tables. A second subtab, Analytics, shows four plain SVG/CSS charts (sales per day, revenue by region, payment rate with a small trend, top items), each with a plain title and a one-line takeaway, counted from the same sales and filtered by the same region and time. Chart data uses violet plus the paid and not-paid state colours, never pink. Money in any table is JetBrains Mono, right-aligned, always two decimals, and the same weight as the row's title.
 
 **Settings:** a simple page or slide-over with only what is real: Offers and discounts, Spend and approvals, Verification and handoff, and Channels (Voice, SMS, iMessage and WhatsApp only; no RCS, no Web chat). No Appearance. Editable controls change local state only. One note at the top of the page says "Changes here are not saved in this demo." The controls do not repeat it.
 
