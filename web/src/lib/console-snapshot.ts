@@ -189,6 +189,7 @@ export async function buildSnapshot() {
   const audit = [
     ...toolCalls.map((t) => ({ at: new Date(t.ts).getTime(), actor: "agent", action: t.tool, conversation: idStr(t.conversationId), detail: t.status })),
     ...turns.flatMap((t) => (t.toolCalls ?? []).map((x: Document) => ({ at: new Date(t.startedAt).getTime(), actor: "agent", action: x.name, conversation: idStr(t.conversationId), detail: x.ok ? "ok" : "failed" }))),
+    ...orderDocs.map((o) => ({ at: new Date(o.updatedAt ?? o.createdAt).getTime(), actor: o.source === "owner_confirmed" ? "human" : "agent", action: "order.paid", conversation: idStr(o.conversationId), detail: o.item ?? "" })),
     ...approvalDocs.filter((a) => a.resolvedAt).map((a) => ({ at: new Date(a.resolvedAt).getTime(), actor: a.resolvedBy ?? "human", action: `approval.${a.status}`, conversation: idStr(a.conversationId), detail: a.checkout ?? "" })),
   ].sort((a, b) => b.at - a.at).slice(0, 60).map(({ at, ...e }) => ({ t: minsAgo(new Date(at), now), ...e }));
 
