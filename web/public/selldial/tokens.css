@@ -111,7 +111,8 @@
 html, body { margin: 0; overflow-x: clip; }
 html { accent-color: var(--color-accent); scrollbar-color: var(--color-rule) transparent; }
 body {
-  background: var(--page-bg) fixed;
+  background: var(--page-bg);
+  background-attachment: fixed; /* applies to every layer, so sticky bars can match the page exactly */
   color: var(--color-ink-2);
   font: 400 var(--text-sm)/1.45 var(--font-body);
   -webkit-font-smoothing: antialiased;

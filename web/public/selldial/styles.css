@@ -29,7 +29,8 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
-  background: var(--page-bg) fixed;
+  background: var(--page-bg);
+  background-attachment: fixed;
   color: var(--text);
   font: 14px/1.45 var(--font);
   -webkit-font-smoothing: antialiased;
@@ -43,7 +44,7 @@ table { font-variant-numeric: tabular-nums; }
 .num { font-variant-numeric: tabular-nums; }
 
 /* Layout: a quiet rail, a slim sticky top bar, content on the plum ground */
-:root { --top-h: 64px; }
+:root { --top-h: 72px; }
 .app { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
 .nav {
   position: sticky; top: 0; height: 100vh;
@@ -82,7 +83,8 @@ table { font-variant-numeric: tabular-nums; }
 .main { min-width: 0; padding: 0 32px 56px; }
 .top {
   position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  min-height: var(--top-h); margin-bottom: 24px; background: color-mix(in oklch, var(--color-bg) 92%, transparent); border-bottom: 1px solid var(--line);
+  min-height: var(--top-h); margin: 0 -32px 24px; padding: 20px 32px 16px;
+  background: var(--page-bg); background-attachment: fixed; border-bottom: 1px solid var(--color-edge);
 }
 .top h1 { margin: 0; font: 500 var(--text-lg)/1.2 var(--font-display); letter-spacing: -.015em; }
 .tenant { color: var(--color-ink-2); font-size: 13px; }
@@ -224,7 +226,7 @@ td.right, th.right { text-align: right; }
   .nav.open .nav-panel { display: flex; }
   .nav-link { min-height: 48px; }
   .main { padding: 0 16px 40px; }
-  .top { position: static; min-height: 56px; margin-bottom: 8px; }
+  .top { position: static; min-height: 0; margin: 0 -16px 8px; padding: 16px; }
   .avatar { display: none; }
   .meta { grid-template-columns: 1fr 1fr; }
   .search { min-width: 0; flex: 1; }
