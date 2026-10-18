@@ -135,7 +135,7 @@
       <td class="muted hide-sm">${via(c)}</td>
       <td>${esc(c.intent)}</td>
       <td>${outcomeChip(c)}</td>
-      <td class="right"><span class="t-mono">${ago(c.started)}</span></td>
+      <td class="right"><span class="t-mono">${ago(c.last_t ?? c.started)}</span></td>
     </tr>`;
   }
 
