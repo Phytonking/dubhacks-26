@@ -9,6 +9,15 @@ import { SandboxLink } from "../src/sandbox-link";
 import { PhotonAdapter, Worker, type ChannelAdapter, type ChannelId } from "../src/recorded-io";
 import { mongoCursorStore, photonEventHandler } from "../src/photon-worker";
 import { webhookServer } from "../src/webhook";
+import { handleCallEvent } from "../src/calls";
+import { randomBytes } from "node:crypto";
+import { ModalLlm } from "../src/engine/llm";
+import { ALL_TOOLS } from "../src/engine/tools/index";
+import type { EngineDeps } from "../src/engine/turn";
+import { Messenger, type Readiness } from "../src/messenger";
+import { Scheduler } from "../src/scheduler";
+import { summarizeIfNeeded } from "../src/summarizer";
+import { startVoiceServer } from "../src/voice/bridge";
 
 const need = (k: string) => { const v = process.env[k]?.trim(); if (!v) throw new Error(`missing env ${k}`); return v; };
 mkdirSync("test-results", { recursive: true });
@@ -47,12 +56,28 @@ if (!(await db.collection("knowledge").countDocuments({ orgId }))) {
 // ---- real Photon lines -> channel_lines (maps receiving number -> business) ----
 const resources: any = await photon.listResources();
 const smsLine = resources.resources.find((r: any) => r.abilities?.includes("sms") && r.state === "active");
+const knownLines = new Set<string>();
 async function registerLines() {
+  // iMessage shared line: each assignment's assignedPhoneNumber is the number that user texts -> this business
+  const asg: any = await photon.req("GET", "/platforms/imessage/assignments").catch(() => ({ assignments: [] }));
+  const live = new Set<string>((asg.assignments ?? []).map((a: any) => a.assignedPhoneNumber));
+  // assignments can be replaced in the Photon dashboard: disable lines that no longer exist
+  await db.collection("channel_lines").updateMany({ channel: "imessage", provider: "photon", address: { $nin: [...live] }, status: "active" }, { $set: { status: "disabled" } });
+  for (const a of asg.assignments ?? []) {
+    if (knownLines.has(a.assignedPhoneNumber)) { await db.collection("channel_lines").updateOne({ channel: "imessage", address: a.assignedPhoneNumber }, { $set: { status: "active" } }); continue; }
+    knownLines.add(a.assignedPhoneNumber);
+    await db.collection("channel_lines").updateOne({ channel: "imessage", address: a.assignedPhoneNumber },
+      { $set: { orgId, provider: "photon", photonLineId: a.assignmentId, status: "active", capabilities: ["typing", "reactions", "threads"] }, $setOnInsert: { createdAt: new Date() } },
+      { upsert: true });
+    log(`line: iMessage ${mask(a.assignedPhoneNumber)} (shared, assignment ${String(a.assignmentId).slice(0, 8)}…) -> this business`);
+  }
   if (smsLine) {
+    const first = !knownLines.has("sms");
+    knownLines.add("sms");
     await db.collection("channel_lines").updateOne({ channel: "sms", address: smsLine.detail.phoneNumber },
       { $set: { orgId, provider: "photon", photonLineId: smsLine.resourceId, status: "active", capabilities: smsLine.abilities }, $setOnInsert: { createdAt: new Date() } },
       { upsert: true });   // errors must surface: a silent failure here means inbound texts have no business to go to
-    log(`line: SMS ${mask(smsLine.detail.phoneNumber)} -> this business`);
+    if (first) log(`line: SMS ${mask(smsLine.detail.phoneNumber)} -> this business`);
   }
 }
 
@@ -72,24 +97,70 @@ const capped = (a: ChannelAdapter): ChannelAdapter => ({ channel: a.channel, sen
   if (Date.now() - windowStart < 3_600_000 && ++sent > 60) throw new Error("hourly send cap (60) reached");
   const r = await a.send(...args); log(`SENT via Photon on ${a.channel}: "${args[1]}"`); return r; } });
 const ensure = async (o: ObjectId) => { const w = await orch.wake(o); if (w.woke) log(`woke sandbox in ${w.ms} ms`); };
-const mk = (c: ChannelId) => new Worker(db, link, capped(new PhotonAdapter(photon, c)), ensure);
-const workers = { imessage: mk("imessage"), sms: mk("sms") };
+// ---- engine v2 (default): a message is stored and scheduled in milliseconds; the Scheduler runs turns with tools, memory, verification,
+//      guardrails and a per-conversation lane. ENGINE=legacy keeps the old sandbox prompt path (one inline turn per message). ----
+const v2 = process.env.ENGINE !== "legacy";
+log(`engine: ${v2 ? "v2 (scheduler + tools)" : "legacy (sandbox prompt path)"}`);
+const wopts = { scheduled: v2, debounceMs: Number(process.env.DEBOUNCE_MS ?? 2000), maxWaitMs: Number(process.env.MAX_WAIT_MS ?? 8000), brand: org.name };
+const mk = (c: ChannelId, o: object = {}) => new Worker(db, link, capped(new PhotonAdapter(photon, c)), ensure, { ...wopts, ...o });
+// SMS sends are refused by carriers unless a 10DLC campaign is assigned to the line (verified 2026-10-18: SMS_CAMPAIGN_NOT_ELIGIBLE).
+// Don't spend LLM turns on texts we cannot answer; start answering automatically on the next restart once the line is eligible.
+let smsReady = false;
+if (smsLine) {
+  const camp: any = await photon.req("GET", `/platforms/sms/lines/${smsLine.resourceId}/campaign`).catch((e: Error) => ({ eligibility: "unknown", reasonCode: e.message.slice(0, 80) }));
+  smsReady = camp.eligibility === "eligible";
+  log(smsReady ? "SMS: campaign eligible, answering SMS" : `SMS: NOT answering (campaign eligibility=${camp.eligibility}, ${camp.reasonCode}). Register a 10DLC campaign in the Photon dashboard and assign it to the line.`);
+}
+// WhatsApp Business is connected (approved) on the same number. Log-only until WHATSAPP_REPLIES=1: the first message we received was a
+// Meta setup notice, not a customer, and business-initiated WhatsApp needs approved templates we have not created yet.
+const waReplies = process.env.WHATSAPP_REPLIES === "1";
+log(waReplies ? "WhatsApp: replies ENABLED" : "WhatsApp: logging inbound only (set WHATSAPP_REPLIES=1 to answer)");
+const wIm = mk("imessage"), wWa = mk("whatsapp", { autoReply: waReplies }), wSms = smsReady ? mk("sms") : undefined;
+const workers = { imessage: wIm, whatsapp_business: wWa, ...(wSms ? { sms: wSms } : {}) };
+
+let scheduler: Scheduler | undefined; let engine: EngineDeps | undefined; let voice: Awaited<ReturnType<typeof startVoiceServer>> | undefined;
+if (v2) {
+  const verifySecret = process.env.VERIFY_HMAC_SECRET?.trim() || (() => { log("WARNING: VERIFY_HMAC_SECRET is not set; using a temporary secret (codes issued before a restart will not verify)"); return randomBytes(24).toString("hex"); })();
+  if (!process.env.FORM_ENC_KEY) log("secure forms: FORM_ENC_KEY is not set in this process (agent can send links; the web app needs the key to accept answers)");
+  const adapters = { imessage: capped(new PhotonAdapter(photon, "imessage")), whatsapp: capped(new PhotonAdapter(photon, "whatsapp")), ...(smsReady ? { sms: capped(new PhotonAdapter(photon, "sms")) } : {}) };
+  // A channel is "ready" for an unprompted text only when the provider will accept it: iMessage needs a recent message from the person (shared line
+  // cannot start a chat), WhatsApp only inside its 24-hour window (otherwise an approved template is required), SMS only once the campaign is approved.
+  const ready: Readiness = async (channel, c) => {
+    if (channel === "sms") return smsReady ? { ok: true } : { ok: false, reason: "SMS campaign not eligible" };
+    const hours = channel === "whatsapp" ? 24 : 24 * 30;
+    const n = await db.collection("messages").countDocuments({ orgId: c.orgId, conversationId: c.conversationId, channel, direction: "in", ref: { $ne: null }, ts: { $gte: new Date(Date.now() - hours * 3600_000) } }, { limit: 1 });
+    return n ? { ok: true } : { ok: false, reason: channel === "whatsapp" ? "WhatsApp 24-hour window closed (needs an approved template)" : "no recent message from this person on iMessage" };
+  };
+  const llm = new ModalLlm({ endpoint: MODAL.endpoint, id: MODAL.id, secret: MODAL.secret, model: MODEL });
+  engine = { db, llm, tools: ALL_TOOLS, messenger: new Messenger(db, { adapters, ready }), log,
+    env: { brandFallback: org.name, publicFormsBaseUrl: process.env.PUBLIC_FORMS_BASE_URL ?? "http://localhost:3000", verifySecret, formsMasterKey: process.env.FORM_ENC_KEY?.trim() } };
+  scheduler = new Scheduler({ db, engine, workers: { imessage: wIm, whatsapp: wWa, ...(wSms ? { sms: wSms } : {}) }, log, afterTurn: async (a) => { await summarizeIfNeeded(db, llm, a); } });
+  scheduler.start();
+  const vs = process.env.VOICE_PATH_SECRET?.trim(), ws = process.env.ELEVENLABS_WEBHOOK_SECRET?.trim();
+  if (vs && ws) { voice = await startVoiceServer({ db, engine, port: Number(process.env.VOICE_PORT ?? 8787), pathSecret: vs, webhookSecret: ws, bearer: process.env.VOICE_BEARER?.trim() || undefined, log });
+    log(`voice server on :${voice.port}  Custom LLM URL path: /voice/***/v1/chat/completions   webhook path: /voice/***/webhooks/elevenlabs`); }
+  else log("voice server: off (set VOICE_PATH_SECRET and ELEVENLABS_WEBHOOK_SECRET to start it)");
+}
 const handler = photonEventHandler(workers, async (line) => (await db.collection("channel_lines").findOne({ address: line }))?.orgId ?? null, log,
   async (evt, reason) => { await db.collection("unrouted_events").insertOne({ evt, reason, at: new Date() }); });
+const MAX_AGE_MS = 10 * 60_000;   // replay guard: never answer a text older than this (restarts replay the stream)
 const events = new PhotonEvents(photon, mongoCursorStore(db, `live:${process.env.PHOTON_PROJECT_ID}`), async (e) => {
   const m = e.data?.object;
+  if (e.type === "message.received" && Date.now() - new Date(e.timestamp).getTime() > MAX_AGE_MS) { log(`SKIP stale ${e.type} (${Math.round((Date.now() - new Date(e.timestamp).getTime()) / 60000)} min old): not answering`); return; }
   log(`EVENT ${e.type} platform=${m?.platform} from=${mask(String(m?.sentBy?.handle ?? "-"))} to=${mask(String(m?.receivedBy?.handle ?? "-"))}${m?.content?.text ? ` text="${m.content.text}"` : ""}`);
+  if (e.type.startsWith("call.")) { await handleCallEvent(db, e, log); return; }   // voice: log every call (who, when, how long, outcome)
   await handler(e);
 }, log);
 events.start();
+setInterval(() => registerLines().catch((e) => log(`line refresh failed: ${e.message}`)), 30_000);   // pick up replaced iMessage assignments
 // Optional HTTP webhook receiver (same pipeline, signature-verified). Needs a public HTTPS URL registered as a Photon webhook destination.
 const whSecret = process.env.PHOTON_WEBHOOK_SIGNING_SECRET?.trim();
 if (whSecret && process.env.PHOTON_WEBHOOK_PORT) {
   const port = Number(process.env.PHOTON_WEBHOOK_PORT);
   webhookServer({ secrets: [whSecret, ...(process.env.PHOTON_WEBHOOK_PREVIOUS_SECRET ? [process.env.PHOTON_WEBHOOK_PREVIOUS_SECRET.trim()] : [])], handler: handler as any, log }).listen(port, "127.0.0.1", () => log(`webhook receiver listening on :${port} (signature required)`));
 }
-log(`LISTENING. Text ${smsLine ? mask(smsLine.detail.phoneNumber) : "the project's number"} now; replies come from the agent running in the Daytona sandbox.`);
+log(`LISTENING. Text the iMessage number above from your Apple ID now; replies come from the agent engine.`);
 
-const stop = async () => { log("stopping: closing events and deleting sandbox"); events.stop(); await orch.destroy(orgId); await mongo.close(); process.exit(0); };
+const stop = async () => { log("stopping: closing events, scheduler and voice server, deleting sandbox"); events.stop(); await scheduler?.stop(); await voice?.close(); await orch.destroy(orgId); await mongo.close(); process.exit(0); };
 process.on("SIGINT", stop); process.on("SIGTERM", stop);
 setInterval(() => log(`heartbeat: events=${events.stats.events} errors=${events.stats.errors} subscribed=${events.stats.subscribed} lastSeq=${events.stats.lastSeq}`), 60_000);
