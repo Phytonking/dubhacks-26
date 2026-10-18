@@ -1,5 +1,5 @@
 import { ObjectId, type Db } from "mongodb";
-import { buildCustomerBlock, loadCustomer, type Customer } from "../customer";
+import { buildCustomerBlock, isVerified, loadCustomer, type Customer } from "../customer";
 import type { ChannelId, Party } from "../identity";
 import { channelStyle, loadTemplate, renderPrompt } from "../prompt";
 import type { GuardCfg } from "./guardrails";
@@ -26,6 +26,7 @@ export type BuiltContext = {
   agent: any; org: any; templateName: string;
 };
 
+const CHANNEL_VERIFIED = new Set<string>(["imessage", "whatsapp", "sms"]);
 const HISTORY_CHARS = 6000, HISTORY_MAX = 14;
 
 export async function buildContext(db: Db, env: EngineEnv, input: TurnInput, tools: Tool[] = ALL_TOOLS): Promise<BuiltContext> {
@@ -34,6 +35,15 @@ export async function buildContext(db: Db, env: EngineEnv, input: TurnInput, too
   if (!conv) throw new Error("conversation not found for this business");
   const contact: any = await db.collection("contacts").findOne({ _id: conv.contactId, orgId: input.orgId });
   if (!contact) throw new Error("contact not found");
+  // Only a phone CALL needs a code. A text from the person's own number (iMessage, WhatsApp, SMS) is already a message from that number, and a code sent
+  // back to the same thread would prove nothing more, so texting verifies them for the usual 30 minutes after their latest message.
+  if (CHANNEL_VERIFIED.has(input.channel)) {
+    const own = (contact.handles ?? []).find((h: any) => h.channel === input.channel && /^\+\d{8,15}$/.test(h.address));
+    if (own && !isVerified(contact, now)) {
+      contact.verifiedPhone = { number: own.address, at: now, method: `channel_${input.channel}` };
+      await db.collection("contacts").updateOne({ _id: contact._id, orgId: input.orgId }, { $set: { verifiedPhone: contact.verifiedPhone } });
+    }
+  }
   const [agent, org]: any[] = await Promise.all([db.collection("agents").findOne({ orgId: input.orgId }), db.collection("orgs").findOne({ _id: input.orgId })]);
   if (!agent || !org) throw new Error("business or agent not configured");
 

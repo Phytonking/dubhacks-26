@@ -11,11 +11,12 @@ import { ScriptedLlm, ok, t, finish, makeKit } from "./_testkit";
 
 const kit = await makeKit({ groundMoney: true });
 const { db, orgId } = kit;
-const input = async (text: string, o: { conversationId?: ObjectId } = {}) => {
+const input = async (text: string, o: { conversationId?: ObjectId; channel?: "imessage" | "sms" } = {}) => {
   const conversationId = o.conversationId ?? kit.conversationId;
   const id = await kit.addInbound(conversationId, text);
-  return { orgId, conversationId, channel: "imessage" as const, mode: "text" as const, batch: [{ _id: id, body: text, ts: kit.now.t }] };
+  return { orgId, conversationId, channel: o.channel ?? ("imessage" as const), mode: "text" as const, batch: [{ _id: id, body: text, ts: kit.now.t }] };
 };
+const vinput = async (text: string, conversationId: ObjectId) => ({ orgId, conversationId, channel: "voice" as const, mode: "voice" as const, batch: [{ _id: await kit.addInbound(conversationId, text, { channel: "voice" }), body: text, ts: kit.now.t }] });
 const lastUser = (req: any) => req.messages[req.messages.length - 1];
 
 await t("registry: every tool name is a valid function name and the schema is an object", async () => {
@@ -170,17 +171,36 @@ await t("verification gating: tmo_context is refused for an unverified customer,
     as_of: "2026-10-01", segment: "family", tenure_months: 40, credit_tier: "A", autopay: true, lines: [{ line_id: "L1", member_label: "Line 1", member_role: "primary", plan_name: "Essentials", plan_data_cap_gb: 50, has_protection: true, device: { name: "iPhone 13", age_months: 40 }, financing: { paid_off: true } }],
     services: [{ name: "Netflix", monthly_cents: 1000 }], billing: { latest_total_cents: 12000, change_pct_vs_prior_avg: 0.18 }, support: { contacts_90d: 2, unresolved_90d: 1, last_contact_date: "2026-09-20" }, signals: { port_out_inquiry: 1, competitor_research_score: 0.9 } } } as never);
   const llm1 = new ScriptedLlm([{ tools: [{ name: "tmo_context", args: {} }] }, { content: "I need to verify you first." }]);
-  const inp = await input("why did my bill go up?", { conversationId: k2.conversationId });
+  const inp = await input("why did my bill go up?", { conversationId: k2.conversationId, channel: "sms" });
   await runTurn(kit.deps(llm1), inp);
   const toolMsg = (llm1.requests[1].messages.find((m: any) => m.role === "tool") as any).content;
   ok(toolMsg.includes("not_verified") && !toolMsg.includes("iPhone"), toolMsg);
   ok(!JSON.stringify(llm1.requests[0].messages[0]).includes("iPhone 13") && /Verified: NO/.test(llm1.requests[0].messages[0].content as string), "prompt must not contain account details");
   await db.collection("contacts").updateOne({ _id: k2.contactId }, { $set: { verifiedPhone: { number: "+14255550810", at: kit.now.t, method: "otp_imessage" } } });
   const llm2 = new ScriptedLlm([{ tools: [{ name: "tmo_context", args: {} }] }, { content: "Your latest bill is $120.00." }]);
-  const r = await runTurn(kit.deps(llm2), await input("why did my bill go up?", { conversationId: k2.conversationId }));
+  const r = await runTurn(kit.deps(llm2), await input("why did my bill go up?", { conversationId: k2.conversationId, channel: "sms" }));
   const ok2 = (llm2.requests[1].messages.find((m: any) => m.role === "tool") as any).content;
   ok(ok2.includes("iPhone 13") && ok2.includes("$120.00") && !/port_out|porting|competitor|signals/i.test(ok2), ok2);
   ok(r.outcome === "reply" && r.text.includes("$120.00"), "a number from the tool result is allowed in the reply: " + r.text);
+});
+await t("a text from their own number on iMessage verifies them (a code to the same thread proves nothing); only a phone call needs the code", async () => {
+  const mk = async (phone: string, id: string) => { const c = await kit.newContact(phone, { externalRefs: [{ system: "tmobile", id, kind: "account" }] }); await db.collection("contacts").updateOne({ _id: c.contactId }, { $set: { handles: [{ channel: "imessage", address: phone }, { channel: "sms", address: phone }, { channel: "voice", address: phone }] } }); return c; };
+  const verifiedAfter = async (c: { contactId: ObjectId; conversationId: ObjectId }, channel: "imessage" | "sms" | "voice") => {
+    const id = await kit.addInbound(c.conversationId, "tell me about my plan", { channel });
+    const b = await buildContext(db, kit.deps(new ScriptedLlm([])).env, { orgId, conversationId: c.conversationId, channel, mode: channel === "voice" ? "voice" : "text", batch: [{ _id: id, body: "tell me about my plan", ts: kit.now.t }] });
+    return b.customer.verified;
+  };
+  ok(await verifiedAfter(await mk("+14255550851", "ACC-V1"), "imessage"), "iMessage from their own number is verified");
+  ok(await verifiedAfter(await mk("+14255550852", "ACC-V2"), "sms"), "SMS from their own number is verified too");
+  ok(!(await verifiedAfter(await mk("+14255550853", "ACC-V3"), "voice")), "a phone call still needs the code");
+});
+await t("a tool call with arguments that are not valid JSON is answered with an error, and the broken string is NOT echoed back (the provider answers HTTP 400 to that and the customer would hear a fallback)", async () => {
+  const llm = new ScriptedLlm([{ tools: [{ name: "memory_commit", args: '{"summary": "oops' }] }, { content: "Sorry, one moment. How can I help?" }]);
+  const r = await runTurn(kit.deps(llm), await input("hi there"));
+  ok(r.outcome === "reply" && /How can I help/.test(r.text), JSON.stringify({ o: r.outcome, t: r.text }));
+  const echoed = llm.requests[1].messages.find((m: any) => m.role === "assistant" && m.tool_calls) as any;
+  ok(echoed && JSON.parse(echoed.tool_calls[0].function.arguments) !== undefined, "the echoed arguments parse: " + JSON.stringify(echoed?.tool_calls?.[0]?.function));
+  const tool = llm.requests[1].messages.find((m: any) => m.role === "tool") as any; ok(/invalid_arguments/.test(tool.content), tool.content);
 });
 await t("verification applies to the tool even if the prompt were ignored: no account link -> no_account_linked", async () => {
   const k2 = await kit.newContact("+14255550811", { verifiedPhone: { number: "+14255550811", at: kit.now.t, method: "otp" } });
@@ -349,15 +369,16 @@ await t("a legal threat goes straight to a person (text and voice) without askin
 });
 await t("saying 'I'm texting you a code' without sending one is backed up with a real send (and a plain message if it cannot be sent)", async () => {
   const k = await kit.newContact("+14255550723", { externalRefs: [{ system: "tmobile", id: "ACC-Q", kind: "account" }] });
-  kit.adapters.imessage.sent.length = 0; kit.ready.imessage = { ok: true };
+  kit.adapters.imessage.sent.length = 0; kit.ready.imessage = { ok: true }; // a caller on the phone: caller ID is not proof, so the code is still needed (iMessage verifies by channel)
+  await db.collection("contacts").updateOne({ _id: k.contactId }, { $set: { handles: [{ channel: "voice", address: "+14255550723" }, { channel: "imessage", address: "+14255550723" }] } });
   const llm = new ScriptedLlm([{ content: "To keep your account safe, I'm texting a 6-digit code to the number on file now." }]);
-  const r = await runTurn(kit.deps(llm), await input("why is my bill high?", { conversationId: k.conversationId }));
+  const r = await runTurn(kit.deps(llm), await vinput("why is my bill high?", k.conversationId));
   ok(r.toolCalls.some((t) => t.name === "verify_send_code" && t.ok) && kit.adapters.imessage.sent.some((m) => m.address === "+14255550723" && /verification code/.test(m.text)), JSON.stringify(r.toolCalls));
-  const k3 = await kit.newContact("+14255550725", { externalRefs: [{ system: "tmobile", id: "ACC-Q3", kind: "account" }] }); kit.adapters.imessage.sent.length = 0;
-  const r3 = await runTurn(kit.deps(new ScriptedLlm([{ content: "Here is what I can see. Want me to text a code to the number on file so I can check more?" }])), await input("any deals on my plan?", { conversationId: k3.conversationId }));
+  const k3 = await kit.newContact("+14255550725", { externalRefs: [{ system: "tmobile", id: "ACC-Q3", kind: "account" }] }); await db.collection("contacts").updateOne({ _id: k3.contactId }, { $set: { handles: [{ channel: "voice", address: "+14255550725" }, { channel: "imessage", address: "+14255550725" }] } }); kit.adapters.imessage.sent.length = 0;
+  const r3 = await runTurn(kit.deps(new ScriptedLlm([{ content: "Here is what I can see. Want me to text a code to the number on file so I can check more?" }])), await vinput("any deals on my plan?", k3.conversationId));
   ok(/just sent a 6-digit code/.test(r3.text) && !/Want me to text/.test(r3.text) && kit.adapters.imessage.sent.some((m) => m.address === "+14255550725"), "asking permission is replaced by sending: " + r3.text);
-  const k2 = await kit.newContact("+14255550724", { externalRefs: [{ system: "tmobile", id: "ACC-Q2", kind: "account" }] }); kit.ready.imessage = { ok: false }; kit.ready.whatsapp = { ok: false };
-  const r2 = await runTurn(kit.deps(new ScriptedLlm([{ content: "I'm texting a code to your number now." }])), await input("check my bill", { conversationId: k2.conversationId }));
+  const k2 = await kit.newContact("+14255550724", { externalRefs: [{ system: "tmobile", id: "ACC-Q2", kind: "account" }] }); await db.collection("contacts").updateOne({ _id: k2.contactId }, { $set: { handles: [{ channel: "voice", address: "+14255550724" }, { channel: "imessage", address: "+14255550724" }] } }); kit.ready.imessage = { ok: false }; kit.ready.whatsapp = { ok: false };
+  const r2 = await runTurn(kit.deps(new ScriptedLlm([{ content: "I'm texting a code to your number now." }])), await vinput("check my bill", k2.conversationId));
   ok(/not able to send a text/.test(r2.text), r2.text); kit.ready.imessage = { ok: true }; kit.ready.whatsapp = { ok: true };
 });
 await t("a reply that says 'someone from the team' (even a goodbye) tells the team but NEVER locks the customer out of the agent; a handoff nobody picked up expires", async () => {

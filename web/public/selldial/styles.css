@@ -662,3 +662,12 @@ input, select, textarea { caret-color: var(--color-accent); }
 .notes.warn li::before { background: var(--warn, #d9822b); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips .chip { font-size: 12.5px; }
+
+/* ---------- Home range controls and per-day bars ---------- */
+.home-range { margin: 0 0 var(--space-xs); }
+.select input[type="date"] { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: var(--radius-control); padding: var(--space-3xs) var(--space-2xs); font: inherit; font-size: 13px; min-height: 32px; color-scheme: dark light; }
+.dbars { display: flex; align-items: flex-end; gap: 4px; padding: var(--space-md); height: 140px; overflow-x: auto; }
+.dbar { flex: 1 0 14px; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
+.dbar .dbar-fill { flex: 1; width: 100%; display: flex; align-items: flex-end; }
+.dbar .dbar-fill i { display: block; width: 100%; min-height: 2px; border-radius: 2px 2px 0 0; background: var(--color-accent); }
+.dbar small { font: 400 10px/1 var(--mono); color: var(--muted); }

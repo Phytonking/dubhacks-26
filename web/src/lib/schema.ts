@@ -21,7 +21,7 @@ const strs = { bsonType: "array", items: str };
 const en = (...v: string[]) => ({ enum: v });
 const obj = (required: string[], properties: Document): Document => ({
   bsonType: "object",
-  required,
+  ...(required.length ? { required } : {}),   // MongoDB rejects an empty `required` array
   properties,
 });
 
@@ -40,7 +40,7 @@ export const specs: CollectionSpec[] = [
     name: "users",
     schema: obj(["orgId", "email", "name", "role", "createdAt"], {
       orgId: oid, email: str, name: str, role: en("owner", "admin"),
-      authProviderId: strOrNull, createdAt: date,
+      authProviderId: strOrNull, phone: strOrNull, createdAt: date,   // phone: E.164, links the human owner/tester to their number
     }),
     indexes: [{ keys: { email: 1 }, unique: true }, { keys: { orgId: 1 } }],
   },
@@ -53,7 +53,9 @@ export const specs: CollectionSpec[] = [
       persona: str,
       guardrails: obj(["maxDiscountPct", "escalateOn"], { maxDiscountPct: num, escalateOn: strs }),
       enabledChannels: obj(CHANNELS, { imessage: bool, whatsapp: bool, sms: bool, voice: bool }),
-      sandboxId: strOrNull, updatedAt: date,
+      sandboxId: strOrNull,
+      deploy: obj([], { startedAt: date, steps: { bsonType: "array", items: obj(["name", "ok", "ms"], { name: str, ok: bool, ms: num, detail: strOrNull, at: date }) } }),
+      updatedAt: date,
     }),
     indexes: [{ keys: { orgId: 1 }, unique: true }], // exactly one agent per business
   },
@@ -110,6 +112,7 @@ export const specs: CollectionSpec[] = [
         clientMsgId: strOrNull, agentTurnId: strOrNull, replyGroupId: strOrNull, callId: oidOrNull,
         handling: en("agent", "ignored", "opted_out", "rejected", "human"),
         guardrail: { bsonType: ["object", "null"] }, attempts: num,
+        ref: { bsonType: ["object", "null"] },   // provider routing (Photon spaceId/senderId/parentMessageId) needed to reply
         deliveryError: strOrNull,
         redacted: bool, handledByTurn: strOrNull,   // redacted: body hides a code/link; handledByTurn: the agent turn that answered this inbound message
         attachments: {
@@ -152,7 +155,7 @@ export const specs: CollectionSpec[] = [
   {
     name: "tool_calls",
     schema: obj(["orgId", "tool", "args", "status", "ms", "ts"], {
-      orgId: oid, conversationId: oidOrNull, tool: str, args: { bsonType: "object" },
+      orgId: oid, conversationId: oidOrNull, tool: str, args: { bsonType: "object" }, result: {},
       status: en("ok", "error", "blocked"), ms: num, approvedBy: oidOrNull, ts: date,
     }),
     indexes: [{ keys: { orgId: 1, ts: -1 } }, { keys: { conversationId: 1, ts: 1 } }],
@@ -208,6 +211,7 @@ export const specs: CollectionSpec[] = [
       { keys: { provider: 1, providerCallId: 1 }, unique: true, partial: { providerCallId: { $type: "string" } } },
     ],
   },
+  ...tmoSpecs, // T-Mobile sandbox data (tmo-schema.ts)
   ...agentSpecs, // verification, opt-outs, turn log, notifications, secure forms (agent-schema.ts)
   {
     // sales the console counts (public/selldial); written when a pending deal is confirmed paid (console-actions.ts markOrderPaid)
@@ -217,7 +221,6 @@ export const specs: CollectionSpec[] = [
     }),
     indexes: [{ keys: { orgId: 1, conversationId: 1 }, unique: true }, { keys: { orgId: 1, createdAt: -1 } }],
   },
-  ...tmoSpecs, // T-Mobile sandbox data (tmo-schema.ts)
 ];
 
 /** Create missing collections, (re)apply validators, ensure indexes. Safe to re-run. */

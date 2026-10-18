@@ -81,6 +81,26 @@ async function backUpCodeClaim(deps: EngineDeps, ctx: ToolCtx, text: string, tra
   trace.push(r.trace);
   return { failure: r.result.ok ? null : (r.result.reply ?? null), asked };
 }
+/** "I've noted that and a team member will confirm" said to a customer who just said yes, with no negotiation_accept behind it, is a promise nobody recorded. */
+const CLAIMS_DEAL = /\b(?:I(?:'ve| have)|I)\s+(?:noted|put that down|recorded|logged)\b|\b(?:team member|someone|a specialist)\s+will\s+(?:confirm|finish|follow up|reach out)\b/i;
+const SAYS_YES = /\b(yes|yeah|yep|yup|sure|okay|ok|absolutely|definitely|deal|do it|go ahead|sign me up|i'?ll take it|sounds (?:good|great|amazing|perfect)|that works|let'?s do it|let'?s go)\b/i;
+const SAYS_NO = /\b(no|nope|not (?:now|yet|really)|maybe|think about|don'?t|never mind)\b/i;
+async function backUpDealClaim(deps: EngineDeps, ctx: ToolCtx, spoken: string, customerText: string, history: ChatMessage[], trace: TraceCall[]): Promise<boolean> {
+  if (!CLAIMS_DEAL.test(spoken) || trace.some((t) => t.name === "negotiation_accept" && t.ok)) return false;
+  if (!SAYS_YES.test(customerText) || SAYS_NO.test(customerText)) return false;
+  // what was put to them: the last assistant message before this reply, and which current plan it names
+  const prior = [...history].reverse().find((m) => m.role === "assistant");
+  const recent = history.filter((m) => m.role === "assistant").slice(-4).map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");   // the plan may have been named a few messages back
+  const offered = `${recent} ${spoken}`;
+  const plans: any[] = await ctx.db.collection("tmo_plans").find({ orgId: ctx.orgId, status: "current" }, { projection: { name: 1 } }).toArray();
+  const plan = plans.map((p) => String(p.name)).filter((n) => offered.toLowerCase().includes(n.toLowerCase())).sort((a, b) => b.length - a.length)[0];
+  if (!plan) { await notifyTeam(ctx, "the customer said yes to something and the reply said it was noted, but no plan could be tied to it"); return true; }
+  const said = (typeof prior?.content === "string" ? prior.content : "").replace(/\s+/g, " ").trim().slice(0, 220);
+  const r = await executeTool(deps, ctx, { id: `auto_${ctx.turnId.slice(0, 8)}_deal`, type: "function", function: { name: "negotiation_accept", arguments: JSON.stringify({ plan, summary: `Customer said yes ("${customerText.slice(0, 60)}") to: ${said}` }) } });
+  trace.push(r.trace);
+  if (!r.result.ok) await notifyTeam(ctx, `the customer said yes to ${plan} and it could not be recorded (${r.result.error})`);
+  return true;
+}
 const CODE_SENT = "I've just sent a 6-digit code to the number on file. What's the code?";
 
 /** At most ONE question per reply: statements are kept, questions after the first are dropped (a questionnaire is both annoying and, on a call, hard to answer). */
@@ -110,6 +130,9 @@ function makeCtx(deps: EngineDeps, input: TurnInput, b: BuiltContext, turnId: st
     now: deps.env.now?.() ?? new Date(), messenger: deps.messenger, env: deps.env, guard: { cfg: b.guard, evidence: b.evidence }, calls: new Map(), callId: input.callId ?? null,
   };
 }
+
+/** The model sometimes emits tool arguments that are not valid JSON. We answer that call with an error, but the provider rejects the whole next request (HTTP 400) if the broken string is echoed back in the conversation, so echo "{}". */
+const validArgs = (c: ToolCallReq): ToolCallReq => { try { JSON.parse(c.function.arguments || "{}"); return c; } catch { return { ...c, function: { ...c.function, arguments: "{}" } }; } };
 
 /** Run one tool call the model asked for. Everything the model can get wrong is turned into an error result, never a crash. */
 export async function executeTool(deps: EngineDeps, ctx: ToolCtx, call: ToolCallReq): Promise<{ content: string; result: ToolResult; trace: TraceCall }> {
@@ -212,7 +235,7 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
       }
       const pass = calls.filter((c) => passNames.has(c.function.name));
       if (pass.length) return done({ outcome: "reply", text: cleanReply(resp.message.content ?? ""), rounds, passthrough: pass.map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments })) });
-      messages.push({ role: "assistant", content: resp.message.content ?? null, tool_calls: calls });
+      messages.push({ role: "assistant", content: resp.message.content ?? null, tool_calls: calls.map(validArgs) });
       let forced: string | undefined;
       for (const call of calls) {
         const r = await executeTool(deps, ctx, call);
@@ -257,6 +280,7 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
   }
   if (!escalated && !teamTold(trace) && promisesPerson(final)) { await notifyTeam(ctx, "the reply told the customer a person would follow up"); sideEffects = true; }   // never promise a person without telling the team (the chat stays with the agent)
   const gap = await backUpCodeClaim(deps, ctx, final, trace);
+  if (await backUpDealClaim(deps, ctx, final, input.batch.map((m) => m.body).join(" "), b.messages, trace)) sideEffects = true;
   if (gap) { sideEffects = true; if (gap.failure) final = gap.failure; else if (gap.asked) final = `${takeSentences(final, true)[0].filter((x) => !ASKS_CODE.test(x) && !(/\?["')]*$/.test(x) && x.split(/\s+/).length <= 8)).join(" ")} ${CODE_SENT}`.trim(); }
   return done({ outcome: escalated ? "escalated" : "reply", text: await noSecretRequests(final), rounds });
 }
@@ -327,7 +351,7 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
       if (!calls.length) break;
       const pass = calls.filter((c) => passNames.has(c.function.name));
       if (pass.length) { const p = pass.map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments })); yield { type: "passthrough", calls: p }; yield finish(escalated ? "escalated" : "reply", { passthrough: p }); return; }
-      messages.push({ role: "assistant", content: content || null, tool_calls: calls });
+      messages.push({ role: "assistant", content: content || null, tool_calls: calls.map(validArgs) });
       let forced: string | undefined;
       for (const call of calls) {
         const r = await executeTool(deps, ctx, call);
@@ -339,6 +363,7 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
       if (rounds === MAX_ROUNDS) throw new Error("tool loop did not finish");   // only if the model ignored the no-tools round
     }
     if (!spoken) throw new Error("empty reply");
+    if (await backUpDealClaim(deps, ctx, spoken, input.batch.map((m) => m.body).join(" "), b.messages, trace)) sideEffects = true;
     { const gap = await backUpCodeClaim(deps, ctx, spoken, trace, askedCode); if (gap) { sideEffects = true; yield* say(takeSentences(gap.failure ?? (gap.asked ? CODE_SENT : ""), true)[0], true); } }
     if (!escalated && !teamTold(trace) && promisesPerson(spoken)) { await notifyTeam(ctx, "the reply told the customer a person would follow up"); sideEffects = true; }
     yield finish(flagged ? "blocked" : escalated ? "escalated" : "reply");

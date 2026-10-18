@@ -1,7 +1,7 @@
 // Negotiation ladder, authority caps, promotion eligibility.   pnpm exec tsx scripts/offers-test.ts
 import { readFileSync } from "node:fs";
 import { ObjectId } from "mongodb";
-import { executeTool } from "../src/engine/turn";
+import { executeTool, runTurn } from "../src/engine/turn";
 import { creditCap, creditForRound, DEFAULT_AUTHORITY, unmetConditions } from "../src/engine/tools/offers";
 import { ScriptedLlm, ok, t, finish, makeKit } from "./_testkit";
 
@@ -15,7 +15,7 @@ const run = async (contact: { contactId: ObjectId; conversationId: ObjectId }, n
   const c: any = await db.collection("contacts").findOne({ _id: contact.contactId });
   const d = kit.deps(new ScriptedLlm([]));
   const ctx = { db, orgId, contactId: contact.contactId, conversationId: contact.conversationId, channel: "imessage" as const, mode: "text" as const, party: { contact: c, conversation: {} as never, address: kit.phone, created: false, matchedBy: "channel_handle" as const, externalRefs: c.externalRefs ?? [] },
-    customer: {} as never, turnId: "t", sourceMessageId: new ObjectId(), now, messenger: kit.messenger, env: d.env, guard: { cfg: { maxDiscountPct: 15 }, evidence: ["USER:I will turn on autopay, add another line, bring my number over, stay a full year, add home internet, trade in my phone, upgrade, and go paperless"] }, calls: new Map(), ...o };
+    customer: {} as never, turnId: "t", sourceMessageId: new ObjectId(), now, messenger: kit.messenger, env: d.env, guard: { cfg: { maxDiscountPct: 15 }, evidence: ["USER:I will turn on autopay, add another line, bring my number over, stay a full year, add home internet, trade in my phone, upgrade, and go paperless", ...(o.said ? ["USER:" + String(o.said)] : [])] }, calls: new Map(), ...o };
   const r = await executeTool(d, ctx as never, { id: "x", type: "function", function: { name, arguments: JSON.stringify(args) } });
   return { ...r, data: (() => { try { return JSON.parse(r.content); } catch { return {}; } })() as any };
 };
@@ -87,6 +87,50 @@ await t("acceptance records the deal and tells the team; it refuses when nothing
   ok(acc.result.ok && /Do not say it is already applied/.test(acc.content), acc.content);
   const after: any = await db.collection("contacts").findOne({ _id: c.contactId }); ok(after.memory.offers?.length === 1 && !after.memory.negotiation && after.memory.offers[0].status === "accepted", JSON.stringify(after.memory));
   ok((await db.collection("notifications").countDocuments({ contactId: c.contactId, kind: "deal" })) === 1, "team told");
+});
+await t("accepting on a verified account applies the plan switch and credit to the account record; unverified, or more lines than they have, only records it", async () => {
+  const mkAcct = async (phone: string, id: string, nLines: number, verified: boolean) => {
+    const c = await kit.newContact(phone, { externalRefs: [{ system: "tmobile", id, kind: "account" }], ...(verified ? { verifiedPhone: { number: phone, at: now, method: "otp" } } : {}) });
+    await db.collection("tmo_accounts").insertOne({ orgId, accountId: id, importedAt: now, segment: "single", lines: [], billing: [], support: [], context: { as_of: "2026-10-01", lines: Array.from({ length: nLines }, (_, k) => ({ line_id: `L${k}`, member_label: `Line ${k + 1}`, member_role: "primary", plan_name: "Experience More 2.0", plan_sku: "OLD", plan_data_cap_gb: null })) } } as never);
+    return c;
+  };
+  const v = await mkAcct("+14255550861", "ACC-AP1", 1, true);
+  await run(v, "negotiation_offer", { plan: "Essentials Saver 2.0", lines: 1 });
+  const ro = await run(v, "negotiation_offer", { plan: "Essentials Saver 2.0", lines: 1, customer_gives: ["autopay"] }); ok(ro.data.allowed_now.monthly_credit !== "$0", "a credit is on the table: " + ro.content.slice(0, 200));
+  await db.collection("contacts").updateOne({ _id: v.contactId }, { $set: { "memory.negotiation.turnId": "an-earlier-turn" } });
+  const r = await run(v, "negotiation_accept", { summary: "Essentials Saver 2.0 at $50 a month for a year" });
+  ok(r.result.ok && r.data.status === "applied" && r.data.due_today === "$0" && /is applied/.test(r.data.next), r.content);
+  const acct: any = await db.collection("tmo_accounts").findOne({ accountId: "ACC-AP1" });
+  ok(acct.context.lines[0].plan_name === "Essentials Saver 2.0" && acct.context.lines[0].plan_sku !== "OLD" && acct.context.deals?.length === 1 && acct.context.deals[0].status === "active" && acct.context.deals[0].creditCents > 0 && acct.changeLog?.length === 1, JSON.stringify(acct.context));
+  const order: any = await db.collection("orders").findOne({ conversationId: v.conversationId }); ok(order && order.status === "paid" && order.amountCents > 0 && order.dueTodayCents === 0, "the sale is counted: " + JSON.stringify(order));
+  ok((await db.collection("notifications").countDocuments({ conversationId: v.conversationId, kind: "sale" })) === 1 && (await db.collection("notifications").countDocuments({ conversationId: v.conversationId, kind: "deal" })) === 0, "a sale notice, not a 'please finish the order' deal");
+  const off: any = ((await db.collection("contacts").findOne({ _id: v.contactId })) as any).memory.offers; ok(off[0].status === "applied", "offer marked applied so checkout never charges it again");
+  const tools = await run(v, "tmo_context", {}); ok(tools.data.lines?.[0]?.plan === "Essentials Saver 2.0" && tools.data.active_deals?.[0]?.plan === "Essentials Saver 2.0", "the agent sees the change on the account: " + tools.content.slice(0, 300));
+  const u = await mkAcct("+14255550862", "ACC-AP2", 1, false);
+  const ru = await run(u, "negotiation_accept", { summary: "x", plan: "Essentials Saver 2.0", lines: 1 }); ok(ru.data.status === "recorded" && !(await db.collection("tmo_accounts").findOne({ accountId: "ACC-AP2", "context.deals": { $exists: true } })), "unverified: recorded only");
+  const m = await mkAcct("+14255550863", "ACC-AP3", 1, true);
+  const rm = await run(m, "negotiation_accept", { summary: "x", plan: "Essentials Saver 2.0", lines: 2 }); ok(rm.data.status === "recorded", "wants more lines than the account has: recorded for checkout or the team");
+});
+await t("accept: the loyalty credit they were told about is part of what is applied ($55 - $5 = $50); a repeated yes does not add a second deal; a question is not a yes", async () => {
+  const c = await kit.newContact("+14255550864", { externalRefs: [{ system: "tmobile", id: "ACC-AP4", kind: "account" }], verifiedPhone: { number: "+14255550864", at: now, method: "otp" } });
+  await db.collection("tmo_accounts").insertOne({ orgId, accountId: "ACC-AP4", importedAt: now, segment: "single", lines: [], billing: [], support: [], context: { as_of: "2026-10-01", tenure_months: 60, lines: [{ line_id: "L0", member_label: "Line 1", member_role: "primary", plan_name: "Experience More 2.0", plan_sku: "OLD" }] } } as never);
+  const q = await run(c, "negotiation_accept", { summary: "can I sign for 12 months?", plan: "Essentials Saver 2.0", lines: 1 }, { said: "can I sign for 12 months right now?" }); ok(!q.result.ok && q.result.error === "not_a_clear_yes", "a question is not a yes: " + q.content);
+  const r = await run(c, "negotiation_accept", { summary: "Essentials Saver at $50", plan: "Essentials Saver 2.0", lines: 1 }, { said: "ok I'll take it" });
+  ok(r.result.ok && r.data.status === "applied" && r.data.new_monthly_total === "$50" && r.data.credit_per_month === "$5", "the $5 loyalty credit is applied: " + r.content);
+  const r2 = await run(c, "negotiation_accept", { summary: "again", plan: "Essentials Saver 2.0", lines: 1 }, { said: "yes do it" }); ok(r2.result.ok && /already/.test(r2.content), "second yes: " + r2.content);
+  const a: any = await db.collection("tmo_accounts").findOne({ accountId: "ACC-AP4" }); ok(a.context.deals.length === 1 && a.changeLog.length === 1 && a.context.deals[0].monthlyCents === 5000, "one deal, one log entry: " + JSON.stringify(a.context.deals));
+});
+await t("backstop: 'I've noted that' after a clear yes, with no negotiation_accept, records the deal; a maybe or an unrelated note does not", async () => {
+  const c = await kit.newContact("+14255550890");
+  const say = (body: string, sender = "agent") => db.collection("messages").insertOne({ orgId, conversationId: c.conversationId, channel: "imessage", direction: sender === "agent" ? "out" : "in", sender, body, channelMsgId: "bk" + Math.random(), deliveryStatus: "delivered", handling: "agent", attempts: 0, ts: new Date(kit.now.t.getTime() - 60_000) } as never);
+  await say("Experience More 2.0 is $90 a month for one line with AutoPay. Want me to note that for the team?");
+  const turn = async (text: string, reply: string) => { const id = await kit.addInbound(c.conversationId, text); return runTurn(kit.deps(new ScriptedLlm([{ content: reply }])), { orgId, conversationId: c.conversationId, channel: "imessage", mode: "text", batch: [{ _id: id, body: text, ts: kit.now.t }] }); };
+  await turn("maybe, let me think about it", "No problem. I've noted that and a team member will confirm whenever you're ready.");
+  ok(!((await db.collection("contacts").findOne({ _id: c.contactId })) as any).memory?.offers?.length, "a maybe records nothing");
+  const r = await turn("yes, let's do it", "Great. I've noted that and a team member will confirm it with you.");
+  const k: any = await db.collection("contacts").findOne({ _id: c.contactId });
+  ok(k.memory?.offers?.length === 1 && k.memory.offers[0].plan === "Experience More 2.0" && k.memory.offers[0].status === "accepted", "the yes was recorded by the engine: " + JSON.stringify(k.memory?.offers));
+  ok(r.toolCalls.some((x) => x.name === "negotiation_accept" && x.ok), "and it shows in the turn's tool calls");
 });
 await t("the authority is configurable per business", async () => {
   await db.collection("agents").updateOne({ orgId }, { $set: { "guardrails.negotiation": { maxMonthlyCreditCents: 500, maxPct: 10 } } });

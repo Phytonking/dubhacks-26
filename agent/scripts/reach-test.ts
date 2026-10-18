@@ -107,7 +107,7 @@ await t("the remembered move-to-text appears at the top of the next turn, so a c
   ok(/Open commitments \(bring up first\): .*moving to text to receive a secure form.*forms_send_secure_form/.test(ctx.messages[0].content as string), ((ctx.messages[0].content as string).match(/Open commitments[^\n]*/)?.[0] ?? "none"));
 });
 await t("verify_send_code when nobody can reach the caller: plain 'cannot text right now', code voided, and the caller is NOT asked to text us", async () => {
-  notReady(); await db.collection("verifications").deleteMany({});
+  notReady(); await db.collection("verifications").deleteMany({}); await db.collection("contacts").updateOne({ _id: kit.contactId }, { $unset: { verifiedPhone: "" } });   // an earlier iMessage turn verifies by channel
   await db.collection("contacts").updateOne({ _id: kit.contactId }, { $set: { externalRefs: [{ system: "tmobile", id: "ACC-R", kind: "account" }] } });
   const ctx = await ctxFor(); const r = await call("verify_send_code", {}, deps(async () => "+16289990001"), { ...ctx, party: { ...ctx.party, externalRefs: [{ system: "tmobile", id: "ACC-R", kind: "account" }] } } as never);
   ok(!r.result.ok && r.result.error === "no_channel" && /not able to send a text/.test(r.result.reply ?? "") && !/text_options/.test(r.content), r.content);
@@ -153,7 +153,7 @@ await t("in a text conversation the same message uses written numbers, not spoke
   ok(r.text.includes("+1 (628) 999-0001") && r.text.includes("+1 (206) 555-0100") && !/six two eight/.test(r.text) && !/repeat the number/.test(r.text), r.text);
 });
 await t("through the model: verify_send_code for a caller nobody can text answers with the prepared plain message (code voided, nothing sent, no 'please text us')", async () => {
-  notReady(); await db.collection("verifications").deleteMany({}); adapters.imessage.sent.length = 0;
+  notReady(); await db.collection("verifications").deleteMany({}); adapters.imessage.sent.length = 0; await db.collection("contacts").updateOne({ _id: kit.contactId }, { $unset: { verifiedPhone: "" } });
   const llm = new ScriptedLlm([{ tools: [{ name: "verify_send_code", args: {} }] }, { content: "WRONG" }]);
   const d = kit.deps(llm); d.env.assignIMessage = async () => "+16289990001";
   const r = await runTurn(d, await voiceInput("please send me the code"));

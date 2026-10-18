@@ -163,7 +163,7 @@ await t("pay: card is validated, charged once, only brand + last 4 are kept, ord
   ok(r.ok && r.amountCents === 83000 && r.last4 === "4242" && r.brand === "visa", JSON.stringify(r));
   const p: any = await db.collection("payments").findOne({}); ok(p.amountCents === 83000 && p.last4 === "4242" && p.brand === "visa" && p.status === "succeeded" && /^MOCK-/.test(p.authCode), "payment row");
   const order: any = await db.collection("orders").findOne({ conversationId: kit.conversationId }); ok(order.amountCents === 83000 && order.status === "paid" && order.source === "agent_checkout", "order row " + JSON.stringify(order));
-  ok((await checkoutStatus(db, orgId, kit.contactId, kit.conversationId)).status === "paid", "quote paid");
+  ok((await checkoutStatus(db, orgId, kit.contactId, kit.conversationId, NOW)).status === "paid", "quote paid");
   ok((await loadPaymentForRender(db, token, NOW)).state === "completed", "link closed");
   const notice: any = await db.collection("messages").findOne({ channelMsgId: { $regex: "^pay:" }, body: /^Payment completed/ });
   ok(notice && notice.handling === "agent" && /\$830\.00/.test(notice.body) && /visa ending 4242/.test(notice.body), "agent notice: " + notice?.body);
@@ -207,11 +207,11 @@ await t("decline: kind message, link stays usable with tries left, a notice wake
   ok((await loadPaymentForRender(db, token, NOW)).state === "valid", "still valid");
   const notice: any = await db.collection("messages").findOne({ body: /^Payment not completed/ }, { sort: { ts: -1 } }); ok(notice && notice.handling === "agent", "agent told: " + notice?.body);
   const d2 = await submitPayment(db, { token, raw: { ...CARD, number: "4000000000009995" }, now: NOW }); ok(!d2.ok && d2.error === "insufficient_funds" && d2.attemptsLeft === 1, JSON.stringify(d2));
-  const st = await checkoutStatus(db, orgId, kit.contactId, kit.conversationId); ok(st.link === "sent_and_waiting" && st.declined_attempts === 2, JSON.stringify(st));
+  const st = await checkoutStatus(db, orgId, kit.contactId, kit.conversationId, NOW); ok(st.link === "sent_and_waiting" && st.declined_attempts === 2, JSON.stringify(st));
   const d3 = await submitPayment(db, { token, raw: { ...CARD, number: "4000000000000002" }, now: NOW }); ok(!d3.ok && d3.error === "declined" && d3.attemptsLeft === 0, JSON.stringify(d3));
   ok((await loadPaymentForRender(db, token, NOW)).state === "locked", "locked");
   const good = await submitPayment(db, { token, raw: CARD, now: NOW }); ok(!good.ok && good.error === "locked", "a good card cannot use a locked link");
-  ok((await checkoutStatus(db, orgId, kit.contactId, kit.conversationId)).status === "payment_failed" && await db.collection("notifications").findOne({ kind: "payment_failed" }), "quote failed + owner told");
+  ok((await checkoutStatus(db, orgId, kit.contactId, kit.conversationId, NOW)).status === "payment_failed" && await db.collection("notifications").findOne({ kind: "payment_failed" }), "quote failed + owner told");
   await freshLimits(); const retry = await call("checkout_send_payment_link", { customer_confirmed: true }, ctx); ok(!retry.result.ok && ["quote_closed", "no_quote"].includes(retry.result.error ?? ""), "failed quote cannot be re-linked; make a new quote: " + JSON.stringify(retry.result));
   ok(!(await everything()).includes("4000000000000002"), "declined card numbers are not stored either");
 });

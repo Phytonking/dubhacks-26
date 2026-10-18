@@ -207,7 +207,7 @@ export const checkout_status: Tool = {
   description: "Check where this customer's purchase stands: waiting for owner approval, link sent and waiting, paid (with card brand and last 4 only), declined card, or locked after too many attempts. Never returns the link or card details.",
   parameters: { type: "object", properties: {} },
   async run(ctx) {
-    const s: any = await checkoutStatus(ctx.db, ctx.orgId, ctx.contactId, ctx.conversationId);
+    const s: any = await checkoutStatus(ctx.db, ctx.orgId, ctx.contactId, ctx.conversationId, ctx.now);
     if (s.status === "none") return { ok: true, data: { status: "none" } };
     const { due_today_cents, monthly_cents, amount_paid_cents, ...rest } = s;
     return { ok: true, data: { ...rest, due_today: usd(due_today_cents), per_month: usd(monthly_cents), ...(amount_paid_cents != null ? { amount_paid: usd(amount_paid_cents) } : {}) } };

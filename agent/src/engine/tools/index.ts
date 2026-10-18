@@ -7,12 +7,13 @@ import { tmo_context } from "./tmo";
 import { tmo_catalog } from "./tmo-catalog";
 import { negotiation_accept, negotiation_offer, tmo_offers } from "./offers";
 import { checkout_quote, checkout_send_payment_link, checkout_status } from "./checkout";
+import { account_update_details, account_update_payment_method } from "./account";
 import { verify_check_code, verify_send_code } from "./verify";
 
 export const ALL_TOOLS: Tool[] = [
   knowledge_search, memory_remember, memory_commit, contact_update_stage, consent_record, owner_notify, handoff_escalate,
   text_send_info, verify_send_code, verify_check_code, forms_send_secure_form, forms_status, contact_options, tmo_context, tmo_catalog, customer_profile_update, tmo_offers, negotiation_offer, negotiation_accept,
-  checkout_quote, checkout_send_payment_link, checkout_status,
+  checkout_quote, checkout_send_payment_link, checkout_status, account_update_payment_method, account_update_details,
 ];
 const NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 export function validateRegistry(tools: Tool[]): void {

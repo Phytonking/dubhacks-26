@@ -225,18 +225,18 @@ export async function submitPayment(db: Db, a: { token: string; raw: Record<stri
 }
 
 /** What the agent may know about a customer's checkout: state, amounts, brand and last 4. Never the link, never card data. */
-export async function checkoutStatus(db: Db, orgId: ObjectId, contactId: ObjectId, conversationId: ObjectId) {
+export async function checkoutStatus(db: Db, orgId: ObjectId, contactId: ObjectId, conversationId: ObjectId, now = new Date()) {
   const q: any = await db.collection("checkout_quotes").findOne({ orgId, contactId, conversationId }, { sort: { createdAt: -1, _id: -1 } });
   if (!q) return { status: "none" as const };
   const out: Record<string, unknown> = { status: q.status, summary: q.summary, due_today_cents: q.dueTodayCents, monthly_cents: q.monthlyCents, requires_owner_approval: q.requiresApproval };
   if (q.status === "paid") { const p: any = await db.collection("payments").findOne({ quoteId: q._id }, { sort: { createdAt: -1, _id: -1 } }); if (p) { out.paid_with = `${p.brand} ending ${p.last4}`; out.amount_paid_cents = p.amountCents; } }
   const r: any = await db.collection("payment_requests").findOne({ quoteId: q._id }, { sort: { createdAt: -1, _id: -1 } });
-  if (r) { out.link = r.status === "pending" && r.expiresAt.getTime() > Date.now() ? "sent_and_waiting" : r.status; out.declined_attempts = r.lastFailure ? r.attempts : 0; if (r.lastFailure) out.last_failure = r.lastFailure; }
+  if (r) { out.link = r.status === "pending" && r.expiresAt.getTime() > now.getTime() ? "sent_and_waiting" : r.status; out.declined_attempts = r.lastFailure ? r.attempts : 0; if (r.lastFailure) out.last_failure = r.lastFailure; }
   return out as { status: QuoteStatus | "none" } & Record<string, unknown>;
 }
 
 // A plain notice in the thread. The agent's next turn reads it ("Payment completed...") and replies; it contains no card data.
-async function systemNotice(db: Db, a: { orgId: ObjectId; conversationId: ObjectId }, body: string, key: string, now: Date) {
+export async function systemNotice(db: Db, a: { orgId: ObjectId; conversationId: ObjectId }, body: string, key: string, now: Date) {
   const conv: any = await db.collection("conversations").findOne({ _id: a.conversationId });
   if (!conv) return;
   await db.collection("messages").insertOne({ orgId: a.orgId, conversationId: conv._id, channel: conv.lastChannel ?? "sms", direction: "in", sender: "customer",

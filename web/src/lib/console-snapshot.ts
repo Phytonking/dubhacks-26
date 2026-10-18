@@ -7,7 +7,7 @@ import { hasTmoData, listTmoConsoleCustomers } from "./tmo-queries";
 // read live from MongoDB. Times are minutes-ago, money is integer cents. Collections the agent has not
 // created yet (agent_turns, notifications, approvals, ...) read as empty, so this works on any deployment.
 
-const WINDOW_DAYS = 30;
+const WINDOW_DAYS = 92; // covers "last month" and a picked day on the Home range control
 const LIVE_MIN = 5; // a conversation with traffic in the last 5 minutes is "live"
 const RULES = [
   [1, "Discounts only from the policy table"],
@@ -52,7 +52,7 @@ export async function buildSnapshot() {
   const since = new Date(now - WINDOW_DAYS * 86400_000);
   const col = (name: string) => db.collection<Document>(name);
 
-  const convs = await col("conversations").find({ orgId, lastMessageAt: { $gte: since } }).sort({ lastMessageAt: -1 }).limit(150).toArray();
+  const convs = await col("conversations").find({ orgId, lastMessageAt: { $gte: since } }).sort({ lastMessageAt: -1 }).limit(500).toArray();
   const convIds = convs.map((c) => c._id);
   const [callDocs, contacts, allContacts, msgs, toolCalls, turns, notes, approvalDocs, handoffDocs, promoDocs, orderDocs, agent, lines, ownerUser, quoteDocs] = await Promise.all([
     col("calls").find({ orgId, conversationId: { $in: convIds }, summary: { $nin: ["", null] } }).sort({ startedAt: -1 }).toArray(),
@@ -205,8 +205,22 @@ export async function buildSnapshot() {
   ].sort((a, b) => b.at - a.at).slice(0, 60).map(({ at, ...e }) => ({ t: minsAgo(new Date(at), now), ...e }));
 
   const line = lines[0];
+
+  // Live inbound activity straight from what Photon sent us (written by the agent's event tracker): a text on its way in, a call ringing or in progress.
+  const evDocs = await col("inbound_events").find({ orgId, receivedAt: { $gte: new Date(now - 30 * 60000) } }).sort({ receivedAt: -1 }).limit(60).toArray();
+  const liveCalls = await col("calls").find({ orgId, status: { $in: ["ringing", "active"] }, updatedAt: { $gte: new Date(now - 15 * 60000) } }).sort({ startedAt: -1 }).limit(10).toArray();
+  const secsAgo = (d: Date) => Math.max(0, Math.round((now - new Date(d).getTime()) / 1000));
+  const inbound = {
+    live: [
+      ...liveCalls.map((c) => ({ kind: "call", state: c.status as string, peer: `•••• ${last4(c.peer ?? "")}`, since_s: secsAgo(c.startedAt), channel: "voice" })),
+      ...evDocs.filter((e) => e.kind === "typing" && secsAgo(e.receivedAt) < 30).slice(0, 5).map((e) => ({ kind: "text", state: "typing", peer: e.peer, since_s: secsAgo(e.receivedAt), channel: e.platform })),
+      ...evDocs.filter((e) => e.kind === "text" && e.status === "received" && secsAgo(e.receivedAt) < 120).map((e) => ({ kind: "text", state: "arriving", peer: e.peer, since_s: secsAgo(e.receivedAt), channel: e.platform })),
+    ],
+    recent: evDocs.filter((e) => e.kind === "text" || e.kind === "call").slice(0, 25).map((e) => ({ type: e.type, kind: e.kind, channel: e.platform, peer: e.peer, status: e.status, detail: e.detail ?? null, source: e.source, t: minsAgo(e.receivedAt, now) })),
+  };
   return {
     generatedAt: new Date(now).toISOString(),
+    inbound,
     line: { number: line?.address ?? "", carrier: "T-Mobile", status: line ? "live" : "offline" },
     conversations,
     customers,
@@ -226,7 +240,7 @@ export async function fingerprint(): Promise<string> {
   const db = await getDb();
   const org = await getCurrentOrg();
   const parts = await Promise.all(
-    ([["messages", "ts"], ["conversations", "lastMessageAt"], ["tool_calls", "ts"], ["agent_turns", "startedAt"], ["notifications", "createdAt"], ["approvals", "updatedAt"], ["handoffs", "updatedAt"], ["promos", "updatedAt"], ["orders", "updatedAt"], ["checkout_quotes", "updatedAt"], ["payments", "createdAt"], ["contacts", "createdAt"]] as const).map(async ([name, field]) => {
+    ([["messages", "ts"], ["conversations", "lastMessageAt"], ["tool_calls", "ts"], ["agent_turns", "startedAt"], ["notifications", "createdAt"], ["approvals", "updatedAt"], ["handoffs", "updatedAt"], ["promos", "updatedAt"], ["orders", "updatedAt"], ["checkout_quotes", "updatedAt"], ["payments", "createdAt"], ["calls", "updatedAt"], ["contacts", "createdAt"]] as const).map(async ([name, field]) => {
       const c = db.collection<Document>(name);
       const [top, n] = await Promise.all([c.find({ orgId: org._id }).sort({ [field]: -1 }).limit(1).project({ [field]: 1 }).next(), c.countDocuments({ orgId: org._id })]);
       return `${name}:${n}:${top ? new Date(top[field]).getTime() : 0}`;
