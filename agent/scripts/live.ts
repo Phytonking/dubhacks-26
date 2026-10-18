@@ -64,10 +64,10 @@ async function registerLines() {
   // assignments can be replaced in the Photon dashboard: disable lines that no longer exist
   await db.collection("channel_lines").updateMany({ channel: "imessage", provider: "photon", address: { $nin: [...live] }, status: "active" }, { $set: { status: "disabled" } });
   for (const a of asg.assignments ?? []) {
-    if (knownLines.has(a.assignedPhoneNumber)) { await db.collection("channel_lines").updateOne({ channel: "imessage", address: a.assignedPhoneNumber }, { $set: { status: "active" } }); continue; }
-    knownLines.add(a.assignedPhoneNumber);
+    if (knownLines.has(a.assignedPhoneNumber + a.handle)) { await db.collection("channel_lines").updateOne({ channel: "imessage", address: a.assignedPhoneNumber }, { $set: { status: "active" }, $addToSet: { handles: a.handle } }); continue; }
+    knownLines.add(a.assignedPhoneNumber + a.handle);
     await db.collection("channel_lines").updateOne({ channel: "imessage", address: a.assignedPhoneNumber },
-      { $set: { orgId, provider: "photon", photonLineId: a.assignmentId, status: "active", capabilities: ["typing", "reactions", "threads"] }, $setOnInsert: { createdAt: new Date() } },
+      { $set: { orgId, provider: "photon", photonLineId: a.assignmentId, status: "active", capabilities: ["typing", "reactions", "threads"] }, $addToSet: { handles: a.handle }, $setOnInsert: { createdAt: new Date() } },
       { upsert: true });
     log(`line: iMessage ${mask(a.assignedPhoneNumber)} (shared, assignment ${String(a.assignmentId).slice(0, 8)}…) -> this business`);
   }
@@ -78,6 +78,21 @@ async function registerLines() {
       { $set: { orgId, provider: "photon", photonLineId: smsLine.resourceId, status: "active", capabilities: smsLine.abilities }, $setOnInsert: { createdAt: new Date() } },
       { upsert: true });   // errors must surface: a silent failure here means inbound texts have no business to go to
     if (first) log(`line: SMS ${mask(smsLine.detail.phoneNumber)} -> this business`);
+  }
+  // the number people CALL (voice) and the WhatsApp Business number are lines of the business as well: the agent tells customers about them
+  const voiceLine = resources.resources.find((r: any) => r.abilities?.includes("pstn_voice") && r.state === "active");
+  if (voiceLine && !knownLines.has("voice")) {
+    knownLines.add("voice");
+    await db.collection("channel_lines").updateOne({ channel: "voice", address: voiceLine.detail.phoneNumber }, { $set: { orgId, provider: "photon", photonLineId: voiceLine.resourceId, status: "active", capabilities: ["pstn_voice"] }, $setOnInsert: { createdAt: new Date() } }, { upsert: true });
+    log(`line: voice ${mask(voiceLine.detail.phoneNumber)} -> this business`);
+  }
+  if (!knownLines.has("whatsapp")) {
+    const wa: any = await photon.req("GET", "/platforms/whatsapp-business/account/phone-numbers").catch(() => null);
+    for (const n of wa?.phoneNumbers ?? []) {
+      knownLines.add("whatsapp");
+      await db.collection("channel_lines").updateOne({ channel: "whatsapp", address: n.phoneNumber }, { $set: { orgId, provider: "photon", photonLineId: n.phoneNumberId ?? null, status: "active", capabilities: ["templates", "session"] }, $setOnInsert: { createdAt: new Date() } }, { upsert: true });
+      log(`line: WhatsApp ${mask(n.phoneNumber)} -> this business`);
+    }
   }
 }
 
@@ -132,8 +147,24 @@ if (v2) {
     return n ? { ok: true } : { ok: false, reason: channel === "whatsapp" ? "WhatsApp 24-hour window closed (needs an approved template)" : "no recent message from this person on iMessage" };
   };
   const llm = new ModalLlm({ endpoint: MODAL.endpoint, id: MODAL.id, secret: MODAL.secret, model: MODEL });
+  // A caller on the phone who has never texted us can only be reached on iMessage after the shared line is assigned to them. Done on request
+  // (contact_options), reusing an existing assignment, capped so a burst of callers cannot use up the plan's assignments. AUTO_ASSIGN_IMESSAGE=0 turns it off.
+  const assignCap = Number(process.env.IMESSAGE_ASSIGN_CAP ?? 20);
+  const assignIMessage = process.env.AUTO_ASSIGN_IMESSAGE === "0" ? undefined : async (a: { orgId: ObjectId; handle: string; firstName?: string }) => {
+    const list: any = await photon.req("GET", "/platforms/imessage/assignments");
+    const all: any[] = list.assignments ?? [];
+    let found = all.find((x) => x.handle === a.handle);
+    if (!found) {
+      if (all.length >= assignCap) { log(`iMessage assignment cap reached (${all.length}/${assignCap}); not assigning ${mask(a.handle)}`); return null; }
+      found = await photon.assignSharedLine({ handle: a.handle, firstName: a.firstName, idempotencyKey: `assign:${a.orgId}:${a.handle}` });
+      log(`iMessage: assigned ${mask(found.assignedPhoneNumber)} to ${mask(a.handle)} (${all.length + 1}/${assignCap})`);
+    }
+    await db.collection("channel_lines").updateOne({ channel: "imessage", address: found.assignedPhoneNumber },
+      { $set: { orgId: a.orgId, provider: "photon", photonLineId: found.assignmentId ?? null, status: "active", capabilities: ["typing", "reactions", "threads"] }, $addToSet: { handles: a.handle }, $setOnInsert: { createdAt: new Date() } }, { upsert: true });
+    return found.assignedPhoneNumber as string;
+  };
   engine = { db, llm, tools: ALL_TOOLS, messenger: new Messenger(db, { adapters, ready }), log,
-    env: { brandFallback: org.name, publicFormsBaseUrl: process.env.PUBLIC_FORMS_BASE_URL ?? "http://localhost:3000", verifySecret, formsMasterKey: process.env.FORM_ENC_KEY?.trim() } };
+    env: { brandFallback: org.name, assignIMessage, publicFormsBaseUrl: process.env.PUBLIC_FORMS_BASE_URL ?? "http://localhost:3000", verifySecret, formsMasterKey: process.env.FORM_ENC_KEY?.trim() } };
   scheduler = new Scheduler({ db, engine, workers: { imessage: wIm, whatsapp: wWa, ...(wSms ? { sms: wSms } : {}) }, log, afterTurn: async (a) => { await summarizeIfNeeded(db, llm, a); } });
   scheduler.start();
   const vs = process.env.VOICE_PATH_SECRET?.trim(), ws = process.env.ELEVENLABS_WEBHOOK_SECRET?.trim();

@@ -49,7 +49,7 @@ It only touches the T-Mobile org; Sunrise Bike Shop data is left alone.
 
 ```bash
 cd agent && pnpm install
-pnpm test         # 104 offline tests: identity, engine, messenger/codes/forms, scheduler, voice server, summarizer
+pnpm test         # 133 offline tests: identity, engine, messenger/codes/forms, scheduler, voice server, summarizer
 pnpm live         # live runner (needs web/.env.local): Photon events -> scheduler lanes -> engine -> replies. ENGINE=legacy = old sandbox path
 ```
 

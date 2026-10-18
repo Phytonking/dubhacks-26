@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ObjectId, type Db } from "mongodb";
 import type { AgentLink } from "./sandbox-link";
 import { resolveParty } from "./identity";
+import { redactSensitive } from "./sensitive";
 import { clearOptOut, detectKeyword, isOptedOut, keywordReply, setOptOut } from "./optout";
 
 // The only code path allowed to touch a channel. Every message is written to Mongo around the send (PRD §6).
@@ -77,18 +78,20 @@ export class Worker {
     const addresses: string[] = ((contact as any).handles ?? []).map((h: any) => h.address);
     const optedOut = await isOptedOut(db, a.orgId, addresses);
     const kw = detectKeyword(a.text, optedOut);
+    // A card number or SSN typed into a chat is never stored or shown to the model; the customer is steered to the secure form by the assistant.
+    const safe = redactSensitive(a.text);
     // 1. persist BEFORE acting (dedupe via unique (channel, channelMsgId))
     const handling = kw ? "ignored" : optedOut ? "opted_out" : conv.mode === "human" ? "human" : this.opts.autoReply === false ? "ignored" : "agent";
     try {
       await db.collection("messages").insertOne({
-        orgId: a.orgId, conversationId: conv._id, channel, direction: "in", sender: "customer", body: a.text,
+        orgId: a.orgId, conversationId: conv._id, channel, direction: "in", sender: "customer", body: safe.text, redacted: safe.redacted,
         channelMsgId: a.channelMsgId, deliveryStatus: "received", handling, attempts: 0, ref: a.ref ?? null, ts: new Date(),
       }, { writeConcern: { w: "majority", journal: true } });
     } catch (e) {
       if ((e as { code?: number }).code === 11000) { a.onPersisted?.(); return { duplicate: true as const }; }
       throw e;
     }
-    await db.collection("conversations").updateOne({ _id: conv._id }, { $set: { lastMessageAt: new Date(), lastMessagePreview: a.text.slice(0, 80), lastChannel: channel } });
+    await db.collection("conversations").updateOne({ _id: conv._id }, { $set: { lastMessageAt: new Date(), lastMessagePreview: safe.text.slice(0, 80), lastChannel: channel } });
     a.onPersisted?.();   // webhook receivers answer 2xx here: the message is durable, the (slow) agent turn continues
     if (kw) {
       const address = normalizeFor(a.address);
@@ -114,7 +117,7 @@ export class Worker {
       db.collection("knowledge").find({ orgId: a.orgId, status: "ready" }).toArray(),
     ]);
     // config travels with the turn (fresh every time: owner edits apply without restart)
-    const reply = await this.link.send(String(agent!._id), { turnId, channel, text: a.text, history, conversationId: String(conv._id), config: { org, agent, knowledge } });
+    const reply = await this.link.send(String(agent!._id), { turnId, channel, text: safe.text, history, conversationId: String(conv._id), config: { org, agent, knowledge } });
     // platform-side audit: the sandbox cannot write to Mongo, so the Worker records what it reports
     for (const tc of reply.toolCalls) {
       await db.collection("tool_calls").insertOne({ orgId: a.orgId, conversationId: conv._id, tool: tc.tool, args: (tc.args ?? {}) as object, result: tc.result ?? null, status: "ok", ms: tc.ms, approvedBy: null, ts: new Date() });

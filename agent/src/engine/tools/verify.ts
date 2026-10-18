@@ -1,5 +1,6 @@
 import { checkCode, issueCode, markSent, voidCode } from "../../verification";
 import type { Tool } from "../types";
+import { reachHint } from "./reach";
 
 // The code never appears in: tool results, tool_calls audit rows, agent_turns, stored messages (redacted), or anything the model sees.
 export const verify_send_code: Tool = {
@@ -19,7 +20,11 @@ export const verify_send_code: Tool = {
     });
     if (!sent.ok) {
       await voidCode(ctx.db, issued.id);   // never delivered: does not count against the person's limit and cannot be guessed
-      const hint = sent.error === "no_consent" ? "Ask if you may text them a code, then call consent_record." : sent.error === "no_channel" ? "No channel can reach them right now; offer a person." : undefined;
+      if (sent.error === "no_channel") {   // nothing can text them yet (they called but never messaged us): give the model the numbers to read out
+        const reach = await reachHint(ctx, "code");
+        return { ok: false, error: "no_channel", data: { hint: "We cannot text them yet. Tell them which number to message, then stop.", ...reach.data }, audit: { error: "no_channel" }, sideEffect: true, reply: reach.reply };
+      }
+      const hint = sent.error === "no_consent" ? "Ask if you may text them a code, then call consent_record." : undefined;
       return { ok: false, error: sent.error, data: hint ? { hint } : undefined, audit: { error: sent.error } };
     }
     await markSent(ctx.db, issued.id, sent.channel);

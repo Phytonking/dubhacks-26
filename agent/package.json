@@ -8,7 +8,7 @@
     "live": "tsx --env-file=../web/.env.local scripts/live.ts",
     "report": "tsx scripts/report.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/identity-test.ts && tsx scripts/engine-test.ts && tsx scripts/messenger-test.ts && tsx scripts/scheduler-test.ts && tsx scripts/voice-test.ts && tsx scripts/summarizer-test.ts"
+    "test": "tsx scripts/identity-test.ts && tsx scripts/engine-test.ts && tsx scripts/messenger-test.ts && tsx scripts/scheduler-test.ts && tsx scripts/voice-test.ts && tsx scripts/summarizer-test.ts && tsx scripts/reach-test.ts && tsx scripts/safety-test.ts"
   },
   "dependencies": {
     "@daytona/sdk": "latest",

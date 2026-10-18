@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { streamTurn, SAFE_FALLBACK, type EngineDeps } from "../engine/turn";
 import type { ChatMessage } from "../engine/types";
 import { normalizeAddress, resolveParty } from "../identity";
+import { redactSensitive } from "../sensitive";
 import { extractCallInfo, verifyElevenLabsSignature } from "./elevenlabs";
 
 // Voice server: ElevenLabs does the listening and speaking; for every caller turn it calls this endpoint (an OpenAI-style chat completions
@@ -46,7 +47,7 @@ export function startVoiceServer(cfg: VoiceCfg): Promise<{ server: Server; port:
     const out = sse(res);
     const { caller, called, conv, cleaned } = extractCallInfo(body.messages ?? []);
     const userMsgs = cleaned.filter((m) => m.role === "user");
-    const utterance = textOf(userMsgs[userMsgs.length - 1]?.content).trim();
+    const utterance = redactSensitive(textOf(userMsgs[userMsgs.length - 1]?.content).trim()).text;   // a spoken card number / SSN is never stored or sent to the model
     const line = called ? normalizeAddress(called) : undefined;
     const lineRow: any = line ? await db.collection("channel_lines").findOne({ address: line, status: "active" }) : null;
     if (!lineRow || !utterance) { log(`voice: cannot route (called=${called ?? "?"}, utterance=${utterance ? "yes" : "no"})`); out.say(SORRY_LINE); return out.end("stop"); }
@@ -67,7 +68,7 @@ export function startVoiceServer(cfg: VoiceCfg): Promise<{ server: Server; port:
     catch (e) { if ((e as { code?: number }).code !== 11000) throw e; userRowId = ((await db.collection("messages").findOne({ channelMsgId: userKey, channel: "voice" })) as any)._id; }
 
     // live transcript from ElevenLabs replaces recent DB history (it is exact and includes this call's greeting)
-    const live: ChatMessage[] = cleaned.filter((m) => m.role === "user" || m.role === "assistant").slice(0, -1).map((m) => ({ role: m.role as "user" | "assistant", content: textOf(m.content) })).filter((m) => (m as any).content);
+    const live: ChatMessage[] = cleaned.filter((m) => m.role === "user" || m.role === "assistant").slice(0, -1).map((m) => ({ role: m.role as "user" | "assistant", content: redactSensitive(textOf(m.content)).text })).filter((m) => (m as any).content);
     const passthrough = (body.tools ?? []).filter((t: any) => t?.type === "function" && t.function?.name).map((t: any) => ({ name: t.function.name, description: t.function.description ?? "", parameters: t.function.parameters ?? { type: "object", properties: {} } }));
     const ac = new AbortController(); let finished = false;
     res.on("close", () => { if (!finished) ac.abort(); });         // the caller talked over us or hung up: stop the model call now
@@ -159,7 +160,7 @@ export async function importCallEvent(db: Db, evt: any, now: Date, log: (m: stri
   let imported = 0, userN = 0, agentN = 0;
   const lastAgentIdx = new Map<number, number>();
   for (const turn of d.transcript ?? []) {
-    const body = typeof turn.message === "string" ? turn.message.trim() : "";
+    const body = typeof turn.message === "string" ? redactSensitive(turn.message.trim()).text : "";
     if (turn.role === "user") userN++;
     if (!body || (turn.role !== "user" && turn.role !== "agent")) continue;
     let key: string;

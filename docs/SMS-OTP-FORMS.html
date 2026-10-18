@@ -63,6 +63,7 @@
 
 <div class="callout warn"><b>Update 2026-10-18:</b> WhatsApp Business is now connected and approved on the same number (see <a href="AGENT-CORE.html#whatsapp">AGENT-CORE §6</a>). Business-initiated WhatsApp messages with approved templates are a route for codes and form links to non-assigned callers that does not wait for the SMS campaign. Revised order: WhatsApp templates first, SMS once the campaign is approved, iMessage for assigned handles.</div>
 <div class="callout warn"><b>Review 2026-10-18:</b> Tool names are unified with AGENT-CORE (C7, C13), and the messenger picks the first ready channel (iMessage / WhatsApp within their windows, then SMS when eligible) (C5). See <a href="AGENT-MASTER.html">AGENT-MASTER.html</a>.</div>
+<div class="callout"><b>Built (2026-10-18):</b> a caller who has never texted us is handled by the <code>contact_options</code> tool and the deterministic move-to-text reply (see <a href="AGENT-MASTER.html#reach">AGENT-MASTER 9b</a>): the agent says which iMessage or WhatsApp number to message, and once they do, the code or form is sent. This works without SMS approval.</div>
 <h2 id="summary">1. Summary</h2>
 <div class="callout">
 <b>Where things stand.</b> iMessage replies work. SMS receiving works. <b>SMS sending is refused by Photon</b> because our phone line has no carrier registration (10DLC campaign). I re-checked today: still <code>eligibility: blocked</code>, <code>SMS_CAMPAIGN_NOT_ASSIGNED</code>. That registration is a form a person fills in; I cannot do it through the API.

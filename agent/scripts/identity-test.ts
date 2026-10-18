@@ -170,7 +170,7 @@ await t("customer: unknown number is a prospect-like stranger with no account an
 });
 await t("prompt: renders fully, no placeholder left, channel style applied, and a missing value is an error", async () => {
   const tpl = loadTemplate("tmobile-system");
-  const vars = { assistant_name: "Magenta Assistant", brand: "T-Mobile (demo)", disclosure: "Say you are an AI assistant in your first message.", customer_block: "Who: UNKNOWN NUMBER", knowledge_block: "- Tune-up: $89", tools_block: "- knowledge_search: look things up", channel_style: channelStyle("voice"), max_discount: "0", escalation_triggers: "cancellation inquiry in the last 30 days", now: "2026-10-18", business_hours: "24/7" };
+  const vars = { assistant_name: "Magenta Assistant", brand: "T-Mobile (demo)", disclosure: "Say you are an AI assistant in your first message.", customer_block: "Who: UNKNOWN NUMBER", knowledge_block: "- Tune-up: $89", tools_block: "- knowledge_search: look things up", contact_methods: "- Phone: +1 (206) 555-0100", channel_style: channelStyle("voice"), max_discount: "0", escalation_triggers: "cancellation inquiry in the last 30 days", now: "2026-10-18", business_hours: "24/7" };
   const out = renderPrompt(tpl, vars);
   ok(!/\{\{\w+\}\}/.test(out), "placeholder left");
   ok(/Phone call: spoken style/.test(out) && /not a person/.test(out) && /handoff_escalate/.test(out), "content");

@@ -29,6 +29,8 @@ const phoneOf = (contact: any): string | null => (contact.handles ?? []).map((h:
 export class Messenger {
   constructor(private db: Db, private cfg: MessengerCfg) {}
   private now() { return this.cfg.now?.() ?? new Date(); }
+  /** Can we text this person on this channel right now (window open, campaign approved, ...)? */
+  isReady(channel: ChannelId, c: { orgId: ObjectId; contact: any; conversationId: ObjectId; address: string }) { return this.cfg.ready(channel, c); }
 
   /** Texts need consent: explicit (recorded, e.g. said yes on a call) or implicit (they texted us on that channel in the last 24 hours). */
   async hasConsent(contact: any, conversationId: ObjectId, orgId: ObjectId, channel: ChannelId): Promise<boolean> {

@@ -120,6 +120,15 @@ await t("hanging up (client disconnects mid-sentence) stops the model call and r
   const row: any = await db.collection("messages").findOne({ channelMsgId: "el:conv_6:a1" }); ok(!row || row.interrupted === true, "partial reply flagged if stored");
 });
 
+await t("a card number or SSN SPOKEN on the call is redacted before it is stored or sent to the model, in the new turn and in the call history ElevenLabs sends", async () => {
+  llm.i = 0; llm.script = [{ content: "Please don't say that out loud." }]; const before = llm.requests.length;
+  const b = JSON.stringify({ stream: true, messages: [{ role: "system", content: sys("conv_7") }, { role: "user", content: "my social is 123-45-6789" }, { role: "assistant", content: "Please don't share that." }, { role: "user", content: "ok my card is 4242 4242 4242 4242" }] });
+  await sseCall(b);
+  const sent = JSON.stringify(llm.requests.slice(before)); ok(!/4242|6789/.test(sent), "the model never saw the numbers");
+  ok(await waitFor(async () => !!(await db.collection("messages").findOne({ channelMsgId: "el:conv_7:u2" }))), "stored");
+  const rows = await db.collection("messages").find({ channelMsgId: /^el:conv_7:/ }).toArray(); ok(rows.length >= 2 && !JSON.stringify(rows).match(/4242|6789/), JSON.stringify(rows.map((r) => r.body)));
+});
+
 // ---------------- post-call webhook ----------------
 const post = async (evt: unknown, header?: string) => {
   const raw = JSON.stringify(evt);

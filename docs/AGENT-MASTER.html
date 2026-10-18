@@ -213,7 +213,7 @@ check: constant-time compare on the server; success sets contacts.verifiedPhone 
 
 
 <h2 id="results">9a. Build results (what was actually verified)</h2>
-<div class="callout"><b>104 offline tests pass</b> (identity 16, engine 32, messenger/codes/forms 20, scheduler 14, voice server 17, summarizer 5), the <b>web app smoke test passes 13/13</b> against the real production build, the <b>old sandbox path still passes its 19/19</b> end-to-end test against real Daytona and Modal, and a <b>live evaluation against the real model passes 12/12</b> with a median of 0.8 s per text turn (max 3.2 s with three tool rounds).</div>
+<div class="callout"><b>133 offline tests pass</b> (identity 16, engine 34, messenger/codes/forms 20, scheduler 14, voice server 18, summarizer 5, reach 19, safety 7), the <b>web app smoke test passes 13/13</b> against the real production build, the <b>old sandbox path still passes its 19/19</b> end-to-end test against real Daytona and Modal, and a <b>live evaluation against the real model passes 17/17</b> in 3 of 6 repeated runs and 16/17 in the others (one check that depends on whether the model calls a tool or answers from the snapshot already in its prompt), with a median of about 0.7 to 0.9 s per text turn (max 3.7 s with three tool rounds).</div>
 <h3>Live evaluation against the real model (nothing sent to anyone)</h3>
 <table>
 <tr><th>Scenario</th><th>Result</th></tr>
@@ -225,6 +225,8 @@ check: constant-time compare on the server; success sets contacts.verifiedPhone 
 <tr><td>Recognized customer, not verified, asks about her bill</td><td>Revealed nothing about the account; asked permission to text a code</td></tr>
 <tr><td>She agrees, reads the code back in spaced digits</td><td>Sent a real code, verified it, then used <code>tmo_context</code> and answered from the data, quoting only grounded numbers and not mentioning internal churn signals</td></tr>
 <tr><td>Voice style</td><td>One short plain sentence, no markdown</td></tr>
+<tr><td>Caller offers their SSN on a phone call</td><td>Refuses to take it, does not store it; when the caller agrees to a text, says exactly which number to message (spoken in digit groups) and that it is a different number, or WhatsApp; repeats it on request (6 of 6 runs)</td></tr>
+<tr><td>Someone texting asks how to call</td><td>Gives the business's phone number, and again when asked to speak with someone (6 of 6 runs)</td></tr>
 </table>
 <h3>Bugs the tests and the live run caught (all fixed, each now has a regression test)</h3>
 <table>
@@ -235,12 +237,38 @@ check: constant-time compare on the server; success sets contacts.verifiedPhone 
 <tr><td>4</td><td>At reasoning effort <code>low</code> the model sometimes spent its whole token budget thinking and returned an empty or cut-off reply</td><td>"I'm having trouble" fallbacks and replies ending mid-sentence ("about 18"). Budget raised; empty or truncated replies are retried once with reasoning off and tools kept; a still-truncated reply is trimmed to the last full sentence</td></tr>
 <tr><td>5</td><td>The model's private reasoning leaked into a reply once (<code>reasoning...&lt;/think&gt; answer</code>, answer repeated)</td><td>Would be read aloud on a call. Anything before the last closing tag is dropped, unmatched tags removed, repeated paragraphs collapsed</td></tr>
 <tr><td>6</td><td>Repeating a price quoted earlier in the same conversation was blocked as "not in this turn's evidence"</td><td>False positive that sent customers to a person. Earlier turns now count as evidence</td></tr>
+<tr><td>8</td><td>The model tried to <code>memory_remember</code> a Social Security number a caller read out</td><td>It would have been stored in plaintext. Secrets are refused and redacted at the door</td></tr>
+<tr><td>9</td><td>The model skimmed past the phone numbers a tool returned and offered to text a code "to the number on file", which was impossible</td><td>The tool now supplies the exact reply; the engine uses it as is</td></tr>
+<tr><td>10</td><td>A <i>refusal</i> ("I can't do 50% off") was blocked as if it were an offer</td><td>Customers were sent to a person for a correct answer. Refusals are recognized; offers (including mixed sentences) are still blocked</td></tr>
+<tr><td>11</td><td>One unsupported amount ($24, a figure the model computed) cost the customer the whole answer</td><td>The supported sentences are now sent; only if nothing supported remains does it fall back</td></tr>
+<tr><td>12</td><td>The model called the same tool four times in a turn and hit the round limit</td><td>An identical repeat in one turn is answered with a reminder instead of being re-run</td></tr>
 <tr><td>7</td><td>Two ElevenLabs webhook upserts conflicted on the same field</td><td>Every valid post-call webhook would have returned 500</td></tr>
 </table>
+
+<h2 id="reach">9b. Reaching people: calling and texting, and keeping secrets out of conversations</h2>
+<div class="callout"><b>Requirement:</b> when the agent on a call needs credentials or information, it asks over text, from a different number (and says which) or through WhatsApp; and a person who messages and wants to call is given the proper phone number.</div>
+<table>
+<tr><th>Piece</th><th>What it does</th></tr>
+<tr><td>Real numbers per channel</td><td>The phone (voice) number, the WhatsApp number and each iMessage line are recorded as lines of the business (<code>channel_lines</code>). The live runner registers them from Photon. <b>The iMessage line is a different number from the phone number</b>; on the current plan it can only chat with people it was assigned to.</td></tr>
+<tr><td>Always in the prompt</td><td>"How customers reach this business": the phone number in written form and in spoken digit groups, and the WhatsApp number. So when someone on iMessage, WhatsApp or (later) email asks how to call, the agent answers with the phone number without any tool. If no phone number is configured it offers a person instead of guessing.</td></tr>
+<tr><td><code>contact_options</code> tool</td><td>For a caller who needs to give private details, get a code or a form: finds the iMessage line to text (reusing the caller's existing assignment, or assigning one on request) and the WhatsApp number, with written and spoken forms. Remembers that the customer is moving to text, so their first message there is finished without starting over.</td></tr>
+<tr><td>Deterministic reply</td><td>When nothing can text the caller yet, the tool supplies the exact reply (<i>"please don't say them out loud. Please send a quick text on iMessage to six two eight, nine nine nine, zero zero zero one, which is a different number from the one you called, or send a message on WhatsApp to ..."</i>) and the engine uses it as is. <code>verify_send_code</code>, <code>forms_send_secure_form</code> and <code>text_send_info</code> do the same on "no channel". Real-model runs showed the model sometimes skims a tool result, so the numbers are not left to it.</td></tr>
+<tr><td>Channel readiness</td><td>iMessage is usable once the person has messaged the line; WhatsApp for 24 hours after their message (outside that, an approved template would be needed). Once they message, <code>verify_send_code</code> and <code>forms_send_secure_form</code> just work.</td></tr>
+<tr><td>Assignment limits</td><td>Assigning an iMessage line uses one of the plan's assignments (25 on Free). The runner caps itself (default 20, <code>IMESSAGE_ASSIGN_CAP</code>) and can be turned off with <code>AUTO_ASSIGN_IMESSAGE=0</code>; when refused or full, WhatsApp is still offered.</td></tr>
+</table>
+<h3>Secrets never enter the conversation</h3>
+<table>
+<tr><th>Rule</th><th>Where enforced</th></tr>
+<tr><td>A card number (Luhn-valid) or SSN typed in a text or spoken on a call is replaced by a marker before it is stored, shown in the inbox, or sent to the model; call history from ElevenLabs and imported transcripts get the same treatment</td><td><code>sensitive.ts</code>; texts, voice server, webhook import</td></tr>
+<tr><td><code>memory_remember</code> refuses secrets and the audit row keeps no arguments</td><td>tool + executor</td></tr>
+<tr><td>The assistant asking for a password, PIN, SSN or card number is never sent or spoken: on a call it becomes the move-to-text message, in a text a secure-form offer; the rest of that reply is dropped</td><td>engine (text and streaming)</td></tr>
+</table>
+<p class="meta"><b>Email</b> is not a channel yet (needs a verified domain on Photon's email platform). The prompt already says email is unavailable; when it is added, the same phone-number rule applies.</p>
 <h3>Not verified (and why)</h3>
 <ul>
 <li><b>A real call through ElevenLabs.</b> The voice server is tested with simulated requests and signatures only; it needs the number imported into ElevenLabs and a public URL.</li>
 <li><b>A real iMessage through the new scheduler.</b> The old path is verified live; the new one needs you to text the number. The runner can be switched back with <code>ENGINE=legacy</code>.</li>
+<li><b>Assigning an iMessage line to a real caller against live Photon</b> (tested with a stub; the real call creates a plan assignment and has not been run). WhatsApp replies must also be on (<code>WHATSAPP_REPLIES=1</code>) for a caller\u2019s first WhatsApp message to be answered.</li>
 <li><b>Real Photon payloads for call events</b> (built from the published schema and observed event types).</li>
 <li><b>Sandbox-resident engine, SMS sending, WhatsApp templates, T-Mobile seeding and commerce tools</b>: blocked as listed in section 7.</li>
 </ul>

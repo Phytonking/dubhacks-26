@@ -4,6 +4,7 @@ import type { ChannelId, Party } from "../identity";
 import { channelStyle, loadTemplate, renderPrompt } from "../prompt";
 import type { GuardCfg } from "./guardrails";
 import { scoreKnowledge } from "./tools/core";
+import { businessLines, contactMethodsBlock } from "../lines";
 import type { ChatMessage, EngineEnv, Mode, Tool } from "./types";
 import { ALL_TOOLS } from "./tools/index";
 
@@ -50,7 +51,7 @@ export async function buildContext(db: Db, env: EngineEnv, input: TurnInput, too
     assistant_name: agent.assistantName ?? `${org.name} assistant`, brand: org.name,
     disclosure: agent.disclosure ?? "In your first message of a new conversation, say that you are an AI assistant.",
     business_description: org.productDescription ?? "", brand_voice: org.brandVoice ?? "friendly and concise", persona: agent.persona ?? "",
-    customer_block: customerBlock, knowledge_block: knowledgeBlock, tools_block: toolsBlock(tools), channel_style: channelStyle(input.channel),
+    customer_block: customerBlock, knowledge_block: knowledgeBlock, tools_block: toolsBlock(tools), contact_methods: contactMethodsBlock(await businessLines(db, input.orgId)), channel_style: channelStyle(input.channel),
     max_discount: String(g.maxDiscountPct ?? 0), escalation_triggers: (g.escalateOn ?? []).join(", ") || "none beyond the above",
     now: now.toISOString().slice(0, 10), business_hours: org.hours ?? "not set",
   });

@@ -108,6 +108,12 @@ await t("a price the assistant quoted earlier in the same conversation may be re
   const r = await runTurn(kit.deps(llm), await input("what was that price again?", { conversationId: k2.conversationId }));
   ok(r.outcome === "reply" && r.text.includes("$1,450"), JSON.stringify(r));
 });
+await t("guardrail (discount): REFUSING a discount is allowed; an offer above the ceiling is still blocked even when a refusal sits in the same sentence", async () => {
+  const { checkDiscount } = await import("../src/engine/guardrails");
+  for (const refusal of ["I can't do 50% off, sorry.", "I'm not able to offer a 50% discount.", "We don't give 30% off on that plan.", "Unfortunately 50% off isn't something I can do."]) ok(checkDiscount(refusal, 10).verdict === "ok", refusal);
+  for (const offer of ["Sure, 50% off today!", "I can't do 5% but I can do 50% off.", "No problem. I can give you 40% off.", "Okay, 20% discount for you.", "I can offer 50% off and can't do more than that."]) ok(checkDiscount(offer, 10).verdict === "blocked", offer);
+  ok(checkDiscount("You get 10% off.", 10).verdict === "ok", "at the ceiling is allowed");
+});
 await t("grounding helper: formats compare equal ($1,450 = 1450 = $1450.00); unrelated amounts do not", async () => {
   ok(checkGroundedMoney("It costs $1,450.", ["Trailhead is $1450.00"]).verdict === "ok", "format");
   ok(checkGroundedMoney("It costs $1,451.", ["Trailhead is $1,450"]).verdict === "blocked", "off by one");
@@ -126,7 +132,10 @@ await t("memory tools: remember stores the customer's words with provenance; pri
   ok(c.memory.openLoops.length === 1 && c.memory.openLoops[0].status === "open" && c.memory.openLoops[0].dueAt, "open loop");
   ok(c.stage === "qualified" && c.score === 70, "stage");
   const msgs = (llm.requests[1].messages.filter((m: any) => m.role === "tool") as any[]).map((m) => m.content);
-  ok(msgs[1].includes("already_known") && msgs[2].includes("not_storable"), msgs.join(" | "));
+  ok(msgs[1].includes("already called") && msgs[2].includes("not_storable"), msgs.join(" | "));   // same call twice in one turn: reminder, not a re-run
+  const llm2 = new ScriptedLlm([{ tools: [{ name: "memory_remember", args: { fact: "moving to Portland in January" } }] }, { content: "Noted." }]);
+  await runTurn(kit.deps(llm2), await input("as I said, Portland in January", { conversationId: k2.conversationId }));
+  ok((llm2.requests[1].messages.find((m: any) => m.role === "tool") as any).content.includes("already_known") && ((await db.collection("contacts").findOne({ _id: k2.contactId })) as any).facts.length === 1, "a repeat in a LATER turn is recognized as already known");
   ok(r.sideEffects, "side effects flagged");
 });
 await t("ISOLATION CANARY: a secret fact stored for contact A never appears in any model request for contact B", async () => {
@@ -232,6 +241,16 @@ await t("a leaked-reasoning reply from the model is cleaned before it is returne
   ok(r.text === "A basic tune-up is $89." && r.outcome === "reply", JSON.stringify(r.text));
 });
 
+await t("a model that calls the same tool with the same arguments again in one turn is not re-run; it is reminded to answer (stops loops seen with the real model)", async () => {
+  const k2 = await kit.newContact("+14255550870");
+  const same = { name: "memory_commit", args: { text: "check trade-in value" } };
+  const llm = new ScriptedLlm([{ tools: [same] }, { tools: [same] }, { tools: [same] }, { content: "I have noted that." }]);
+  const r = await runTurn(kit.deps(llm), await input("remind me", { conversationId: k2.conversationId }));
+  const c: any = await db.collection("contacts").findOne({ _id: k2.contactId });
+  ok(r.outcome === "reply" && c.memory.openLoops.length === 1, `loops=${c.memory.openLoops.length} outcome=${r.outcome}`);
+  const reminders = (llm.requests[2].messages.filter((m: any) => m.role === "tool") as any[]).filter((m) => m.content.includes("already called"));
+  ok(reminders.length >= 1, "the model was told it already has the result");
+});
 await t("PROMPT DRIFT GUARD: every tool a prompt mentions exists in the registry, and the generated tool list matches the registry exactly", async () => {
   const names = new Set(ALL_TOOLS.map((x) => x.name));
   for (const f of readdirSync(new URL("../prompts/", import.meta.url))) {

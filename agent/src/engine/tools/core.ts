@@ -1,6 +1,8 @@
 import { ObjectId } from "mongodb";
 import { amountsIn, checkText } from "../guardrails";
+import { looksSensitive } from "../../sensitive";
 import type { Tool } from "../types";
+import { reachHint } from "./reach";
 
 const tok = (s: string) => s.toLowerCase().split(/[^a-z0-9$]+/).filter((w) => w.length > 2);
 const STOP = new Set(["the", "and", "for", "what", "with", "that", "this", "have", "from", "your", "about", "would", "could", "should", "there", "their", "need", "want", "does", "much", "which", "when", "will", "just", "like", "into", "than", "then", "they", "them", "how", "are", "can", "you", "get"]);
@@ -40,6 +42,7 @@ export const memory_remember: Tool = {
   description: "Remember something the customer told you (a deadline, a preference, a household detail) so you can use it later. Never store prices, offers or eligibility; those come from tools.",
   parameters: { type: "object", properties: { fact: { type: "string", minLength: 3, maxLength: 200, description: "short statement of what the customer said" } }, required: ["fact"] },
   async run(ctx, { fact }) {
+    if (looksSensitive(fact)) return { ok: false, error: "not_storable", data: { hint: "Never store passwords, PINs, SSNs or card numbers. Private details go through the secure form." }, audit: { error: "not_storable", note: "arguments withheld: looked sensitive" } };
     if (looksLikeFact.test(fact)) return { ok: false, error: "not_storable", data: { hint: "Store what the customer said about themselves, not prices, offers or eligibility." } };
     if (!ctx.sourceMessageId) return { ok: false, error: "no_source_message" };   // facts without provenance are rejected
     const c: any = await ctx.db.collection("contacts").findOne({ _id: ctx.contactId, orgId: ctx.orgId }, { projection: { facts: 1 } });
@@ -116,6 +119,7 @@ export const text_send_info: Tool = {
     if (g.verdict === "blocked") return { ok: false, error: "blocked_by_guardrail", data: { reason: g.reason } };
     const r = await ctx.messenger.send({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, purpose: "info", body: text.trim(), agentTurnId: ctx.turnId,
       idempotencyKey: `info:${ctx.turnId}:${amountsIn(text).length}:${text.length}`, channels: ctx.channel === "voice" ? undefined : [ctx.channel, "imessage", "whatsapp", "sms"] });
+    if (!r.ok && r.error === "no_channel") return { ok: false, error: "no_channel", ...(await (async () => { const h = await reachHint(ctx, "private_details"); return { data: { hint: "We cannot text them yet. Tell them which number to message, then stop.", ...h.data }, reply: h.reply }; })()), sideEffect: true };
     if (!r.ok) return { ok: false, error: r.error, data: r.error === "no_consent" ? { hint: "Ask whether you may text them, then call consent_record." } : undefined };
     return { ok: true, data: { status: "sent", via: r.channel }, sideEffect: true };
   },

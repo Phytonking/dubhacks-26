@@ -5,6 +5,8 @@ import type { Messenger } from "../messenger";
 import { buildContext, type BuiltContext, type TurnInput } from "./context";
 import { checkText, takeSentences, type GuardCfg } from "./guardrails";
 import { stripThinking } from "./llm";
+import { asksForSecrets, looksSensitive, TEXT_REDIRECT } from "../sensitive";
+import { reachHint } from "./tools/reach";
 import { handoff_escalate } from "./tools/core";
 import { toolByName } from "./tools/index";
 import type { ChatMessage, EngineEnv, LlmPort, Tool, ToolCallReq, ToolCtx, ToolResult, ToolSpec, Usage } from "./types";
@@ -28,6 +30,11 @@ const maxTokensFor = (mode: string) => (mode === "voice" ? 160 : 900);
 const TOOL_MARKUP = /<\/?tool_call>|<function=|<\/function>/;
 /** Remove tool syntax the model printed as text, keeping any real words around it. */
 export const stripToolMarkup = (s: string) => s.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").replace(/<function=[^>]*>[\s\S]*?<\/function>/g, "").replace(/<\/?(tool_call|function[^>]*)>/g, "").replace(/\s{2,}/g, " ").trim();
+/** Keep only the sentences that pass the checks (an unsupported amount in one sentence should not cost the customer the rest of a good answer). */
+export function keepPassingSentences(text: string, cfg: GuardCfg, evidence: string[]): string {
+  const [sents] = takeSentences(text, true);
+  return sents.filter((x) => checkText(x, cfg, evidence).verdict === "ok").join(" ").trim();
+}
 export function trimToSentence(text: string): string {
   const m = text.match(/^[\s\S]*[.!?](?=\s|$)/);
   return m ? m[0].trim() : "";
@@ -42,7 +49,7 @@ function makeCtx(deps: EngineDeps, input: TurnInput, b: BuiltContext, turnId: st
   return {
     db: deps.db, orgId: input.orgId, contactId: b.party.contact._id, conversationId: input.conversationId, channel: input.channel, mode: input.mode,
     party: b.party, customer: b.customer, turnId, sourceMessageId: input.batch[input.batch.length - 1]?._id ?? null,
-    now: deps.env.now?.() ?? new Date(), messenger: deps.messenger, env: deps.env, guard: { cfg: b.guard, evidence: b.evidence },
+    now: deps.env.now?.() ?? new Date(), messenger: deps.messenger, env: deps.env, guard: { cfg: b.guard, evidence: b.evidence }, calls: new Map(),
   };
 }
 
@@ -51,6 +58,12 @@ export async function executeTool(deps: EngineDeps, ctx: ToolCtx, call: ToolCall
   const t0 = Date.now();
   const tool = toolByName(deps.tools, call.function.name);
   let result: ToolResult; let args: any = {};
+  const dupKey = `${call.function.name}:${call.function.arguments}`;
+  if (ctx.calls?.has(dupKey)) {   // same tool, same arguments, same turn: do not run it again, tell the model to answer
+    const r: ToolResult = { ok: true, data: { note: "You already called this with the same arguments in this turn. Use the earlier result and answer the customer now." } };
+    return { content: JSON.stringify(r.data), result: r, trace: { name: call.function.name, ok: true, ms: 0, error: "repeated_call" } };
+  }
+  ctx.calls?.set(dupKey, "1");
   if (!tool) result = { ok: false, error: "unknown_tool" };
   else {
     try { args = call.function.arguments ? JSON.parse(call.function.arguments) : {}; } catch { args = null; }
@@ -73,7 +86,7 @@ export async function executeTool(deps: EngineDeps, ctx: ToolCtx, call: ToolCall
   if (result.ok && result.data !== undefined) ctx.guard.evidence.push(content);   // what tools returned this turn is what replies may quote
   try {
     await deps.db.collection("tool_calls").insertOne({
-      orgId: ctx.orgId, conversationId: ctx.conversationId, contactId: ctx.contactId, tool: call.function.name, args: tool?.redactArgs ? {} : (args && typeof args === "object" ? args : {}),
+      orgId: ctx.orgId, conversationId: ctx.conversationId, contactId: ctx.contactId, tool: call.function.name, args: tool?.redactArgs || looksSensitive(JSON.stringify(args ?? {})) ? {} : (args && typeof args === "object" ? args : {}),
       result: result.audit ?? (result.ok ? result.data ?? null : { error: result.error }), status: result.ok ? "ok" : (result.error === "blocked_by_guardrail" || result.error === "not_verified") ? "blocked" : "error",
       ms, approvedBy: null, ts: new Date(), turnId: ctx.turnId,
     } as never);
@@ -97,6 +110,13 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
   const passNames = new Set((input.passthrough ?? []).map((p) => p.name));
   const usage: Usage = { prompt_tokens: 0, completion_tokens: 0 };
   const trace: TraceCall[] = []; let sideEffects = false, escalated = false; const effort = effortFor(input.mode);
+  /** The assistant must never ask for a password, PIN, SSN or card number in the conversation. Replace such a reply with the move-to-text message. */
+  const noSecretRequests = async (text: string) => {
+    if (!takeSentences(text, true)[0].some(asksForSecrets)) return text;
+    sideEffects = true;
+    if (input.mode === "voice") return (await reachHint(ctx, "private_details")).reply;
+    return TEXT_REDIRECT;
+  };
   const done = (r: Partial<TurnResult> & Pick<TurnResult, "outcome" | "text" | "rounds">): TurnResult => ({
     turnId, toolCalls: trace, usage, sideEffects, escalated, passthrough: [], ms: Date.now() - t0, model: deps.llm.model, effort, ...r });
 
@@ -120,11 +140,14 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
       const pass = calls.filter((c) => passNames.has(c.function.name));
       if (pass.length) return done({ outcome: "reply", text: cleanReply(resp.message.content ?? ""), rounds, passthrough: pass.map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments })) });
       messages.push({ role: "assistant", content: resp.message.content ?? null, tool_calls: calls });
+      let forced: string | undefined;
       for (const call of calls) {
         const r = await executeTool(deps, ctx, call);
         trace.push(r.trace); sideEffects ||= Boolean(r.result.sideEffect); escalated ||= Boolean(r.result.escalate);
         messages.push({ role: "tool", tool_call_id: call.id, content: r.content });
+        forced ??= r.result.reply;
       }
+      if (forced) { final = cleanReply(forced); break; }   // a tool supplied the exact words (e.g. which number to text): no further model call, nothing to paraphrase
     }
   } catch (e) {
     if (input.signal?.aborted) return done({ outcome: "failed", text: "", rounds, note: "cancelled" });
@@ -148,12 +171,14 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
       add(usage, again.usage);
       const retry = cleanReply(again.message.content ?? "");
       verdict = retry ? checkText(retry, b.guard, ctx.guard.evidence) : verdict;
-      if (retry && verdict.verdict === "ok") return done({ outcome: escalated ? "escalated" : "reply", text: retry, rounds: rounds + 1, note: `guardrail retry: ${reason}` });
+      if (retry && verdict.verdict === "ok") return done({ outcome: escalated ? "escalated" : "reply", text: await noSecretRequests(retry), rounds: rounds + 1, note: `guardrail retry: ${reason}` });
+      const kept = keepPassingSentences(retry || final, b.guard, ctx.guard.evidence);   // still failing: send only the sentences that pass, if any remain
+      if (kept) return done({ outcome: escalated ? "escalated" : "reply", text: await noSecretRequests(kept), rounds: rounds + 1, note: `sanitized (dropped unsupported sentence): ${reason}` });
     } catch { /* fall through to the safe fallback */ }
     await escalateFallback(deps, ctx, `guardrail: ${reason}`);
     return done({ outcome: "blocked", text: SAFE_FALLBACK, rounds, escalated: true, sideEffects: true, note: `blocked: ${reason}` });
   }
-  return done({ outcome: escalated ? "escalated" : "reply", text: final, rounds });
+  return done({ outcome: escalated ? "escalated" : "reply", text: await noSecretRequests(final), rounds });
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -176,9 +201,17 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
   const finish = (outcome: TurnResult["outcome"], extra: Partial<TurnResult> = {}): StreamEvent => ({ type: "done", spoken, result: {
     turnId, outcome, text: spoken, rounds, toolCalls: trace, usage, sideEffects, escalated, passthrough: [], note, ms: Date.now() - t0, model: deps.llm.model, effort, ...extra } });
 
-  const say = function* (sentences: string[]): Generator<StreamEvent> {
+  let muted = false;   // set once the assistant tries to ask for a secret: the redirect is spoken instead and nothing more from the model is
+  const say = async function* (sentences: string[]): AsyncGenerator<StreamEvent> {
     for (const raw of sentences) {
+      if (muted) return;
       const s = stripToolMarkup(cleanReply(raw)); if (!s) continue;   // tool syntax is never spoken; real words around it still are
+      if (asksForSecrets(s)) {   // "What's your PIN?" must never be spoken: move the customer to text instead
+        muted = true; sideEffects = true; note = "asked for a secret; moved to text";
+        const msg = input.mode === "voice" ? (await reachHint(ctx, "private_details")).reply : TEXT_REDIRECT;
+        for (const part of takeSentences(msg, true)[0]) { spoken += (spoken ? " " : "") + part; yield { type: "sentence", text: part, replaced: true }; }
+        return;
+      }
       const v = checkText(s, b.guard, ctx.guard.evidence);
       if (v.verdict === "blocked") { flagged = true; note = `sentence blocked: ${v.reason}`; spoken += (spoken ? " " : "") + SAFE_LINE; yield { type: "sentence", text: SAFE_LINE, replaced: true }; }
       else { spoken += (spoken ? " " : "") + s; yield { type: "sentence", text: s }; }
@@ -196,16 +229,20 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
         else { add(usage, d.usage); streamFinish = d.finish; }
       }
       if (streamFinish !== "length") { const [tail] = takeSentences(buf, true); yield* say(tail); }   // a fragment cut off by the token limit is not spoken
+      if (muted) break;
       const calls: ToolCallReq[] = [...acc.values()].filter((a) => a.name).map((a, i) => ({ id: a.id || `call_${turnId.slice(0, 8)}_${rounds}_${i}`, type: "function", function: { name: a.name, arguments: a.args || "{}" } }));
       if (!calls.length) break;
       const pass = calls.filter((c) => passNames.has(c.function.name));
       if (pass.length) { const p = pass.map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments })); yield { type: "passthrough", calls: p }; yield finish(escalated ? "escalated" : "reply", { passthrough: p }); return; }
       messages.push({ role: "assistant", content: content || null, tool_calls: calls });
+      let forced: string | undefined;
       for (const call of calls) {
         const r = await executeTool(deps, ctx, call);
         trace.push(r.trace); sideEffects ||= Boolean(r.result.sideEffect); escalated ||= Boolean(r.result.escalate);
         messages.push({ role: "tool", tool_call_id: call.id, content: r.content });
+        forced ??= r.result.reply;
       }
+      if (forced) { yield* say(takeSentences(cleanReply(forced), true)[0]); break; }
       if (rounds === MAX_ROUNDS) throw new Error("tool loop did not finish");
     }
     if (!spoken) throw new Error("empty reply");

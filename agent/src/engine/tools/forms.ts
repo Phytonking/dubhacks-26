@@ -1,6 +1,7 @@
 import { agentViewOfForm, createFormRequest } from "../../../../web/src/lib/forms-core";
 import { FORM_KEYS, FORM_TEMPLATES } from "../../../../web/src/lib/form-templates";
 import type { Tool } from "../types";
+import { reachHint } from "./reach";
 
 export const forms_send_secure_form: Tool = {
   name: "forms_send_secure_form", risk: "write_high", timeoutMs: 10_000,
@@ -17,6 +18,10 @@ export const forms_send_secure_form: Tool = {
     });
     if (!sent.ok) {
       await ctx.db.collection("form_requests").updateOne({ _id: req.id }, { $set: { status: "revoked" } });
+      if (sent.error === "no_channel") {
+        const reach = await reachHint(ctx, "form");
+        return { ok: false, error: "no_channel", data: { hint: "We cannot text them yet. Tell them which number to message, then stop.", ...reach.data }, sideEffect: true, reply: reach.reply };
+      }
       return { ok: false, error: sent.error, data: sent.error === "no_consent" ? { hint: "Ask if you may text them a link, then call consent_record." } : undefined };
     }
     return { ok: true, data: { status: "sent", via: sent.channel, expires_in_minutes: req.template.expiryMinutes }, audit: { status: "sent", template, via: sent.channel }, sideEffect: true };

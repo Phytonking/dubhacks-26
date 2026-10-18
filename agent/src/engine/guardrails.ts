@@ -1,10 +1,16 @@
 // Rules enforced in code, outside the model. One module for text and voice (conflict C10).
 export type Verdict = { verdict: "ok" } | { verdict: "blocked"; reason: string; kind: "discount" | "ungrounded_amount" };
 
-/** Discount ceiling: "50% off" above the allowed maximum is blocked. */
+/** Discount ceiling: offering "50% off" above the allowed maximum is blocked. Saying you CAN'T do 50% off is a refusal, not an offer. */
+const NEGATION = /\b(can'?t|cannot|can not|won'?t|will not|unable|not able|don'?t|do not|doesn'?t|isn'?t|aren'?t|no way|not (?:possible|available|something))\b/i;
 export function checkDiscount(text: string, maxDiscountPct: number): Verdict {
   for (const m of text.matchAll(/(\d{1,3})\s*%\s*(off|discount)/gi)) {
-    if (Number(m[1]) > maxDiscountPct) return { verdict: "blocked", reason: `discount ${m[1]}% exceeds max ${maxDiscountPct}%`, kind: "discount" };
+    if (Number(m[1]) <= maxDiscountPct) continue;
+    const before = text.slice(0, m.index);
+    const clause = before.split(/[.!?;,]|\bbut\b|\bhowever\b/i).pop() ?? "";   // same clause only: "I can't do 5% but I can do 50% off" is still an offer
+    if (NEGATION.test(clause)) continue;
+    if (/^\s*(?:isn'?t|is not|aren'?t|are not|won'?t be|is not possible)\b/i.test(text.slice((m.index ?? 0) + m[0].length))) continue;   // "50% off isn't something I can do": negation directly after the number
+    return { verdict: "blocked", reason: `discount ${m[1]}% exceeds max ${maxDiscountPct}%`, kind: "discount" };
   }
   return { verdict: "ok" };
 }

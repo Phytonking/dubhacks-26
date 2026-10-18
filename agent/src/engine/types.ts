@@ -44,7 +44,8 @@ export type ToolCtx = {
   now: Date;
   messenger: Messenger;
   env: EngineEnv;
-  guard: { cfg: GuardCfg; evidence: string[] };   // same rules and evidence the final reply is checked against
+  guard: { cfg: GuardCfg; evidence: string[] };
+  calls?: Map<string, string>;   // tool+arguments already run this turn (a model that repeats a call gets a reminder instead of a re-run)   // same rules and evidence the final reply is checked against
 };
 export type ToolResult = {
   ok: boolean;
@@ -53,6 +54,7 @@ export type ToolResult = {
   audit?: unknown;            // stored in tool_calls instead of data when they differ (secrets redacted)
   sideEffect?: boolean;       // the tool changed something in the world (blocks discarding the draft)
   escalate?: boolean;         // the conversation was handed to a person
+  reply?: string;             // use EXACTLY this as the reply to the customer and end the turn (for instructions that must not be paraphrased, e.g. which number to text)
 };
 export type Tool = {
   name: string;               // snake_case, 1-64 chars
@@ -70,5 +72,7 @@ export type EngineEnv = {
   publicFormsBaseUrl: string;
   verifySecret: string;
   formsMasterKey?: string;
+  /** Give this person an iMessage line to text (shared plan). Returns its number or null. Set by the live runner; absent in tests unless stubbed. */
+  assignIMessage?: (a: { orgId: import("mongodb").ObjectId; handle: string; firstName?: string }) => Promise<string | null>;
   now?: () => Date;
 };

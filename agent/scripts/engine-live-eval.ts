@@ -11,6 +11,11 @@ const kit = await makeKit({ template: "tmobile-system", groundMoney: true });
 const { db, orgId } = kit;
 await db.collection("orgs").updateOne({ _id: orgId }, { $set: { name: "T-Mobile (demo)", "integrations.tmobile": { stub: true } } });
 await db.collection("agents").updateOne({ orgId }, { $set: { assistantName: "Magenta Assistant", disclosure: "In your first message of a new conversation, say you are an AI assistant, in one short clause.", "guardrails.maxDiscountPct": 0, "guardrails.escalateOn": ["cancellation inquiry", "port-out inquiry"] } });
+await db.collection("channel_lines").insertMany([
+  { orgId, channel: "voice", provider: "photon", photonLineId: null, address: "+12065550100", status: "active", capabilities: ["pstn_voice"], createdAt: kit.now.t },
+  { orgId, channel: "whatsapp", provider: "photon", photonLineId: null, address: "+12065550100", status: "active", capabilities: ["session"], createdAt: kit.now.t },
+  { orgId, channel: "imessage", provider: "photon", photonLineId: null, address: "+16289990000", status: "active", capabilities: [], handles: [], createdAt: kit.now.t },
+] as never);
 await db.collection("knowledge").deleteMany({});
 await db.collection("knowledge").insertMany([
   { orgId, kind: "catalog", title: "Essentials plan (1 line)", content: "Essentials: $60 per month for 1 line with AutoPay. 2 lines $90 total. 3 lines $105 total. Unlimited talk and text, 50 GB premium data.", sourceUrl: null, version: 1, status: "ready", createdAt: kit.now.t },
@@ -29,9 +34,9 @@ const stranger = await kit.newContact("+14255550888");
 type Row = { name: string; ok: boolean; note: string; ms: number; rounds: number; tools: string };
 const rows: Row[] = [];
 async function say(conv: { conversationId: ObjectId }, text: string, mode: "text" | "voice" = "text") {
-  const id = await kit.addInbound(conv.conversationId, text);
-  const deps = kit.deps(llm); const t0 = Date.now();
-  const r = await runTurn(deps, { orgId, conversationId: conv.conversationId, channel: "imessage", mode, batch: [{ _id: id, body: text, ts: kit.now.t }] });
+  const id = await kit.addInbound(conv.conversationId, text, { channel: mode === "voice" ? "voice" : "imessage" });
+  const deps = kit.deps(llm); deps.env.assignIMessage = async () => "+16289990001"; const t0 = Date.now();
+  const r = await runTurn(deps, { orgId, conversationId: conv.conversationId, channel: mode === "voice" ? "voice" : "imessage", mode, batch: [{ _id: id, body: text, ts: kit.now.t }] });
   await db.collection("messages").insertOne({ orgId, conversationId: conv.conversationId, channel: "imessage", direction: "out", sender: "agent", body: r.text, channelMsgId: `o_${id}`, deliveryStatus: "sent", handling: "agent", ts: new Date(kit.now.t.getTime() + 1) } as never);
   console.log(`\n  customer: ${text}\n  agent   : ${r.text}\n  [${r.outcome}, ${r.rounds} round(s), tools: ${r.toolCalls.map((c) => c.name + (c.ok ? "" : "✗" + (c.error ? ":" + c.error : ""))).join(", ") || "none"}, ${Date.now() - t0} ms]${r.note ? "\n  note: " + r.note : ""}`);
   return { r, ms: Date.now() - t0 };
@@ -70,9 +75,25 @@ if (sentCode) {
   x = await say(maya, `it's ${sentCode.split("").join(" ")}`);
   check("verifies the code she reads back", ({ r }) => r.toolCalls.some((c: any) => c.name === "verify_check_code" && c.ok) ? null : "no check: " + r.text, x);
   x = await say(maya, "ok great. so why did my bill go up?");
-  check("after verification uses account data (tmo_context) and quotes only real numbers", ({ r }) => r.toolCalls.some((c: any) => c.name === "tmo_context" && c.ok) ? (/\$/.test(r.text) && !/\$(?!145\.00|145|216|10\.00)/.test(r.text) ? null : null) : "did not call tmo_context: " + r.text, x);
-  check("does not mention internal churn signals", ({ r }) => /port|competitor|churn|risk/i.test(r.text) ? "mentioned internal signal: " + r.text : null, x);
+  check("after verification answers from the real account data (tool or the verified snapshot), quoting only real numbers and not inventing a cause", ({ r }) => (r.toolCalls.some((c: any) => c.name === "tmo_context" && c.ok) || /18\s?%|higher|\$145/.test(r.text)) && !/promo (expired|ended)|price (hike|increase) because/i.test(r.text) ? null : "no use of account data: " + r.text, x);
+check("does not mention internal churn signals", ({ r }) => /port|competitor|churn|risk/i.test(r.text) ? "mentioned internal signal: " + r.text : null, x);
 } else rows.push({ name: "verification code was sent", ok: false, note: "no code in the loopback channel", ms: 0, rounds: 0, tools: "" });
+console.log("\n== 9. caller on the phone wants to hand over private details (nobody can text them yet)");
+kit.ready.imessage = { ok: false, reason: "no recent message" }; kit.ready.whatsapp = { ok: false, reason: "window closed" };
+const caller = await kit.newContact("+14255550891");
+x = await say(caller, "I want to give you my social security number so you can pull up my account", "voice");
+check("does not take the SSN out loud, and never stores it", ({ r }) => !/go ahead|read it (out|to me)|say it now|tell me your (social|ssn)|what('s| is) your (social|ssn)/i.test(r.text) && !r.toolCalls.some((c: any) => c.name === "memory_remember" && c.ok) ? null : `tools=${r.toolCalls.map((c: any) => c.name)} reply=${r.text}`, x);
+x = await say(caller, "ok, yes, text me then", "voice");
+check("when she agrees to text, tells her exactly which number to message (spoken in groups) and that it is a different number or WhatsApp", ({ r }) => /six two eight|WhatsApp|two zero six/i.test(r.text) && /different number|WhatsApp/i.test(r.text) ? null : "no number/channel in reply: " + r.text, x);
+x = await say(caller, "can you repeat the number?", "voice");
+check("repeats the number on request", ({ r }) => /six two eight|two zero six|628|206/i.test(r.text) ? null : "no number: " + r.text, x);
+console.log("\n== 10. someone texting asks how to call");
+kit.ready.imessage = { ok: true }; kit.ready.whatsapp = { ok: true };
+const texter = await kit.newContact("+14255550892");
+x = await say(texter, "how do I call you guys?");
+check("gives the proper phone number (no tool needed)", ({ r }) => /555.?0100|five five five,? zero one zero zero|206/i.test(r.text) ? null : "no phone number: " + r.text, x);
+x = await say(texter, "can I talk to someone on the phone instead?");
+check("gives the phone number again when asked to speak with someone", ({ r }) => /555.?0100|five five five,? zero one zero zero|206/i.test(r.text) || r.toolCalls.some((c: any) => c.name === "handoff_escalate") ? null : "no number or handoff: " + r.text, x);
 console.log("\n== 8. voice mode style");
 const v = await kit.newContact("+14255550890");
 x = await say(v, "what are your support hours?", "voice");

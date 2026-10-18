@@ -111,7 +111,7 @@ pnpm db:local          # optional local MongoDB on :27017 instead of Atlas
 pnpm dev               # http://localhost:3000   ·   GET /api/health pings Mongo
 
 cd ../agent
-pnpm test              # 104 offline tests (in-memory Mongo, scripted model, no network)
+pnpm test              # 133 offline tests (in-memory Mongo, scripted model, no network)
 pnpm live              # live runner: Photon events + engine v2 (ENGINE=legacy for the old sandbox path)
 pnpm exec tsx --env-file=../web/.env.local scripts/engine-live-eval.ts   # evaluate the REAL model with the real prompts (nothing is sent to anyone)</code></pre>
 <div class="callout warn"><b>Secrets.</b> <code>atlas-credentials.env</code> and every <code>*.env</code> are gitignored (root <code>.gitignore</code>). Never commit them or paste the URI in chat/docs. The Atlas password was shared as a file; rotate it when convenient.</div>
@@ -388,6 +388,7 @@ pnpm exec tsx --env-file=../web/.env.local scripts/engine-live-eval.ts   # evalu
 <tr><td>10-17</td><td>PRD v0.1 (<code>docs/PRD.html</code>): architecture, Photon/Daytona/harness research, phases</td></tr>
 <tr><td>10-17</td><td>Next.js console in <code>web/</code>: dashboard, inbox, contacts, agent settings; Mongo wired; seed script</td></tr>
 <tr><td>10-17</td><td>Atlas connected via <code>web/.env.local</code>; credentials file gitignored</td></tr>
+<tr><td>10-18</td><td>Reach: real phone / WhatsApp / iMessage numbers are lines of the business; <code>contact_options</code> + a deterministic move-to-text reply for callers (names the different iMessage number, or WhatsApp); the phone number is always in the prompt for anyone who asks how to call; card numbers / SSNs are redacted on the way in; the assistant can never ask for a password, PIN, SSN or card number</td></tr>
 <tr><td>10-18</td><td><b>PR <code>agent/core-v1</code>:</b> engine, tools, scheduler lanes, messenger, one-time codes, voice server, secure forms (web), summarizer. 104 offline tests, live-model evaluation 12/12, web smoke 13/13, legacy e2e 19/19. PRD set reconciled (AGENT-MASTER)</td></tr>
 <tr><td>10-18</td><td>Agent core PRD (<code>docs/AGENT-CORE.html</code>). Built and tested (16 tests): <code>identity.ts</code>, <code>calls.ts</code>, <code>customer.ts</code>, <code>prompt.ts</code>, T-Mobile system prompt. Voice calls and WhatsApp now logged (calls collection was empty). Unique contacts index (business + address) and unique provider call id applied to Atlas. Found: WhatsApp Business "SellDial Customer Service" approved on the same number as voice/SMS</td></tr>
 <tr><td>10-18</td><td>Latency measurements (<code>agent/scripts/latency-probe.mts</code>) and voice latency PRD (<code>docs/VOICE-LATENCY.html</code>). Found: sandbox egress now open (earlier test report said blocked); Photon <code>call.*</code> events carry the caller number; Modal <code>none</code> reasoning effort is much faster</td></tr>

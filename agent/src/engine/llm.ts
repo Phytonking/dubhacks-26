@@ -59,6 +59,7 @@ export class ModalLlm implements LlmPort {
     const c = j.choices?.[0];
     if (!c) throw new Error("model returned no choices");
     if (process.env.DEBUG_LLM && !c.message?.tool_calls?.length && !String(c.message?.content ?? "").trim()) console.error("[DEBUG_LLM] empty reply, raw choice:", JSON.stringify(c).slice(0, 1500));
+    if (process.env.TRACE_LLM) console.error(`[TRACE_LLM] effort=${req.effort} finish=${c.finish_reason} content=${JSON.stringify(String(c.message?.content ?? "").slice(0, 100))} calls=${JSON.stringify((c.message?.tool_calls ?? []).map((t: any) => t.function?.name + t.function?.arguments))}`);
     const calls: ToolCallReq[] | undefined = c.message?.tool_calls?.map((t: any) => ({ id: t.id, type: "function", function: { name: t.function?.name, arguments: t.function?.arguments ?? "{}" } }));
     return {
       message: { role: "assistant", content: c.message?.content == null ? null : stripThinking(c.message.content), ...(calls?.length ? { tool_calls: calls } : {}) },
