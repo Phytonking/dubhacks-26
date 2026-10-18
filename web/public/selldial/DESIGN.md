@@ -24,9 +24,9 @@ Follow them for feel, and follow this file where they differ.
 4. **Show why.** Every outcome has a one-line reason the operator can read.
 5. **Honest labels.** Payment status is plain: Paid by agent or Not paid. Mock checkout is labelled "Mock".
 
-## Theme (dark only): dark + magenta fusion
+## Theme: dark + magenta fusion, with an optional light theme
 
-One theme. No light mode, no toggle, no Appearance setting. The console shares the landing page's look: rich plum surfaces in three clear tiers, with magenta used deliberately as the signature colour, not hidden. Tiers are about 5 lightness points apart, so they separate by tone and a faint pink-tinted edge. No area is flat black.
+Dark is the default and the primary design. The console also has a light theme, chosen in Settings > Appearance (Dark or Light), saved in `localStorage` under `selldial-theme` and applied by a tiny inline script in the `<head>` of `console.html` before first paint, so there is no flash. The landing page is always dark and never reads the setting. The dark tokens below are the source of truth; the light set lives in `tokens.css` under `:root[data-theme="light"]` and keeps the same roles and hues. The console shares the landing page's look: rich plum surfaces in three clear tiers, with magenta used deliberately as the signature colour, not hidden. Tiers are about 5 lightness points apart, so they separate by tone and a faint pink-tinted edge. No area is flat black.
 
 | Token | Value | Use |
 |---|---|---|
@@ -48,6 +48,10 @@ One theme. No light mode, no toggle, no Appearance setting. The console shares t
 | `--color-save` | `oklch(80% 0.14 155)` | Paid, money saved, success |
 | `--color-guard` | `oklch(86% 0.12 90)` | Pending approval, needs a look |
 | `--color-block` | `oklch(74% 0.17 25)` | Not paid, failed, needs review |
+
+### Light theme tokens
+
+Soft off-white surfaces in the same three tiers: page (`oklch(95.5% 0.014 330)`), panel (lightest, `oklch(99% 0.006 330)`) and raised (a step darker, `oklch(93% 0.02 330)`, used for inputs, chips and hover). Plum-tinted ink (`oklch(21% 0.04 320)`), body text `oklch(30% 0.035 320)`, muted `oklch(44% 0.035 320)`. The same magenta hue is darkened for contrast: fill `oklch(58% 0.24 350)` (with near-white text on it, 4.7:1), magenta text `oklch(47% 0.21 350)`, accent wash `oklch(91.5% 0.055 350)`. Violet `oklch(46% 0.17 295)`; state colours are deepened so they stay readable on pale surfaces: save `oklch(42% 0.13 155)`, guard `oklch(46% 0.11 75)`, block `oklch(50% 0.19 25)`. All text and state colours measure at least 4.7:1 on every surface tier (page, panel, raised, accent wash, violet wash). The page glow is the same magenta-to-violet shape in pale tints. Magenta, edge and marker rules apply unchanged in both themes.
 
 Rules:
 - Magenta is the lead colour and is used on purpose: the active nav item (wash fill plus a 3px marker), the selected row, key figures and the "needs you" counts, chart highlights, section accents (a short marker beside a section title), focus rings and hover edges. Aim for roughly 8 to 12% of a screen carrying some magenta, never a full magenta surface. One filled primary button per view.
@@ -107,7 +111,7 @@ The owner approval limit in the synthetic data is **$1,500.00** everywhere (Sett
 - **Sales list:** most recent first. A mini figures line (Sales, Paid by agent in magenta, Not paid, Paid total in mono magenta), then a panel table: customer (avatar and name), item, amount, region, date (mono), payment (Paid by agent or Not paid). Money in any table is JetBrains Mono, right-aligned, always two decimals. No dense math tables.
 - **Analytics:** four plain SVG/CSS charts, each in its own panel with a magenta-marked title and a one-line takeaway: sales per day (bars use the paid and not-paid state colours), revenue by region and top items (magenta bars), payment rate (a large magenta figure, a magenta trend line and a paid / not-paid split bar). Counted from the same sales and filtered by the same region and time.
 
-**Settings:** only what is real: Offers and discounts, Spend and approvals, Verification and handoff, and Channels (Voice, SMS, iMessage and WhatsApp only; no RCS, no Web chat). No Appearance. Editable controls change local state only. One note at the top (a tinted magenta bar) says "Changes here are not saved in this demo." The controls do not repeat it. Each group is a panel under a magenta-marked title; from 1200px wide, Offers sits on the left and the other three stack on the right. Switches that are on use violet.
+**Settings:** only what is real: Offers and discounts, Spend and approvals, Verification and handoff, and Channels (Voice, SMS, iMessage and WhatsApp only; no RCS, no Web chat). Appearance comes first. Editable controls change local state only. One note at the top (a tinted magenta bar) says "Offer, approval and channel changes are not saved in this demo." Appearance (Theme: Dark or Light) is the one setting that is saved, in this browser only. The controls do not repeat it. Each group is a panel under a magenta-marked title; from 1200px wide the groups flow into two balanced columns. Switches that are on use violet.
 
 **About:** short and well set. The logo icon beside a display-face statement (no eyebrow) with the key phrase in magenta, "How a purchase goes" as three open columns under a pink-tinted rule with large magenta numerals (no boxes), "Trust rules" as an open list with magenta rule names, and the synthetic-data note at the foot. Max width 1080px.
 

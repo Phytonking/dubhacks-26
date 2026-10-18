@@ -69,6 +69,43 @@
   color-scheme: dark;
 }
 
+/* Light theme: opt-in with <html data-theme="light"> (set from Settings, saved in localStorage). Dark stays the default.
+ * Same hues and roles as the dark set. Tiers: page, panel (lightest), raised (a step darker for inputs, chips, hover).
+ */
+:root[data-theme="light"] {
+  --color-bg:          oklch(95.5% 0.014 330);
+  --color-surface:     oklch(99% 0.006 330);
+  --color-raised:      oklch(93% 0.02 330);
+  --color-rule:        oklch(84% 0.03 335);
+  --color-edge:        oklch(58% 0.24 350 / 0.28);
+  --color-ink:         oklch(21% 0.04 320);
+  --color-ink-2:       oklch(30% 0.035 320);
+  --color-muted:       oklch(44% 0.035 320);
+
+  --color-accent:      oklch(58% 0.24 350);
+  --color-accent-text: oklch(47% 0.21 350);
+  --color-accent-ink:  oklch(99% 0.006 330);
+  --color-accent-wash: oklch(91.5% 0.055 350);
+
+  --color-violet:      oklch(46% 0.17 295);
+  --color-violet-fill: oklch(52% 0.17 295);
+  --color-violet-wash: oklch(92% 0.045 295);
+
+  --color-save:        oklch(42% 0.13 155);
+  --color-guard:       oklch(46% 0.11 75);
+  --color-block:       oklch(50% 0.19 25);
+
+  --color-scrim:       oklch(25% 0.04 320 / 0.4);
+
+  --page-bg:
+    radial-gradient(ellipse 55% 42% at 14% -4%, oklch(82% 0.1 350 / 0.5), transparent 70%),
+    radial-gradient(ellipse 45% 38% at 34% 0%, oklch(84% 0.08 295 / 0.4), transparent 72%),
+    radial-gradient(ellipse 50% 40% at 100% 100%, oklch(86% 0.07 295 / 0.35), transparent 70%),
+    var(--color-bg);
+
+  color-scheme: light;
+}
+
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; overflow-x: clip; }

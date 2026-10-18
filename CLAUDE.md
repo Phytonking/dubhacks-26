@@ -14,7 +14,7 @@ Right now we are only changing the static console in `web/public/selldial/`. Do 
 - Work on the branch `ui/redesign`. Do not commit to `main`. Do not push; I will open the pull request myself.
 - Never commit anything from `.playwright-mcp/`. Save test screenshots outside the repo (the session scratchpad or a temp folder).
 - Do one pass at a time, then stop and show me what changed. Do not expand scope.
-- Dark theme only, with a magenta accent. No light mode, no toggle.
+- Dark is the default theme, with a magenta accent. A light theme is opt-in from Settings > Appearance (saved in localStorage, applied before first paint). The landing page stays dark.
 - T-Mobile's T mark may appear only on the "Log in with T-Mobile" button (the original is in git history: `git show main:web/public/selldial/index.html`). Everywhere else: no T-Mobile logo, marks, wordmark or exact magenta.
 - The Selldial logo (`selldial-logo-full.png`, `selldial-logo-icon.png`) is a pink-to-violet gradient. The only other gradient allowed is the soft magenta-to-violet background glow (landing and console; see "Dark + magenta fusion" in DESIGN.md).
 - No live-call screen. No `live.html`, `live.js`, `live.css` or `session-demo.js`. Live activity is only a short summary line on Home.
@@ -33,7 +33,7 @@ Side rail with six items: **Home, Conversations, Customers, Sales, Settings, Abo
 - **Conversations:** recent conversations, one per customer interaction. Click one for a short operator report (outcome, what the customer wanted, what the agent recommended and why, payment, approval, collapsed transcript).
 - **Customers:** most recent first. Filters: region, name, number, status only. No churn risk or financing left.
 - **Sales:** two subtabs. **Sales list:** most recent first. Filters: region, time, customer, payment status (Paid by agent or Not paid). **Analytics:** a few simple charts from the same data, each with a plain title and a one-line takeaway. No dense math tables.
-- **Settings:** Offers and discounts, Spend and approvals, Verification and handoff, Channels (Voice, SMS, iMessage, WhatsApp). No RCS, no Web chat, no Appearance.
+- **Settings:** Offers and discounts, Spend and approvals, Verification and handoff, Channels (Voice, SMS, iMessage, WhatsApp), and Appearance (Dark or Light). No RCS, no Web chat.
 - **About:** short and well designed.
 - **Landing (`index.html`):** one centred column: the full logo, the line "The cell line that helps customers buy.", two compact side-by-side sign-in buttons ("Log in with T-Mobile" with the T mark, "Log in via another provider"), and a small demo note at the bottom. A faint dark magenta glow behind the centre. No heading, no masthead, no diagonal shapes.
 

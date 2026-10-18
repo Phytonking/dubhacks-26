@@ -407,8 +407,12 @@
       + setRow("Hand off when asked", "If the customer asks for a person, the agent passes them on.", toggle("handoffAsk", "Hand off when asked"));
     const channels = [["voice", "Voice", "Phone calls"], ["sms", "SMS", "Text messages"], ["imessage", "iMessage", "Messages on Apple devices"], ["whatsapp", "WhatsApp", "Chats on WhatsApp"]]
       .map(([k, name, desc]) => setRow(name, desc, toggle(k, `${name} enabled`))).join("");
+    const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+    const appearance = setRow("Theme", "Saved in this browser only.",
+      `<div class="unit-toggle" role="radiogroup" aria-label="Theme">${["dark", "light"].map((v) => `<label><input type="radio" name="theme" value="${v}"${theme === v ? " checked" : ""}><span>${cap(v)}</span></label>`).join("")}</div>`);
     return `<div class="settings">
-      <p class="set-note small">${icon("alert")}Changes here are not saved in this demo.</p>
+      <p class="set-note small">${icon("alert")}Offer, approval and channel changes are not saved in this demo.</p>
+      ${setCard("Appearance", "How the console looks on this device.", appearance)}
       ${setCard("Offers and discounts", "The agent can offer only these codes, and never above the maximum.", offers)}
       ${setCard("Spend and approvals", "When the owner has to say yes.", spend)}
       ${setCard("Verification and handoff", "How the agent protects an account and when it steps back.", verify)}
@@ -642,6 +646,10 @@
 
   document.addEventListener("change", (e) => {
     const t = e.target;
+    if (t.name === "theme") {
+      document.documentElement.dataset.theme = t.value === "light" ? "light" : "dark";
+      try { localStorage.setItem("selldial-theme", t.value); } catch (err) { /* private mode: the choice lasts until reload */ }
+    }
     if (t.name === "kind" && ui.promoForm) { ui.promoForm.kind = t.value; $("#pf-unit").textContent = t.value === "pct" ? "%" : "$"; }
     if (t.dataset.ui) { ui[t.dataset.ui] = t.value; render(); $(`[data-ui="${t.dataset.ui}"]`)?.focus(); }
     if (t.dataset.set) {
