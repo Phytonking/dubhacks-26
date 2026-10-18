@@ -43,14 +43,16 @@
   const profile = () => ({ name: "Eshaan" });
 
   // One outcome per conversation. A conversation waiting on the owner is Pending, not Not paid.
-  const OUTCOMES = { paid: "Paid", pending: "Pending", notpaid: "Not paid", handoff: "Handed off", waited: "Advised to wait" };
-  const OUTCOME_DOT = { paid: "ok", waited: "ok", pending: "warn", notpaid: "bad", handoff: "bad" };
+  const OUTCOMES = { paid: "Paid", pending: "Pending", notpaid: "Not paid", handoff: "Handed off", waited: "Advised to wait", nosale: "No sale", live: "Live now" };
+  const OUTCOME_DOT = { paid: "ok", waited: "ok", pending: "warn", notpaid: "bad", handoff: "bad", nosale: "off", live: "ok" };
   function outcomeOf(c) {
     if (c.outcome === "purchased") return "paid";
     if (c.outcome === "waited") return "waited";
     if (c.outcome === "handoff" || c.status === "handoff") return "handoff";
     if (c.status === "awaiting_approval") return "pending";
-    return "notpaid";
+    if (c.outcome === "not_paid") return "notpaid";
+    if (c.status === "live") return "live";   // still talking: no outcome yet
+    return "nosale";   // closed with no purchase attempt: a question answered, not a failed sale
   }
   function outcomeChip(c) {
     const o = outcomeOf(c);
@@ -229,7 +231,6 @@
   const filterConvs = (s) => {
     const q = ui.convQuery.trim().toLowerCase();
     return s.conversations
-      .filter((c) => c.status !== "live")
       .filter((c) => ui.convOutcome === "all" || outcomeOf(c) === ui.convOutcome)
       .filter((c) => !q || [c.customer, c.intent].join(" ").toLowerCase().includes(q));
   };
@@ -287,7 +288,7 @@
   }
 
   // A sale is a finished purchase attempt: paid by the agent, or not paid. Advice-only conversations are not sales.
-  const isSale = (c) => c.status !== "live" && (c.outcome === "purchased" || c.outcome === "not_paid");
+  const isSale = (c) => (c.status !== "live" || c.outcome === "purchased") && (c.outcome === "purchased" || c.outcome === "not_paid");
   const TIMES = { 1: "Today", 7: "Last 7 days", 30: "Last 30 days" };
   const saleDate = (min) => {
     const d = new Date(Date.now() - min * 60000), days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
