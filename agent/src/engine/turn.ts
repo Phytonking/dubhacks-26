@@ -12,7 +12,8 @@ import { toolByName } from "./tools/index";
 import type { ChatMessage, EngineEnv, LlmPort, Tool, ToolCallReq, ToolCtx, ToolResult, ToolSpec, Usage } from "./types";
 import { validateArgs } from "./validate";
 
-export const MAX_ROUNDS = 4;
+export const MAX_ROUNDS = 6;   // the last round has no tools: the model must answer with what it has
+const WRAP_UP = "You have used your tool budget for this turn. Answer the customer now in your own words using only the tool results above. Do not call any more tools.";
 export type EngineDeps = { db: Db; llm: LlmPort; tools: Tool[]; messenger: Messenger; env: EngineEnv; log?: (m: string) => void };
 export type TraceCall = { name: string; ok: boolean; ms: number; error?: string };
 export type TurnResult = {
@@ -95,7 +96,13 @@ export async function executeTool(deps: EngineDeps, ctx: ToolCtx, call: ToolCall
 }
 
 async function escalateFallback(deps: EngineDeps, ctx: ToolCtx, why: string) {
-  try { await handoff_escalate.run(ctx, { reason: `Automatic handoff: ${why}` }); } catch (e) { deps.log?.(`fallback handoff failed: ${(e as Error).message}`); }
+  try {
+    if (ctx.mode === "voice") {   // one failed turn on a live call must not lock the customer's future calls and texts out of the agent: tell the team, keep the agent on
+      await ctx.db.collection("notifications").insertOne({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, kind: "handoff", message: `Automatic: the agent could not finish a turn on a call (${why}). The caller was told a person will follow up.`, urgency: "high", read: false, createdAt: ctx.now } as never);
+      return;
+    }
+    await handoff_escalate.run(ctx, { reason: `Automatic handoff: ${why}` });
+  } catch (e) { deps.log?.(`fallback handoff failed: ${(e as Error).message}`); }
 }
 
 const add = (u: Usage, v?: Usage) => { if (v) { u.prompt_tokens += v.prompt_tokens; u.completion_tokens += v.completion_tokens; } };
@@ -125,7 +132,8 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
   try {
     while (rounds < MAX_ROUNDS) {
       rounds++;
-      const resp = await deps.llm.chat({ messages, tools: specs, effort: effortNow, maxTokens: maxNow, temperature: 0.3, signal: input.signal });
+      if (rounds === MAX_ROUNDS) messages.push({ role: "system", content: WRAP_UP });
+      const resp = await deps.llm.chat({ messages, tools: rounds === MAX_ROUNDS ? undefined : specs, effort: effortNow, maxTokens: maxNow, temperature: 0.3, signal: input.signal });
       add(usage, resp.usage); lastFinish = resp.finish;
       const calls = resp.message.tool_calls ?? [];
       if (!calls.length) {
@@ -213,7 +221,7 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
         return;
       }
       const v = checkText(s, b.guard, ctx.guard.evidence);
-      if (v.verdict === "blocked") { flagged = true; note = `sentence blocked: ${v.reason}`; spoken += (spoken ? " " : "") + SAFE_LINE; yield { type: "sentence", text: SAFE_LINE, replaced: true }; }
+      if (v.verdict === "blocked") { flagged = true; note = `sentence blocked: ${v.reason}`; if (!spoken.endsWith(SAFE_LINE)) { spoken += (spoken ? " " : "") + SAFE_LINE; yield { type: "sentence", text: SAFE_LINE, replaced: true }; } }
       else { spoken += (spoken ? " " : "") + s; yield { type: "sentence", text: s }; }
     }
   };
@@ -221,9 +229,10 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
   try {
     while (rounds < MAX_ROUNDS) {
       rounds++;
+      if (rounds === MAX_ROUNDS) messages.push({ role: "system", content: WRAP_UP });
       let buf = ""; let content = "";
       const acc = new Map<number, { id: string; name: string; args: string }>(); let streamFinish = "";
-      for await (const d of deps.llm.stream({ messages, tools: specs, effort, maxTokens: maxTokensFor(input.mode), temperature: 0.3, signal: input.signal })) {
+      for await (const d of deps.llm.stream({ messages, tools: rounds === MAX_ROUNDS ? undefined : specs, effort, maxTokens: maxTokensFor(input.mode), temperature: 0.3, signal: input.signal })) {
         if (d.type === "content") { buf += d.text; content += d.text; const [sents, rest] = takeSentences(buf); buf = rest; yield* say(sents); }
         else if (d.type === "tool") { const a = acc.get(d.index) ?? { id: "", name: "", args: "" }; if (d.id) a.id = d.id; if (d.name) a.name += d.name; if (d.args) a.args += d.args; acc.set(d.index, a); }
         else { add(usage, d.usage); streamFinish = d.finish; }
@@ -243,7 +252,7 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
         forced ??= r.result.reply;
       }
       if (forced) { yield* say(takeSentences(cleanReply(forced), true)[0]); break; }
-      if (rounds === MAX_ROUNDS) throw new Error("tool loop did not finish");
+      if (rounds === MAX_ROUNDS) throw new Error("tool loop did not finish");   // only if the model ignored the no-tools round
     }
     if (!spoken) throw new Error("empty reply");
     yield finish(flagged ? "blocked" : escalated ? "escalated" : "reply");

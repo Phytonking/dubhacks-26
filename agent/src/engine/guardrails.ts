@@ -29,9 +29,12 @@ export function checkGroundedMoney(text: string, evidence: string[]): Verdict {
   const ev = new Set<string>();
   for (const e of evidence) {
     for (const a of amountsIn(e)) ev.add(a);
+    if (!e.startsWith("USER:")) continue;   // bare numbers ("1450", "100 bucks") count only when the customer said them
     for (const m of e.matchAll(/(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?![\d,])/g)) ev.add(norm(m[1], m[2]));   // bare numbers ("1450", "89.00")
   }
-  for (const a of amountsIn(text)) if (!ev.has(a)) return { verdict: "blocked", reason: `amount $${a.replace(/\.00$/, "")} is not in this turn's evidence`, kind: "ungrounded_amount" };
+  const nums = [...ev].map(Number);
+  // a spoken amount may be the whole-dollar rounding of an exact one in the evidence ("$107" for $106.98)
+  for (const a of amountsIn(text)) if (!ev.has(a) && !(a.endsWith(".00") && nums.some((v) => v % 1 !== 0 && Math.abs(v - Number(a)) < 0.5))) return { verdict: "blocked", reason: `amount $${a.replace(/\.00$/, "")} is not in this turn's evidence`, kind: "ungrounded_amount" };
   return { verdict: "ok" };
 }
 

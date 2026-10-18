@@ -83,7 +83,8 @@ export async function buildContext(db: Db, env: EngineEnv, input: TurnInput, too
     ...history,
     { role: "user", content: batchText },
   ];
-  const evidence = [knowledgeBlock, customerBlock, ...input.batch.map((b) => b.body), ...history.map((m) => String((m as any).content))];   // earlier turns count: the customer's own words, and what we already said (it passed the same checks when it was sent)
+  const USER = "USER:";   // marks the customer's own words: only those may ground a bare number ("100 bucks"); a price must come in dollars from a tool or the knowledge
+  const evidence = [knowledgeBlock, customerBlock, ...input.batch.map((b) => USER + b.body), ...history.map((m) => (m.role === "user" ? USER : "") + String((m as any).content))];   // earlier turns count: the customer's own words, and what we already said (it passed the same checks when it was sent)
   const guard: GuardCfg = { maxDiscountPct: Number(g.maxDiscountPct ?? 0), requireGroundedMoney: g.requireGroundedMoney ?? templateName === "tmobile-system" };
   return { party, customer, messages, evidence, guard, agent, org, templateName };
 }

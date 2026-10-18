@@ -292,4 +292,30 @@ await t("streaming: tool markup is skipped and a sentence cut off by the token l
   ok(out.join(" ") === "Sure thing. That costs $89.", JSON.stringify(out));
 });
 
+await t("deep work: a model that needs many tool calls still answers, because the last round has no tools (text and voice); a loop that never stops still falls back", async () => {
+  const mk = () => { let n = 0; return new ScriptedLlm([(req) => (req.tools && n++ < MAX_ROUNDS + 3 ? { tools: [{ name: "knowledge_search", args: { query: `tune-up pricing ${n}` } }] } : { content: "Here is what I found: a basic tune-up is $89." })]); };
+  const k = await kit.newContact("+14255550701"); const llm = mk();
+  const r = await runTurn(kit.deps(llm), await input("research this deeply", { conversationId: k.conversationId }));
+  ok(r.outcome === "reply" && /\$89/.test(r.text) && r.rounds === MAX_ROUNDS, JSON.stringify({ o: r.outcome, r: r.rounds, t: r.text }));
+  const last = llm.requests[llm.requests.length - 1]; ok(!last.tools && JSON.stringify(last.messages).includes("tool budget"), "final round withheld the tools and told the model to answer");
+  const k2 = await kit.newContact("+14255550702"); const llm2 = mk(); const id = await kit.addInbound(k2.conversationId, "research this deeply", { channel: "voice" });
+  let spoken = ""; let res: any;
+  for await (const ev of streamTurn(kit.deps(llm2), { orgId: kit.orgId, conversationId: k2.conversationId, channel: "voice", mode: "voice", batch: [{ _id: id, body: "research this deeply", ts: kit.now.t }] })) { if (ev.type === "sentence") spoken += ev.text + " "; if (ev.type === "done") res = ev.result; }
+  ok(res.outcome === "reply" && /\$89/.test(spoken) && !res.escalated, JSON.stringify({ o: res.outcome, spoken }));
+});
+await t("a failed turn on a CALL tells the team but does not lock the caller out of the agent; a failed text turn still hands to a person", async () => {
+  const k = await kit.newContact("+14255550703"); const id = await kit.addInbound(k.conversationId, "hello", { channel: "voice" });
+  const llm = new ScriptedLlm([{ throws: "model down" }]); let res: any;
+  for await (const ev of streamTurn(kit.deps(llm), { orgId: kit.orgId, conversationId: k.conversationId, channel: "voice", mode: "voice", batch: [{ _id: id, body: "hello", ts: kit.now.t }] })) if (ev.type === "done") res = ev.result;
+  ok(res.escalated && ((await db.collection("conversations").findOne({ _id: k.conversationId })) as any).mode === "agent", "call: still agent mode");
+  ok((await db.collection("notifications").countDocuments({ conversationId: k.conversationId, kind: "handoff" })) === 1, "team notified");
+});
+await t("money: a whole-dollar rounding of an exact amount is fine ($107 for $106.98); a different amount still is not; one blocked sentence is replaced once", async () => {
+  const { checkGroundedMoney } = await import("../src/engine/guardrails");
+  ok(checkGroundedMoney("Your bill is about $107.", ["latest_total: $106.98"]).verdict === "ok", "rounded");
+  ok(checkGroundedMoney("Your bill is $110.", ["latest_total: $106.98"]).verdict === "blocked", "different");
+  ok(checkGroundedMoney("Your bill is $107.50.", ["latest_total: $106.98"]).verdict === "blocked", "not a whole-dollar rounding");
+  ok(checkGroundedMoney("That plan is $50.", ['{"plan":"Saver","monthly_total":"$55","lines":50}']).verdict === "blocked", "a bare 50 inside a tool result does not make $50 a quoted price");
+  ok(checkGroundedMoney("So about $100 a month.", ["USER:I pay like 100 bucks for one line"]).verdict === "ok", "the customer's own bare number does");
+});
 await finish(kit);
