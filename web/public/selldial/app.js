@@ -199,7 +199,7 @@
     const hour = new Date().getHours();
     const hello = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-    const recent = k.done.slice(0, 5);
+    const recent = k.active.slice(0, 5);
     const n = k.review.length;
     const lead = n ? `<em>${plural(n, "conversation")}</em> ${n === 1 ? "needs" : "need"} you.` : "Nothing needs you.";
     const figure = (label, value, cls, dot, note) => `<div><dt><span class="dot ${dot}"></span>${label}</dt><dd class="num ${cls}">${value}${note ? `<small>${note}</small>` : ""}</dd></div>`;
