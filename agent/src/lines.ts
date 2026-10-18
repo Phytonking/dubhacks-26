@@ -37,7 +37,8 @@ export function contactMethodsBlock(l: Lines): string {
   const out: string[] = [];
   out.push(l.voice ? `- Phone (to speak with us): ${displayNumber(l.voice)}. Say it slowly on a call: ${spokenNumber(l.voice)}.` : "- Phone: no phone number is configured. If someone wants to call, offer a person (handoff_escalate).");
   out.push(l.whatsapp ? `- WhatsApp: ${displayNumber(l.whatsapp)}. A message from the customer opens a window in which you can reply and send links or forms.` : "- WhatsApp: not available.");
-  out.push("- iMessage / text: each customer is given a chat number; call contact_options to get the right one for this person. Never guess a number.");
+  out.push(l.sms || l.voice ? `- Text message to the phone number (${displayNumber((l.sms ?? l.voice)!)}): a customer can text it to send us information; we read it but CANNOT text back from that number. Never promise a text reply from it.` : "- Text message: not available.");
+  out.push("- iMessage: a test line only; call contact_options for the right number and whether it applies to this person. Never guess a number.");
   out.push("- Email: not available yet.");
   return out.join("\n");
 }
@@ -48,7 +49,9 @@ export type ReachOption = {
   readyNow: boolean;              // we can already text them there, no action needed from them
   howTo: string;                  // what to tell the customer
 };
-export type Reach = { voice: { number: string; display: string; spoken: string } | null; options: ReachOption[]; notes: string[] };
+type Num = { number: string; display: string; spoken: string };
+/** `textIn`: the number a caller can text from their own phone. We can read it but cannot text back (SMS sending needs a carrier campaign), so it is only for sending us information. */
+export type Reach = { voice: Num | null; options: ReachOption[]; textIn: Num | null; notes: string[] };
 
 export type ReachDeps = {
   db: Db; messenger: Messenger;
@@ -85,7 +88,8 @@ export async function computeReach(deps: ReachDeps, a: { orgId: ObjectId; contac
     }
   } else notes.push("This person has no phone number on file, so a text cannot be arranged. Offer a person.");
 
-  return { voice: lines.voice ? { number: lines.voice, display: displayNumber(lines.voice), spoken: spokenNumber(lines.voice) } : null, options, notes };
+  const numOf = (n: string | null): Num | null => (n ? { number: n, display: displayNumber(n), spoken: spokenNumber(n) } : null);
+  return { voice: numOf(lines.voice), options, textIn: numOf(lines.sms ?? lines.voice), notes };
 }
 
 /** Remember that the customer is moving to text, so the next text-channel turn finishes the job. Not duplicated while one is open. */

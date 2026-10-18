@@ -1,5 +1,6 @@
 import type { Db } from "mongodb";
 import type { Party } from "./identity";
+import { missingIntake } from "./engine/tools/intake";
 
 // Who are we talking to, what do we know, and what may the model SEE?
 //  - The prompt asks the model to be careful; the tool layer ENFORCES it. This module also keeps account details out of the prompt
@@ -13,6 +14,7 @@ export type Customer = {
   openLoops: string[];
   verified: boolean;
   verifiedAt: Date | null;
+  intake: Record<string, any> | null;   // what they have told us about themselves (contacts.intake)
   channels: string[];                 // channels this person has used (from their handles)
   account: { asOf: string | null; segment: string | null; tenureMonths: number | null; lineCount: number; lineRoles: string[]; supportContacts90d: number | null; billChangePct: number | null; internal: string[] } | null;
 };
@@ -55,7 +57,7 @@ export async function loadCustomer(db: Db, party: Party, opts: { now?: Date; org
   const profile = c.profile ?? null;
   return {
     status, refs: party.externalRefs, firstName: profile?.displayName ?? (c.name && !String(c.name).startsWith("+") && !c.name.includes("@") ? String(c.name).split(" ")[0] : null),
-    profile, facts, openLoops: loops, verified, verifiedAt: vAt, channels: [...new Set<string>((c.handles ?? []).map((h: any) => h.channel))], account: acct,
+    profile, facts, openLoops: loops, verified, verifiedAt: vAt, intake: c.intake ?? null, channels: [...new Set<string>((c.handles ?? []).map((h: any) => h.channel))], account: acct,
   };
 }
 
@@ -75,12 +77,19 @@ export function buildCustomerBlock(c: Customer, ctx: { channel: string }): strin
     if (p.sensitivities?.length) L.push(`Handle with care: ${p.sensitivities.join(" | ")}`);
     if (p.synthetic) L.push("Names and backstory are invented demo colour; never use them as evidence for a price or eligibility.");
   }
+  const k = c.intake;
+  if (k) {
+    const known = [k.first_name && `name ${k.first_name}`, k.current_carrier && `carrier ${k.current_carrier}`, k.current_plan && `plan ${k.current_plan}`, k.monthly_bill_usd != null && `pays about $${k.monthly_bill_usd}/mo`,
+      k.line_count && `${k.line_count} line(s)`, k.devices?.length && `phones: ${k.devices.join("; ")}`, k.budget_usd != null && `budget about $${k.budget_usd}/mo`, k.needs && `needs: ${k.needs}`, k.interests?.length && `interested in ${k.interests.join(", ")}`].filter(Boolean);
+    if (known.length) L.push(`What they have told us (their words, not verified): ${known.join("; ")}`);
+  }
+  if (c.status !== "linked_account") { const m = missingIntake(k); if (m.length) L.push(`Not known yet (learn naturally, one at a time, only when it helps them): ${m.join(", ")}`); }
   if (c.openLoops.length) L.push(`Open commitments (bring up first): ${c.openLoops.join(" | ")}`);
   if (c.facts.length) L.push(`Remembered from earlier: ${c.facts.join(" | ")}`);
   if (c.account) {
     if (c.verified) {
       const a = c.account;
-      L.push(`Account snapshot (as of ${a.asOf ?? "unknown"}; quote with this date): segment ${a.segment ?? "?"}; ${a.tenureMonths ?? "?"} months a customer; ${a.lineCount} line(s)${a.lineRoles.length ? ` (${a.lineRoles.join(", ")})` : ""}; support contacts in last 90 days: ${a.supportContacts90d ?? "?"}${a.billChangePct != null ? `; latest bill vs recent average: ${(a.billChangePct * 100).toFixed(0)}%` : ""}. For plan, devices, balances and eligibility call the tmo.* tools.`);
+      L.push(`Account snapshot (as of ${a.asOf ?? "unknown"}; quote with this date): segment ${a.segment ?? "?"}; ${a.tenureMonths ?? "?"} months a customer; ${a.lineCount} line(s)${a.lineRoles.length ? ` (${a.lineRoles.join(", ")})` : ""}; support contacts in last 90 days: ${a.supportContacts90d ?? "?"}${a.billChangePct != null ? `; latest bill vs recent average: ${(a.billChangePct * 100).toFixed(0)}%` : ""}. For plan, devices, balances and eligibility call tmo_context and tmo_catalog.`);
       if (a.internal.length) L.push(`Internal context, never mention to the customer: ${a.internal.join("; ")}`);
     } else L.push("An account is on file. You may say so, but share nothing about it until they are verified.");
   }

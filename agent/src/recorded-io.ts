@@ -51,6 +51,7 @@ export function checkGuardrails(text: string, g: { maxDiscountPct: number }) {
 
 export type WorkerOpts = {
   autoReply?: boolean;     // false: log inbound only, never answer (used while a channel is being verified)
+  listenOnly?: boolean;    // true: read and learn from inbound, never send anything back (SMS before a 10DLC campaign is approved)
   scheduled?: boolean;     // true: store + schedule only; the Scheduler runs the turn (engine v2). false: answer inline (legacy sandbox path, tests)
   debounceMs?: number;     // wait this long after the last message before answering, so a burst gets one reply
   maxWaitMs?: number;      // but never hold the first message longer than this
@@ -66,6 +67,8 @@ export class Worker {
     private ensureOnline: (orgId: ObjectId) => Promise<void>,
     private opts: WorkerOpts = {},
   ) {}
+
+  get listenOnly() { return Boolean(this.opts.listenOnly); }
 
   async handleInbound(a: { orgId: ObjectId; address: string; text: string; channelMsgId: string; ref?: ChannelRef; onPersisted?: () => void }) {
     const { db } = this;
@@ -93,6 +96,7 @@ export class Worker {
     }
     await db.collection("conversations").updateOne({ _id: conv._id }, { $set: { lastMessageAt: new Date(), lastMessagePreview: safe.text.slice(0, 80), lastChannel: channel } });
     a.onPersisted?.();   // webhook receivers answer 2xx here: the message is durable, the (slow) agent turn continues
+    if (kw && this.opts.listenOnly) return { duplicate: false as const, handling: "ignored" as const };   // cannot answer STOP/HELP on this channel
     if (kw) {
       const address = normalizeFor(a.address);
       if (kw === "stop") await setOptOut(db, a.orgId, address, a.text.trim().slice(0, 20));

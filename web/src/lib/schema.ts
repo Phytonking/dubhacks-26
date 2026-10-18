@@ -71,7 +71,7 @@ export const specs: CollectionSpec[] = [
         bsonType: "array",
         items: obj(["text", "learnedAt"], { text: str, sourceMessageId: oidOrNull, learnedAt: date }),
       },
-      memory: { bsonType: "object" }, profile: { bsonType: "object" }, externalRefs: { bsonType: "array" },
+      memory: { bsonType: "object" }, profile: { bsonType: "object" }, intake: { bsonType: "object" }, externalRefs: { bsonType: "array" },
       consent: { bsonType: "object" },         // { text: { granted, at, source } }
       verifiedPhone: { bsonType: "object" },   // { number, at, method }: proof of control of the number (verify_check_code)
       createdAt: date,

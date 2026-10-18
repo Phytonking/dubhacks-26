@@ -17,6 +17,8 @@ export type TurnInput = {
   historyOverride?: ChatMessage[];     // voice: ElevenLabs already sends the live transcript, so it replaces recent DB history
   passthrough?: { name: string; description: string; parameters: any }[];   // tools that ElevenLabs executes (end_call, transfer_to_number...)
   signal?: AbortSignal;
+  callId?: ObjectId;                   // voice: the call this turn belongs to (so what is learned can be tied to it)
+  listenOnly?: boolean;                // the reply will NOT be delivered (channel cannot send back): read, record, do not promise anything
 };
 
 export type BuiltContext = {
@@ -77,7 +79,7 @@ export async function buildContext(db: Db, env: EngineEnv, input: TurnInput, too
   }
   const summary: string = contact.memory?.summary ?? "";
   const messages: ChatMessage[] = [
-    { role: "system", content: system + (summary ? `\n\n# Earlier in this conversation (summary)\n${summary}` : "") + otherChannels },
+    { role: "system", content: system + (input.listenOnly ? "\n\n# This channel is listen-only\nYour reply on this channel will NOT be delivered, and you cannot send anything to this person from here. Do not send codes or forms and do not promise a reply here. Record anything useful they told you with customer_profile_update. If they need an answer, they can call or message us on WhatsApp.\n" : "") + (summary ? `\n\n# Earlier in this conversation (summary)\n${summary}` : "") + otherChannels },
     ...history,
     { role: "user", content: batchText },
   ];

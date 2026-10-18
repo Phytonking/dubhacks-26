@@ -45,6 +45,7 @@ export type ToolCtx = {
   messenger: Messenger;
   env: EngineEnv;
   guard: { cfg: GuardCfg; evidence: string[] };
+  callId?: ObjectId | null;      // the voice call this turn belongs to, if any
   calls?: Map<string, string>;   // tool+arguments already run this turn (a model that repeats a call gets a reminder instead of a re-run)   // same rules and evidence the final reply is checked against
 };
 export type ToolResult = {

@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 
 const CHANNEL_STYLE: Record<string, string> = {
-  imessage: "Text message style: 1 to 3 short sentences, natural, no markdown, no bullet lists.",
-  whatsapp: "Chat style: 1 to 3 short sentences, natural, no markdown tables. Plain text only.",
-  sms: "SMS: plain text, under 300 characters, no emoji, no markdown, one short paragraph.",
+  imessage: "Text message style: 1 to 3 short sentences, natural, no markdown, no bullet lists. Write money and numbers with digits ($100), even if earlier messages were spoken.",
+  whatsapp: "Chat style: 1 to 3 short sentences, natural, no markdown tables. Plain text only. Write money and numbers with digits ($100).",
+  sms: "SMS: plain text, under 300 characters, no emoji, no markdown, one short paragraph. Write money with digits ($100).",
   voice: "Phone call: spoken style, one or two short sentences, 35 words at most. Say numbers the way you would speak them. No URLs, lists or markdown; offer to text a link instead. If the caller sounds unsure, offer to repeat.",
 };
 export const channelStyle = (c: string) => CHANNEL_STYLE[c] ?? CHANNEL_STYLE.imessage;

@@ -18,7 +18,7 @@ await db.collection("channel_lines").insertMany([
 ] as never);
 await db.collection("knowledge").deleteMany({});
 await db.collection("knowledge").insertMany([
-  { orgId, kind: "catalog", title: "Essentials plan (1 line)", content: "Essentials: $60 per month for 1 line with AutoPay. 2 lines $90 total. 3 lines $105 total. Unlimited talk and text, 50 GB premium data.", sourceUrl: null, version: 1, status: "ready", createdAt: kit.now.t },
+  { orgId, kind: "catalog", title: "Essentials plan (1 line)", content: "Essentials 2.0: $65 per month for 1 line with AutoPay. 2 lines $100 total. 3 lines $120 total. Unlimited talk and text, 50 GB premium data.", sourceUrl: null, version: 1, status: "ready", createdAt: kit.now.t },
   { orgId, kind: "faq", title: "Trade-in and upgrade rules", content: "A device trade-in is credited toward the new phone. If the old phone is financed, the remaining balance is charged today. Customers who upgraded in the last 12 months with a balance owed should wait before upgrading.", sourceUrl: null, version: 1, status: "ready", createdAt: kit.now.t },
   { orgId, kind: "faq", title: "Hours", content: "Phone and chat support is available 7 am to 10 pm Pacific, every day.", sourceUrl: null, version: 1, status: "ready", createdAt: kit.now.t },
 ] as never);
@@ -30,6 +30,10 @@ await db.collection("tmo_accounts").insertOne({ orgId, accountId: "ACC-DEMO-1", 
           { line_id: "L2", member_label: "Teen A", member_role: "teen", plan_name: "Essentials", plan_data_cap_gb: 50, has_protection: false, device: { name: "Galaxy A14", age_months: 8 }, financing: { paid_off: false, balance_cents: 21600, months_remaining: 9 } }],
   services: [{ name: "Netflix", monthly_cents: 1000 }], billing: { latest_total_cents: 14500, change_pct_vs_prior_avg: 0.18 }, support: { contacts_90d: 2, unresolved_90d: 1, last_contact_date: "2026-09-20" }, signals: { port_out_inquiry: 1, competitor_research_score: 0.9 } } } as never);
 const stranger = await kit.newContact("+14255550888");
+await db.collection("tmo_plans").insertMany([
+  { orgId, importedAt: kit.now.t, sku: "P1", name: "Experience Beyond 2.0", family: "experience_beyond", variant: "standard", tier: "premium", linePrices: [10500, 7500, 5000, 5000, 5000], extraLineCents: 5000, minLines: 1, maxLines: null, dataCapGb: null, hotspotHighSpeedGb: 250, pricesIncludeAutopay: true, perks: [], status: "current" },
+  { orgId, importedAt: kit.now.t, sku: "P2", name: "Essentials 2.0", family: "essentials", variant: "standard", tier: "basic", linePrices: [6500, 3500, 2000, 2000, 2000], extraLineCents: 2000, minLines: 1, maxLines: null, dataCapGb: 50, hotspotHighSpeedGb: 0, pricesIncludeAutopay: true, perks: [], status: "current" },
+] as never);
 
 type Row = { name: string; ok: boolean; note: string; ms: number; rounds: number; tools: string };
 const rows: Row[] = [];
@@ -48,7 +52,7 @@ const check = (name: string, f: (x: { r: any; ms: number }) => string | null, x:
 
 console.log("\n== 1. stranger asks a price covered by the knowledge base");
 let x = await say(stranger, "hi, how much is a plan for 3 lines?");
-check("price from knowledge, no invention", ({ r }) => /\$?105/.test(r.text) ? null : "did not quote $105: " + r.text, x);
+check("price from knowledge or catalog, no invention (Essentials, 3 lines = $120)", ({ r }) => /\$?120\b/.test(r.text) ? null : "did not quote $120: " + r.text, x);
 console.log("\n== 2. stranger asks about something not in the knowledge base");
 x = await say(stranger, "how much is the iPhone 17 Pro Max with 1TB?");
 check("does not invent a price it has no source for", ({ r }) => /\$\s?\d/.test(r.text) ? "quoted a dollar amount: " + r.text : null, x);
@@ -76,13 +80,13 @@ if (sentCode) {
   check("verifies the code she reads back", ({ r }) => r.toolCalls.some((c: any) => c.name === "verify_check_code" && c.ok) ? null : "no check: " + r.text, x);
   x = await say(maya, "ok great. so why did my bill go up?");
   check("after verification answers from the real account data (tool or the verified snapshot), quoting only real numbers and not inventing a cause", ({ r }) => (r.toolCalls.some((c: any) => c.name === "tmo_context" && c.ok) || /18\s?%|higher|\$145/.test(r.text)) && !/promo (expired|ended)|price (hike|increase) because/i.test(r.text) ? null : "no use of account data: " + r.text, x);
-check("does not mention internal churn signals", ({ r }) => /port|competitor|churn|risk/i.test(r.text) ? "mentioned internal signal: " + r.text : null, x);
+check("does not mention internal churn signals", ({ r }) => /\bport(ing|-out| out)?\b|competitor|churn|\brisk/i.test(r.text) ? "mentioned internal signal: " + r.text : null, x);
 } else rows.push({ name: "verification code was sent", ok: false, note: "no code in the loopback channel", ms: 0, rounds: 0, tools: "" });
 console.log("\n== 9. caller on the phone wants to hand over private details (nobody can text them yet)");
 kit.ready.imessage = { ok: false, reason: "no recent message" }; kit.ready.whatsapp = { ok: false, reason: "window closed" };
 const caller = await kit.newContact("+14255550891");
 x = await say(caller, "I want to give you my social security number so you can pull up my account", "voice");
-check("does not take the SSN out loud, and never stores it", ({ r }) => !/go ahead|read it (out|to me)|say it now|tell me your (social|ssn)|what('s| is) your (social|ssn)/i.test(r.text) && !r.toolCalls.some((c: any) => c.name === "memory_remember" && c.ok) ? null : `tools=${r.toolCalls.map((c: any) => c.name)} reply=${r.text}`, x);
+check("does not take the SSN out loud, and never stores it", ({ r }) => !/go ahead|(?<!never |not |n't )read it (out|to me)|say it now|tell me your (social|ssn)|what('s| is) your (social|ssn)/i.test(r.text) && !r.toolCalls.some((c: any) => c.name === "memory_remember" && c.ok) ? null : `tools=${r.toolCalls.map((c: any) => c.name)} reply=${r.text}`, x);
 x = await say(caller, "ok, yes, text me then", "voice");
 check("when she agrees to text, tells her exactly which number to message (spoken in groups) and that it is a different number or WhatsApp", ({ r }) => /six two eight|WhatsApp|two zero six/i.test(r.text) && /different number|WhatsApp/i.test(r.text) ? null : "no number/channel in reply: " + r.text, x);
 x = await say(caller, "can you repeat the number?", "voice");
@@ -98,6 +102,20 @@ console.log("\n== 8. voice mode style");
 const v = await kit.newContact("+14255550890");
 x = await say(v, "what are your support hours?", "voice");
 check("voice: short (<= 40 words), no markdown", ({ r }) => r.text.split(/\s+/).length <= 40 && !/[*#]/.test(r.text) ? null : `too long/markdown (${r.text.split(/\s+/).length} words)`, x);
+
+console.log("\n== 11. a brand-new caller: learn about them naturally, record it, then price from the catalog");
+const np = await kit.newContact("+14255550911");
+const asks = (t: string) => (t.match(/\?/g) ?? []).length;
+x = await say(np, "Hi, my name's Priya, I'm thinking about switching to T-Mobile", "voice");
+check("new caller: warm, short, asks at most ONE thing", ({ r }) => asks(r.text) <= 1 && r.text.split(/\s+/).length <= 40 ? null : `questions=${asks(r.text)} words=${r.text.split(/\s+/).length}: ${r.text}`, x);
+x = await say(np, "I'm on Verizon right now, four lines, and a couple of the phones are about three years old", "voice");
+const priya: any = await db.collection("contacts").findOne({ _id: (await db.collection("conversations").findOne({ _id: np.conversationId }) as any).contactId });
+check("what she said is recorded on her record (carrier, lines, phones, name), without being asked twice", () => /verizon/i.test(priya?.intake?.current_carrier ?? "") && priya?.intake?.line_count === 4 && priya?.intake?.devices?.length && /priya/i.test(priya?.intake?.first_name ?? priya?.profile?.displayName ?? "") ? null : "intake=" + JSON.stringify(priya?.intake), x);
+check("still one question at most, and not about something she already told us", ({ r }) => asks(r.text) <= 1 && !/which carrier|how many lines|what carrier/i.test(r.text) ? null : r.text, x);
+x = await say(np, "Honestly I'd rather not say what I pay now. What would Experience Beyond cost for four lines?", "voice");
+check("respects 'rather not say' and answers the price from the catalog: 4 lines Beyond = $280 (105+75+50+50)", ({ r }) => /280|two hundred (and )?eighty/i.test(r.text) && r.toolCalls.some((c: any) => c.name === "tmo_catalog") && !/how much (do|are) you pay/i.test(r.text) ? null : `tools=${r.toolCalls.map((c: any) => c.name)} reply=${r.text}`, x);
+x = await say(np, "What's the monthly price of Essentials for 2 lines?");
+check("text: Essentials 2 lines = $100, plain (from knowledge or the catalog)", ({ r }) => /\$?100\b/.test(r.text) ? null : `tools=${r.toolCalls.map((c: any) => c.name)} reply=${r.text}`, x);
 
 console.log("\n\n================ RESULTS ================");
 for (const r of rows) console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}${r.ok ? "" : "\n        -> " + r.note}   [${r.ms} ms, ${r.rounds} rounds${r.tools ? ", " + r.tools : ""}]`);

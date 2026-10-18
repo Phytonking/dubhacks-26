@@ -15,7 +15,7 @@ export function suggestedReply(r: Reach, mode: "text" | "voice"): string {
   const num = (o: { display: string; spoken: string }) => (mode === "voice" ? o.spoken : o.display);
   const ready = r.options.filter((o) => o.readyNow), waiting = r.options.filter((o) => !o.readyNow);
   if (ready.length) return `I can text you right now from ${num(ready[0])} on ${ready[0].channel === "imessage" ? "iMessage" : "WhatsApp"}. Is that okay?`;
-  if (!waiting.length) return "I can't set up a text for you right now, so I'll have someone from the team follow up with you.";
+  if (!waiting.length) return r.textIn ? `I can't text you back from here, but you're welcome to text what you'd like to share to ${num(r.textIn)} and I'll read it. For anything private, I'll have someone from the team follow up with you.` : "I can't set up a text for you right now, so I'll have someone from the team follow up with you.";
   const im = waiting.find((o) => o.channel === "imessage"), wa = waiting.find((o) => o.channel === "whatsapp");
   const bits: string[] = [];
   if (im) bits.push(`send a quick text on iMessage to ${num(im)}, which is a different number from the one you called`);
@@ -29,6 +29,7 @@ export function reachForModel(r: Reach, mode: "text" | "voice") {
     say_to_customer: suggestedReply(r, mode),
     call_us: r.voice ? { number: r.voice.display, say: r.voice.spoken } : null,
     text_options: r.options.map((o) => ({ channel: o.channel, number: o.display, say: o.spoken, ready_now: o.readyNow, tell_the_customer: o.howTo })),
+    text_us_info_only: r.textIn ? { number: r.textIn.display, say: r.textIn.spoken, limits: "They can text details to this number from the phone they are calling from and I will read them, but I cannot text back from it. Never use it for codes or forms; those need WhatsApp." } : null,
     notes: r.notes,
     how_to_use: "Give the customer the 'say_to_customer' message (you may shorten it, but keep every number and say which app). Do not offer to text them anything else until they have messaged that number.",
   };

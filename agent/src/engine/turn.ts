@@ -49,7 +49,7 @@ function makeCtx(deps: EngineDeps, input: TurnInput, b: BuiltContext, turnId: st
   return {
     db: deps.db, orgId: input.orgId, contactId: b.party.contact._id, conversationId: input.conversationId, channel: input.channel, mode: input.mode,
     party: b.party, customer: b.customer, turnId, sourceMessageId: input.batch[input.batch.length - 1]?._id ?? null,
-    now: deps.env.now?.() ?? new Date(), messenger: deps.messenger, env: deps.env, guard: { cfg: b.guard, evidence: b.evidence }, calls: new Map(),
+    now: deps.env.now?.() ?? new Date(), messenger: deps.messenger, env: deps.env, guard: { cfg: b.guard, evidence: b.evidence }, calls: new Map(), callId: input.callId ?? null,
   };
 }
 

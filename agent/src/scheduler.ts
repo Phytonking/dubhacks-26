@@ -82,7 +82,7 @@ export class Scheduler {
         const worker = this.c.workers[channel];
         if (!worker) { this.log(`no worker for channel ${channel}; leaving ${batch.length} message(s) unanswered`); break; }
         const startedAt = this.now();
-        const result: TurnResult = await runTurn(engine, { orgId: claimed.orgId, conversationId: claimed._id, channel, mode: "text", batch: batch.map((m) => ({ _id: m._id, body: m.body, ts: m.ts })) });
+        const result: TurnResult = await runTurn(engine, { orgId: claimed.orgId, conversationId: claimed._id, channel, mode: "text", listenOnly: worker.listenOnly, batch: batch.map((m) => ({ _id: m._id, body: m.body, ts: m.ts })) });
 
         const fresh: any = await db.collection("conversations").findOne({ _id: claimed._id });
         const stillMine = await db.collection("conversations").countDocuments({ _id: claimed._id, "lane.owner": this.owner, "lane.leaseUntil": { $gt: this.now() } });
@@ -106,7 +106,8 @@ export class Scheduler {
         if (newer > 0 && !result.sideEffects && attempt < maxReruns) { await record("discarded", "newer message arrived; re-running with the larger batch"); continue; }   // stale draft
 
         let sendStatus = "none";
-        if (result.text) {
+        if (result.text && worker.listenOnly) sendStatus = "listen_only";   // read and learned from it; this channel cannot send back
+        else if (result.text) {
           const contact: any = await db.collection("contacts").findOne({ _id: claimed.contactId });
           const handle = (contact?.handles ?? []).find((h: any) => h.channel === channel) ?? (contact?.handles ?? [])[0];
           const agent: any = await db.collection("agents").findOne({ orgId: claimed.orgId }, { projection: { guardrails: 1 } });

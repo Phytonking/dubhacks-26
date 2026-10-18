@@ -2,7 +2,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { ObjectId, type Db } from "mongodb";
 import { randomUUID } from "node:crypto";
 import { streamTurn, SAFE_FALLBACK, type EngineDeps } from "../engine/turn";
-import type { ChatMessage } from "../engine/types";
+import type { ChatMessage, LlmPort } from "../engine/types";
+import { applyExtraction, extractIntake } from "../intake-extract";
 import { normalizeAddress, resolveParty } from "../identity";
 import { redactSensitive } from "../sensitive";
 import { extractCallInfo, verifyElevenLabsSignature } from "./elevenlabs";
@@ -75,7 +76,7 @@ export function startVoiceServer(cfg: VoiceCfg): Promise<{ server: Server; port:
 
     const started = ts;
     let result: any; let spoken = "";
-    for await (const ev of streamTurn(engine, { orgId, conversationId: party.conversation._id, channel: "voice", mode: "voice", batch: [{ _id: userRowId, body: utterance, ts }], historyOverride: live, passthrough, signal: ac.signal })) {
+    for await (const ev of streamTurn(engine, { orgId, conversationId: party.conversation._id, channel: "voice", mode: "voice", batch: [{ _id: userRowId, body: utterance, ts }], historyOverride: live, passthrough, callId: call, signal: ac.signal })) {
       if (ev.type === "sentence") out.say(ev.text);
       else if (ev.type === "passthrough") out.tools(ev.calls);
       else { result = ev.result; spoken = ev.spoken; }
@@ -103,7 +104,7 @@ export function startVoiceServer(cfg: VoiceCfg): Promise<{ server: Server; port:
     const sig = verifyElevenLabsSignature(raw, req.headers["elevenlabs-signature"] as string | undefined, cfg.webhookSecret, now().getTime());
     if (!sig.ok) { log(`voice webhook rejected: ${sig.reason}`); res.writeHead(401, { "content-type": "application/json" }); return res.end(JSON.stringify({ error: "invalid signature" })); }
     const evt = JSON.parse(raw);
-    const r = await importCallEvent(db, evt, now(), log);
+    const r = await importCallEvent(db, evt, now(), log, engine.llm);
     res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true, ...r }));
   }
 
@@ -145,7 +146,7 @@ export async function linkCall(db: Db, a: { orgId: ObjectId; line: string; peer:
 }
 
 /** post_call_transcription: store what was actually said (idempotent, authoritative), summary, duration. call_initiation_failure: mark failed. */
-export async function importCallEvent(db: Db, evt: any, now: Date, log: (m: string) => void = () => {}): Promise<{ handled: string; imported?: number }> {
+export async function importCallEvent(db: Db, evt: any, now: Date, log: (m: string) => void = () => {}, llm?: LlmPort): Promise<{ handled: string; imported?: number }> {
   const d = evt?.data ?? {}; const conv: string | undefined = d.conversation_id;
   if (!conv) return { handled: "ignored" };
   const call: any = await db.collection("calls").findOne({ $or: [{ providerConversationId: conv }, { provider: "elevenlabs", providerCallId: conv }] });
@@ -181,6 +182,10 @@ export async function importCallEvent(db: Db, evt: any, now: Date, log: (m: stri
     terminationReason: d.metadata?.termination_reason ?? null, costCents: d.metadata?.cost ?? null, transcriptImportedAt: now, updatedAt: now } });
   if (d.analysis?.transcript_summary) await db.collection("contacts").updateOne({ _id: call.contactId }, { $set: { "memory.lastCall": { at: now, callId: call._id, summary: String(d.analysis.transcript_summary).slice(0, 600) } } });
   if (dur) await db.collection("usage").updateOne({ orgId: call.orgId, day: now.toISOString().slice(0, 10) }, { $inc: { voiceSec: dur, tokensIn: 0, tokensOut: 0, messagesIn: 0, messagesOut: 0, sandboxSec: 0 } }, { upsert: true });
+  if (llm) {   // read the whole call once and record what the caller said about themselves (fills gaps only); a failure here must not lose the transcript
+    try { const added = await applyExtraction(db, { orgId: call.orgId, callId: call._id, contactId: call.contactId, ex: await extractIntake(llm, d.transcript ?? []), now }); if (added.length) log(`voice: recorded ${added.join(", ")} for the caller from call ${conv}`); }
+    catch (e) { log(`voice: post-call extraction failed (${(e as Error).message.slice(0, 100)}); transcript is saved`); }
+  }
   log(`voice: imported ${imported} new turn(s) for ${conv}`);
   void agentN;
   return { handled: "transcript", imported };

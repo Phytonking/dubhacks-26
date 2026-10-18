@@ -40,8 +40,8 @@ const llm = async (messages: unknown[], o: { channel: string }) => {
 const link = new SandboxLink(daytona, llm);
 
 // ---- business: reuse the first org in Atlas (the demo shop); give it knowledge if it has none ----
-const org: any = await db.collection("orgs").findOne({});
-if (!org) throw new Error("no org in Atlas; run pnpm db:seed in web/");
+const org: any = await db.collection("orgs").findOne(process.env.LIVE_ORG ? { name: process.env.LIVE_ORG } : {});
+if (!org) throw new Error(process.env.LIVE_ORG ? `no business named "${process.env.LIVE_ORG}" in Atlas (run pnpm db:seed:tmobile in web/)` : "no org in Atlas; run pnpm db:seed in web/");
 const orgId: ObjectId = org._id;
 log(`business: "${org.name}" (${orgId})`);
 if (!(await db.collection("knowledge").countDocuments({ orgId }))) {
@@ -60,6 +60,9 @@ const knownLines = new Set<string>();
 async function registerLines() {
   // iMessage shared line: each assignment's assignedPhoneNumber is the number that user texts -> this business
   const asg: any = await photon.req("GET", "/platforms/imessage/assignments").catch(() => ({ assignments: [] }));
+  // IMESSAGE_KEEP_HANDLES (comma list): only these people keep an iMessage line (the owner's test line). Others are switched off here; Photon's own assignments are not touched.
+  const keep = (process.env.IMESSAGE_KEEP_HANDLES ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (keep.length) asg.assignments = (asg.assignments ?? []).filter((a: any) => keep.includes(a.handle));
   const live = new Set<string>((asg.assignments ?? []).map((a: any) => a.assignedPhoneNumber));
   // assignments can be replaced in the Photon dashboard: disable lines that no longer exist
   await db.collection("channel_lines").updateMany({ channel: "imessage", provider: "photon", address: { $nin: [...live] }, status: "active" }, { $set: { status: "disabled" } });
@@ -124,14 +127,14 @@ let smsReady = false;
 if (smsLine) {
   const camp: any = await photon.req("GET", `/platforms/sms/lines/${smsLine.resourceId}/campaign`).catch((e: Error) => ({ eligibility: "unknown", reasonCode: e.message.slice(0, 80) }));
   smsReady = camp.eligibility === "eligible";
-  log(smsReady ? "SMS: campaign eligible, answering SMS" : `SMS: NOT answering (campaign eligibility=${camp.eligibility}, ${camp.reasonCode}). Register a 10DLC campaign in the Photon dashboard and assign it to the line.`);
+  log(smsReady ? "SMS: campaign eligible, answering SMS" : `SMS: LISTEN-ONLY, reads inbound and records it, cannot reply (campaign eligibility=${camp.eligibility}, ${camp.reasonCode}). Register a 10DLC campaign in the Photon dashboard and assign it to the line.`);
 }
 // WhatsApp Business is connected (approved) on the same number. Log-only until WHATSAPP_REPLIES=1: the first message we received was a
 // Meta setup notice, not a customer, and business-initiated WhatsApp needs approved templates we have not created yet.
-const waReplies = process.env.WHATSAPP_REPLIES === "1";
-log(waReplies ? "WhatsApp: replies ENABLED" : "WhatsApp: logging inbound only (set WHATSAPP_REPLIES=1 to answer)");
-const wIm = mk("imessage"), wWa = mk("whatsapp", { autoReply: waReplies }), wSms = smsReady ? mk("sms") : undefined;
-const workers = { imessage: wIm, whatsapp_business: wWa, ...(wSms ? { sms: wSms } : {}) };
+const waReplies = process.env.WHATSAPP_REPLIES !== "0";
+log(waReplies ? "WhatsApp: replies ENABLED (set WHATSAPP_REPLIES=0 to turn off)" : "WhatsApp: logging inbound only");
+const wIm = mk("imessage"), wWa = mk("whatsapp", { autoReply: waReplies }), wSms = mk("sms", smsReady ? {} : { listenOnly: true });   // not eligible to send yet: still read and learn from inbound texts (callers can text the call number), never reply
+const workers = { imessage: wIm, whatsapp_business: wWa, sms: wSms };
 
 let scheduler: Scheduler | undefined; let engine: EngineDeps | undefined; let voice: Awaited<ReturnType<typeof startVoiceServer>> | undefined;
 if (v2) {
@@ -148,9 +151,9 @@ if (v2) {
   };
   const llm = new ModalLlm({ endpoint: MODAL.endpoint, id: MODAL.id, secret: MODAL.secret, model: MODEL });
   // A caller on the phone who has never texted us can only be reached on iMessage after the shared line is assigned to them. Done on request
-  // (contact_options), reusing an existing assignment, capped so a burst of callers cannot use up the plan's assignments. AUTO_ASSIGN_IMESSAGE=0 turns it off.
+  // (contact_options), reusing an existing assignment, capped so a burst of callers cannot use up the plan's assignments. Off by default (only the one test iMessage line is kept); AUTO_ASSIGN_IMESSAGE=1 turns it on.
   const assignCap = Number(process.env.IMESSAGE_ASSIGN_CAP ?? 20);
-  const assignIMessage = process.env.AUTO_ASSIGN_IMESSAGE === "0" ? undefined : async (a: { orgId: ObjectId; handle: string; firstName?: string }) => {
+  const assignIMessage = process.env.AUTO_ASSIGN_IMESSAGE !== "1" ? undefined : async (a: { orgId: ObjectId; handle: string; firstName?: string }) => {
     const list: any = await photon.req("GET", "/platforms/imessage/assignments");
     const all: any[] = list.assignments ?? [];
     let found = all.find((x) => x.handle === a.handle);
@@ -165,7 +168,7 @@ if (v2) {
   };
   engine = { db, llm, tools: ALL_TOOLS, messenger: new Messenger(db, { adapters, ready }), log,
     env: { brandFallback: org.name, assignIMessage, publicFormsBaseUrl: process.env.PUBLIC_FORMS_BASE_URL ?? "http://localhost:3000", verifySecret, formsMasterKey: process.env.FORM_ENC_KEY?.trim() } };
-  scheduler = new Scheduler({ db, engine, workers: { imessage: wIm, whatsapp: wWa, ...(wSms ? { sms: wSms } : {}) }, log, afterTurn: async (a) => { await summarizeIfNeeded(db, llm, a); } });
+  scheduler = new Scheduler({ db, engine, workers: { imessage: wIm, whatsapp: wWa, sms: wSms }, log, afterTurn: async (a) => { await summarizeIfNeeded(db, llm, a); } });
   scheduler.start();
   const vs = process.env.VOICE_PATH_SECRET?.trim(), ws = process.env.ELEVENLABS_WEBHOOK_SECRET?.trim();
   if (vs && ws) { voice = await startVoiceServer({ db, engine, port: Number(process.env.VOICE_PORT ?? 8787), pathSecret: vs, webhookSecret: ws, bearer: process.env.VOICE_BEARER?.trim() || undefined, log });
