@@ -2,6 +2,7 @@
 
 - `web/` — Next.js owner console (dashboard, inbox, contacts, agent settings). MongoDB-backed.
 - `agent/` — agent runtime: Daytona sandbox orchestrator (`provisionAgent`, wake, destroy), in-sandbox `agentd`, recorded message I/O (Mongo write-first), Modal LLM calls, e2e test + report. Photon channel adapter and voice gateway not built yet.
+- `docs/AGENT-MASTER.html` — **start here** for the agent: PRD index, reconciled decisions, scope, build results.
 - `docs/PRD.html` — product plan. `docs/PRD-agent-runtime-photon-voice.html` — Daytona agent runtime, Photon voice, onboarding. `docs/TEST-REPORT-agent-runtime.html` — latest e2e results.
 - `database information/documentation.html` — living docs: database design, setup, decisions, integrations, changelog.
 
@@ -44,3 +45,15 @@ pnpm tsx --env-file=.env.local scripts/verify-tmobile.mts --api http://localhost
 ```
 
 The Selldial console (`web/public/selldial`, served by `/api/console`) shows the T-Mobile business by default: the Customers screen lists the 50 personas, 8 prospects and 450 more households with plan, lines, bill, support and the agent's persona profile. The seed only touches the T-Mobile org; Sunrise Bike Shop data is left alone.
+
+## Agent engine (`agent/`)
+
+```bash
+cd agent && pnpm install
+pnpm test         # 11 offline suites: identity, engine, messenger/codes/forms, scheduler, voice server, summarizer, reach, safety, intake, offers/negotiation, handoff
+pnpm conv-suite   # 584 generated conversations against the real model (uses tokens; not part of pnpm test)
+pnpm live         # live runner (needs web/.env.local): Photon events -> scheduler lanes -> engine -> replies. ENGINE=legacy = old sandbox path
+```
+
+Secure forms live in `web/` (`/f/<token>` public page, `/forms` owner view behind `FORMS_ADMIN_PASSWORD`). Environment variables: see `web/.env.example`. ElevenLabs voice setup: `agent/scripts/elevenlabs-setup.mts`. Why a customer can be sent to a person, and the guard: `docs/AGENT-MASTER.html` section 9e; audit with `agent/scripts/handoff-audit.mts`.
+

@@ -1,11 +1,12 @@
 import type { Db, Document } from "mongodb";
+import { agentSpecs } from "./agent-schema";
 import { tmoSpecs } from "./tmo-schema";
 
 // Single source of truth for collection validators + indexes.
 // Applied idempotently by `pnpm db:setup` (and by the seed script).
 // Types live in models.ts; keep the two in sync.
 
-type IndexSpec = { keys: Document; unique?: boolean; name?: string; partial?: Document };
+type IndexSpec = { keys: Document; unique?: boolean; name?: string; partial?: Document; ttl?: number };
 type CollectionSpec = { name: string; schema: Document; indexes: IndexSpec[] };
 
 const oid = { bsonType: "objectId" };
@@ -71,12 +72,16 @@ export const specs: CollectionSpec[] = [
         bsonType: "array",
         items: obj(["text", "learnedAt"], { text: str, sourceMessageId: oidOrNull, learnedAt: date }),
       },
+      memory: { bsonType: "object" }, profile: { bsonType: "object" }, intake: { bsonType: "object" }, externalRefs: { bsonType: "array" },
+      consent: { bsonType: "object" },         // { text: { granted, at, source } }
+      verifiedPhone: { bsonType: "object" },   // { number, at, method }: proof of control of the number (verify_check_code)
       createdAt: date,
     }),
     indexes: [
       { keys: { orgId: 1, stage: 1 } },
-      // a handle maps to exactly one contact per business (addresses stored E.164)
-      { keys: { orgId: 1, "handles.channel": 1, "handles.address": 1 }, unique: true },
+      // a phone number / email maps to exactly ONE contact per business, across all channels (addresses stored E.164).
+      // Unique indexes only compare different documents, so one contact may hold the same number on SMS, iMessage, WhatsApp and voice.
+      { keys: { orgId: 1, "handles.address": 1 }, unique: true },
     ],
   },
   {
@@ -84,9 +89,11 @@ export const specs: CollectionSpec[] = [
     schema: obj(["orgId", "contactId", "mode", "lastChannel", "lastMessageAt", "lastMessagePreview"], {
       orgId: oid, contactId: oid, mode: en("agent", "human"),
       lastChannel: en(...CHANNELS), lastMessageAt: date, lastMessagePreview: str,
+      lane: { bsonType: "object", properties: { state: en("idle", "running"), owner: strOrNull, dueAt: dateOrNull, firstAt: dateOrNull, leaseUntil: dateOrNull, startedAt: dateOrNull } },   // per-conversation work lane (scheduler.ts)
     }),
     indexes: [
       { keys: { orgId: 1, contactId: 1 }, unique: true }, // one conversation per contact, spans channels
+      { keys: { "lane.dueAt": 1 }, partial: { "lane.dueAt": { $type: "date" } } },   // scheduler: which conversations are due
       { keys: { orgId: 1, lastMessageAt: -1 } },
     ],
   },
@@ -104,6 +111,7 @@ export const specs: CollectionSpec[] = [
         handling: en("agent", "ignored", "opted_out", "rejected", "human"),
         guardrail: { bsonType: ["object", "null"] }, attempts: num,
         deliveryError: strOrNull,
+        redacted: bool, handledByTurn: strOrNull,   // redacted: body hides a code/link; handledByTurn: the agent turn that answered this inbound message
         attachments: {
           bsonType: "array",
           items: obj(["kind", "url"], { kind: en("image", "video", "audio", "file"), url: str, mime: str, name: str, sizeBytes: num }),
@@ -193,8 +201,14 @@ export const specs: CollectionSpec[] = [
       status: en("ringing", "active", "completed", "missed", "failed"),
       startedAt: date, endedAt: dateOrNull, durationSec: num, recordingUrl: strOrNull, summary: str, outcome: str,
     }),
-    indexes: [{ keys: { orgId: 1, startedAt: -1 } }, { keys: { contactId: 1 } }],
+    indexes: [
+      { keys: { orgId: 1, startedAt: -1 } },
+      { keys: { contactId: 1 } },
+      // one document per provider call: call events can arrive twice or out of order
+      { keys: { provider: 1, providerCallId: 1 }, unique: true, partial: { providerCallId: { $type: "string" } } },
+    ],
   },
+  ...agentSpecs, // verification, opt-outs, turn log, notifications, secure forms (agent-schema.ts)
   ...tmoSpecs, // T-Mobile sandbox data (tmo-schema.ts)
 ];
 
@@ -209,7 +223,7 @@ export async function applySchema(db: Db) {
       await db.createCollection(s.name, { validator, validationLevel: "strict", validationAction: "error" });
     }
     for (const ix of s.indexes) {
-      const opts = { unique: ix.unique ?? false, ...(ix.name ? { name: ix.name } : {}), ...(ix.partial ? { partialFilterExpression: ix.partial } : {}) };
+      const opts = { unique: ix.unique ?? false, ...(ix.name ? { name: ix.name } : {}), ...(ix.partial ? { partialFilterExpression: ix.partial } : {}), ...(ix.ttl !== undefined ? { expireAfterSeconds: ix.ttl } : {}) };
       try {
         await db.collection(s.name).createIndex(ix.keys, opts);
       } catch (e) {

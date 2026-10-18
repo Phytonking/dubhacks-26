@@ -1,0 +1,74 @@
+// Rules enforced in code, outside the model. One module for text and voice (conflict C10).
+export type Verdict = { verdict: "ok" } | { verdict: "blocked"; reason: string; kind: "discount" | "ungrounded_amount" };
+
+/** Discount ceiling: offering "50% off" above the allowed maximum is blocked. Saying you CAN'T do 50% off is a refusal, not an offer. */
+const NEGATION = /\b(can'?t|cannot|can not|won'?t|will not|unable|not able|don'?t|do not|doesn'?t|isn'?t|aren'?t|no way|not (?:possible|available|something))\b/i;
+export function checkDiscount(text: string, maxDiscountPct: number): Verdict {
+  for (const m of text.matchAll(/(\d{1,3})\s*%\s*(off|discount)/gi)) {
+    if (Number(m[1]) <= maxDiscountPct) continue;
+    const before = text.slice(0, m.index);
+    const clause = before.split(/[.!?;,]|\bbut\b|\bhowever\b/i).pop() ?? "";   // same clause only: "I can't do 5% but I can do 50% off" is still an offer
+    if (NEGATION.test(clause)) continue;
+    if (/^\s*(?:isn'?t|is not|aren'?t|are not|won'?t be|is not possible)\b/i.test(text.slice((m.index ?? 0) + m[0].length))) continue;   // "50% off isn't something I can do": negation directly after the number
+    return { verdict: "blocked", reason: `discount ${m[1]}% exceeds max ${maxDiscountPct}%`, kind: "discount" };
+  }
+  return { verdict: "ok" };
+}
+
+const AMOUNT = /\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?/g;
+/** "$1,450" -> "1450.00" so $1,450 and 1450 and $1450.00 compare equal. */
+const norm = (whole: string, cents?: string) => `${whole.replace(/,/g, "")}.${(cents ?? "0").padEnd(2, "0")}`;
+export function amountsIn(text: string): string[] {
+  return [...text.matchAll(AMOUNT)].map((m) => norm(m[1], m[2]));
+}
+/**
+ * Money must be grounded: every dollar amount in a reply has to appear in this turn's evidence (tool results, knowledge shown to the model,
+ * the customer snapshot, or the customer's own words). This is the code-level version of "never invent a price".
+ */
+export function checkGroundedMoney(text: string, evidence: string[]): Verdict {
+  const ev = new Set<string>();
+  for (const e of evidence) {
+    for (const a of amountsIn(e)) ev.add(a);
+    if (!e.startsWith("USER:")) continue;   // bare numbers ("1450", "100 bucks") count only when the customer said them
+    for (const m of e.matchAll(/(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?![\d,])/g)) ev.add(norm(m[1], m[2]));   // bare numbers ("1450", "89.00")
+  }
+  const nums = [...ev].map(Number);
+  // simple arithmetic on grounded amounts is fine ("$330 vs $160 is $170 more", "$930 minus a $292 trade-in"): the sum or difference of two amounts in the evidence
+  const derived = new Set<string>(); const cents = [...new Set(nums.map((v) => Math.round(v * 100)))].slice(0, 400);
+  for (let i = 0; i < cents.length; i++) for (let j = i; j < cents.length; j++) { derived.add(((cents[i] + cents[j]) / 100).toFixed(2)); derived.add((Math.abs(cents[i] - cents[j]) / 100).toFixed(2)); }
+  // a spoken amount may be the whole-dollar rounding of an exact one in the evidence ("$107" for $106.98)
+  for (const a of amountsIn(text)) if (!ev.has(a) && !derived.has(a) && !(a.endsWith(".00") && nums.some((v) => v % 1 !== 0 && Math.abs(v - Number(a)) < 0.5))) return { verdict: "blocked", reason: `amount $${a.replace(/\.00$/, "")} is not in this turn's evidence`, kind: "ungrounded_amount" };
+  return { verdict: "ok" };
+}
+
+export type GuardCfg = { maxDiscountPct: number; requireGroundedMoney?: boolean };
+export function checkText(text: string, cfg: GuardCfg, evidence: string[]): Verdict {
+  const d = checkDiscount(text, cfg.maxDiscountPct);
+  if (d.verdict !== "ok") {
+    // a percentage that a tool returned this turn ("25% off" on accessories) is a catalog fact, not an invented discount; the customer's own "50% off" never counts
+    const pct = /discount (\d+(?:\.\d+)?)%/.exec((d as { reason?: string }).reason ?? "")?.[1];
+    const fromTool = pct && evidence.some((e) => !e.startsWith("USER:") && new RegExp(`(?<![\\d.])${pct}\\s?%\\s*off`, "i").test(e));
+    // restating the customer's own number ("AT&T's 40% off") is not offering it; offering it ("I can do 40% off") is
+    const fromUser = pct && evidence.some((e) => e.startsWith("USER:") && new RegExp(`(?<![\\d.])${pct}\\s?%`).test(e)) && !/\b(i('ll| will| can(?!'t|not)| could(?!n't)| am able| would)|we('ll| will| can(?!'t|not)| could(?!n't)| would)|i'm (able|happy|glad)|happy to (give|offer|do|take)|let me (give|offer|take|knock))\b/i.test(text);
+    if (!fromTool && !fromUser) return d;
+  }
+  if (cfg.requireGroundedMoney) return checkGroundedMoney(text, evidence);
+  return { verdict: "ok" };
+}
+
+/** Pull complete sentences off the front of a streaming buffer. Returns [sentences, rest]. Keeps decimals ($41.51) and abbreviations intact. */
+export function takeSentences(buf: string, flushAll = false): [string[], string] {
+  const out: string[] = []; let start = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const c = buf[i];
+    if ((c === "." || c === "!" || c === "?" || c === "\n") && (i + 1 === buf.length ? flushAll : /\s/.test(buf[i + 1]))) {
+      if (c === "." && /\d$/.test(buf.slice(Math.max(0, i - 1), i)) && /^\d/.test(buf.slice(i + 1, i + 2))) continue;   // 41.51
+      const s = buf.slice(start, i + 1).trim();
+      if (s) out.push(s);
+      start = i + 1;
+    }
+  }
+  let rest = buf.slice(start);
+  if (flushAll && rest.trim()) { out.push(rest.trim()); rest = ""; }
+  return [out, rest.replace(/^\s+/, "")];
+}

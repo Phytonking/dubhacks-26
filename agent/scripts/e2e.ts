@@ -188,7 +188,7 @@ try {
     await handle(received as any);
     assert(calls.length === 1, `expected 1 sendMessage call, got ${calls.length}`);
     const c = calls[0];
-    assert(c.spaceId === "pho_spc_1" && c.senderId === "pho_usr_agent" && c.parentMessageId === "pho_msg_in_100", "wrong routing fields: " + JSON.stringify(c));
+    assert(c.spaceId === "pho_spc_1" && c.senderId === "pho_usr_agent" && c.parentMessageId === undefined, "wrong routing fields: " + JSON.stringify(c));
     const out = await db.collection("messages").findOne({ orgId, direction: "out", channelMsgId: "pho_msg_out_1" });
     assert(out && out.clientMsgId === c.idempotencyKey, "idempotency key is not the stored clientMsgId");
     console.log(`  [photon] sendMessage(spaceId=${c.spaceId}, senderId=${c.senderId}, parent=${c.parentMessageId}, idempotency-key=${String(c.idempotencyKey).slice(0, 8)}…): "${c.text}"`);
