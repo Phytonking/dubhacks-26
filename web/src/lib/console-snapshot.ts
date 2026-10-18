@@ -240,7 +240,7 @@ export async function fingerprint(): Promise<string> {
   const db = await getDb();
   const org = await getCurrentOrg();
   const parts = await Promise.all(
-    ([["messages", "ts"], ["conversations", "lastMessageAt"], ["tool_calls", "ts"], ["agent_turns", "startedAt"], ["notifications", "createdAt"], ["approvals", "updatedAt"], ["handoffs", "updatedAt"], ["promos", "updatedAt"], ["orders", "updatedAt"], ["checkout_quotes", "updatedAt"], ["payments", "createdAt"], ["contacts", "createdAt"]] as const).map(async ([name, field]) => {
+    ([["messages", "ts"], ["conversations", "lastMessageAt"], ["tool_calls", "ts"], ["agent_turns", "startedAt"], ["notifications", "createdAt"], ["approvals", "updatedAt"], ["handoffs", "updatedAt"], ["promos", "updatedAt"], ["orders", "updatedAt"], ["checkout_quotes", "updatedAt"], ["payments", "createdAt"], ["calls", "updatedAt"], ["contacts", "createdAt"]] as const).map(async ([name, field]) => {
       const c = db.collection<Document>(name);
       const [top, n] = await Promise.all([c.find({ orgId: org._id }).sort({ [field]: -1 }).limit(1).project({ [field]: 1 }).next(), c.countDocuments({ orgId: org._id })]);
       return `${name}:${n}:${top ? new Date(top[field]).getTime() : 0}`;
