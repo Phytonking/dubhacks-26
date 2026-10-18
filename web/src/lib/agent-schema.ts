@@ -114,6 +114,15 @@ export const agentSpecs: CollectionSpec[] = [
     indexes: [{ keys: { tokenHash: 1 }, unique: true }, { keys: { quoteId: 1, createdAt: -1 } }],
   },
   {
+    // A one-time link to change the payment method on file. Only the SHA-256 of the token is stored; the card is never stored (the account keeps brand + last 4).
+    name: "method_requests",
+    schema: obj(["orgId", "contactId", "accountId", "tokenHash", "status", "attempts", "expiresAt", "createdAt"], {
+      orgId: oid, contactId: oid, conversationId: oidOrNull, accountId: str, tokenHash: str, status: en("pending", "processing", "completed", "revoked", "locked"),
+      attempts: num, lastFailure: strOrNull, processingAt: dateOrNull, expiresAt: date, createdAt: date, completedAt: dateOrNull, brand: strOrNull, last4: strOrNull,
+    }),
+    indexes: [{ keys: { tokenHash: 1 }, unique: true }, { keys: { orgId: 1, contactId: 1, createdAt: -1 } }],
+  },
+  {
     // A successful charge. Brand and last 4 only (never the number, expiry or CVC). One per payment link.
     name: "payments",
     schema: obj(["orgId", "quoteId", "requestId", "amountCents", "brand", "last4", "authCode", "status", "createdAt"], {

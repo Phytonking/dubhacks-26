@@ -7,7 +7,7 @@ import { hasTmoData, listTmoConsoleCustomers } from "./tmo-queries";
 // read live from MongoDB. Times are minutes-ago, money is integer cents. Collections the agent has not
 // created yet (agent_turns, notifications, approvals, ...) read as empty, so this works on any deployment.
 
-const WINDOW_DAYS = 30;
+const WINDOW_DAYS = 92; // covers "last month" and a picked day on the Home range control
 const LIVE_MIN = 5; // a conversation with traffic in the last 5 minutes is "live"
 const RULES = [
   [1, "Discounts only from the policy table"],
@@ -52,7 +52,7 @@ export async function buildSnapshot() {
   const since = new Date(now - WINDOW_DAYS * 86400_000);
   const col = (name: string) => db.collection<Document>(name);
 
-  const convs = await col("conversations").find({ orgId, lastMessageAt: { $gte: since } }).sort({ lastMessageAt: -1 }).limit(150).toArray();
+  const convs = await col("conversations").find({ orgId, lastMessageAt: { $gte: since } }).sort({ lastMessageAt: -1 }).limit(500).toArray();
   const convIds = convs.map((c) => c._id);
   const [callDocs, contacts, allContacts, msgs, toolCalls, turns, notes, approvalDocs, handoffDocs, promoDocs, orderDocs, agent, lines, ownerUser, quoteDocs] = await Promise.all([
     col("calls").find({ orgId, conversationId: { $in: convIds }, summary: { $nin: ["", null] } }).sort({ startedAt: -1 }).toArray(),

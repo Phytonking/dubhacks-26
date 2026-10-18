@@ -236,7 +236,7 @@ export async function checkoutStatus(db: Db, orgId: ObjectId, contactId: ObjectI
 }
 
 // A plain notice in the thread. The agent's next turn reads it ("Payment completed...") and replies; it contains no card data.
-async function systemNotice(db: Db, a: { orgId: ObjectId; conversationId: ObjectId }, body: string, key: string, now: Date) {
+export async function systemNotice(db: Db, a: { orgId: ObjectId; conversationId: ObjectId }, body: string, key: string, now: Date) {
   const conv: any = await db.collection("conversations").findOne({ _id: a.conversationId });
   if (!conv) return;
   await db.collection("messages").insertOne({ orgId: a.orgId, conversationId: conv._id, channel: conv.lastChannel ?? "sms", direction: "in", sender: "customer",

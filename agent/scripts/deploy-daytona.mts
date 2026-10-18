@@ -24,7 +24,7 @@ catch {
 const tmp = mkdtempSync(join(tmpdir(), "deploy-")); const tgz = join(tmp, "app.tgz");
 execFileSync("tar", ["-czf", tgz, "-C", root, "--exclude=node_modules", "--exclude=agent/test-results", "--exclude=.DS_Store",
   "agent/src", "agent/scripts", "agent/prompts", "agent/sandbox", "agent/package.json", "agent/pnpm-lock.yaml", "agent/pnpm-workspace.yaml", "agent/tsconfig.json",
-  "web/src/lib/forms-core.ts", "web/src/lib/form-templates.ts", "web/src/lib/checkout-core.ts"]);
+  "web/src/lib/forms-core.ts", "web/src/lib/form-templates.ts", "web/src/lib/checkout-core.ts", "web/src/lib/account-core.ts"]);
 await sh(sb, `pkill -f '[s]upervise.sh'; pkill -f '[s]cripts/live.ts'; sleep 1; mkdir -p ${APP}; true`);
 await sb.fs.uploadFile(readFileSync(tgz), `${HOME}/app.tgz`);
 await sb.fs.uploadFile(readFileSync(join(root, "web/.env.local")), `${HOME}/env.tmp`);

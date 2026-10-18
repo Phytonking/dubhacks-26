@@ -59,17 +59,45 @@
   const channelKind = (c) => c.channel === "voice" ? "Voice" : "Text";
   const statusChip = (st) => `<span class="chip"><span class="dot ${["Active", "Loyal"].includes(st) ? "ok" : st === "At risk" ? "bad" : "off"}"></span>${esc(st)}</span>`;
 
-  const DAY = 1440; // minutes. Home counts today only; Sales looks further back.
+  const DAY = 1440; // minutes. Sales looks back by day counts; Home takes a calendar range.
+  const midnight = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const fmtDay = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const HOME_RANGES = { today: "Today", yesterday: "Yesterday", week: "Last 7 days", month: "This month", last30: "Last 30 days", lastmonth: "Last month", day: "Pick a day" };
+  // The Home window as [from, to) in epoch ms, plus the words that describe it.
+  function homeWindow(now = new Date()) {
+    const today = midnight(now), tomorrow = addDays(today, 1);
+    const w = (from, to, label, phrase) => ({ from: from.getTime(), to: to.getTime(), label, phrase });
+    switch (ui.homeRange) {
+      case "yesterday": return w(addDays(today, -1), today, "Yesterday", "yesterday");
+      case "week": return w(addDays(today, -6), tomorrow, "Last 7 days", "in the last 7 days");
+      case "last30": return w(addDays(today, -29), tomorrow, "Last 30 days", "in the last 30 days");
+      case "month": return w(new Date(today.getFullYear(), today.getMonth(), 1), tomorrow, now.toLocaleDateString("en-US", { month: "long" }), "this month");
+      case "lastmonth": { const from = new Date(today.getFullYear(), today.getMonth() - 1, 1); return w(from, new Date(today.getFullYear(), today.getMonth(), 1), from.toLocaleDateString("en-US", { month: "long" }), "last month"); }
+      case "day": {
+        const [y, m, d] = (ui.homeDay || isoDay(today)).split("-").map(Number), day = new Date(y, m - 1, d);
+        return w(day, addDays(day, 1), fmtDay(day), day.getTime() === today.getTime() ? "today" : `on ${fmtDay(day)}`);
+      }
+      default: return w(today, tomorrow, "Today", "today");
+    }
+  }
+  const startedAt = (s, c) => new Date(s.generatedAt || Date.now()).getTime() - c.started * 60000;
   function stats(s) {
-    const done = s.conversations.filter((c) => c.status !== "live" && c.started < DAY);
+    const win = homeWindow();
+    const inWin = (c) => { const t = startedAt(s, c); return t >= win.from && t < win.to; };
+    const done = s.conversations.filter((c) => c.status !== "live" && inWin(c));
     const paid = done.filter((c) => c.outcome === "purchased");
+    // Open items need the owner whatever day they started on; finished ones follow the range.
+    const open = s.conversations.filter((c) => c.status === "awaiting_approval" || c.status === "handoff");
     return {
+      win, done,
       handled: done.length,
       paid: paid.length, paidCents: paid.reduce((n, c) => n + c.amount_cents, 0),
       notPaid: done.filter((c) => outcomeOf(c) === "notpaid").length,
       saved: done.reduce((n, c) => n + (c.saved_cents || 0), 0),
       live: s.conversations.find((c) => c.status === "live"),
-      review: done.filter(isBad),
+      review: [...new Set([...open, ...done.filter(isBad)])].sort((a, b) => a.started - b.started),
     };
   }
 
@@ -82,7 +110,7 @@
     settings: { label: "Settings", render: renderSettings },
     about: { label: "About", render: renderAbout },
   };
-  const ui = { convOutcome: "all", convQuery: "", saleTab: "list", saleRegion: "all", saleTime: "30", salePay: "all", saleQuery: "", custQuery: "", custRegion: "all", custStatus: "all", set: {}, promoForm: null };
+  const ui = { convOutcome: "all", convQuery: "", saleTab: "list", saleRegion: "all", saleTime: "30", homeRange: "today", homeDay: "", salePay: "all", saleQuery: "", custQuery: "", custRegion: "all", custStatus: "all", set: {}, promoForm: null };
 
   function convRow(c) {
     return `<tr class="clickable" data-conv="${esc(c.id)}">
@@ -95,12 +123,14 @@
   }
 
   // A call "went badly" when it ended unpaid after a purchase attempt, was handed off, or failed verification.
-  const isBad = (c) => c.outcome === "not_paid" || c.outcome === "handoff" || c.status === "handoff";
-  const reviewKind = (c) => c.outcome === "not_paid" ? "Not paid" : c.verified ? "Handed off" : "Failed verification";
+  const isBad = (c) => c.outcome === "not_paid" || c.outcome === "handoff" || c.status === "handoff" || c.status === "awaiting_approval";
+  const reviewKind = (c) => c.status === "awaiting_approval" ? "Needs your approval" : c.outcome === "not_paid" ? "Not paid" : c.verified ? "Handed off" : "Failed verification";
   function reviewReason(s, c) {
     const h = s.handoffs.find((x) => x.conversation === c.id);
     if (h) return h.reason;
     const a = s.approvals.find((x) => x.conversation === c.id && x.status === "declined");
+    const p = s.approvals.find((x) => x.conversation === c.id && x.status === "texted");
+    if (p) return `${p.items || "Order"} · ${money(p.amount_cents)}/mo, waiting on ${p.owner}`;
     if (a) return `Owner declined ${money(a.amount_cents)}, over the ${money(a.limit_cents)} limit`;
     return c.intent;
   }
@@ -110,7 +140,7 @@
   function reviewRow(s, c) {
     return `<li class="line review-line">
       <div class="line-who">${avatar(c.customer)}<div class="line-main">
-        <div class="row-head"><span class="title">${esc(c.customer)}</span><span class="chip"><span class="dot bad"></span>${reviewKind(c)}</span></div>
+        <div class="row-head"><span class="title">${esc(c.customer)}</span><span class="chip"><span class="dot ${c.status === "awaiting_approval" ? "warn" : "bad"}"></span>${reviewKind(c)}</span></div>
         <div class="small muted">${esc(reviewReason(s, c))}</div>
       </div></div>
       <div class="line-side stack"><span class="t-mono">${ago(c.started)}</span>${arrowLink("Open", `data-conv="${esc(c.id)}"`, `Open conversation with ${c.customer}`)}</div>
@@ -124,21 +154,44 @@
     </button></li>`;
   }
 
+  function homeControls() {
+    const todayIso = isoDay(new Date());
+    return `<div class="filters home-range" role="group" aria-label="Time range">
+        <label class="select"><span>Range</span><select data-ui="homeRange">${Object.entries(HOME_RANGES).map(([v, l]) => optHtml(v, ui.homeRange, l)).join("")}</select></label>
+        ${ui.homeRange === "day" ? `<label class="select"><span>Day</span><input type="date" data-ui="homeDay" max="${todayIso}" value="${esc(ui.homeDay || todayIso)}"></label>` : ""}
+      </div>`;
+  }
+
+  // One bar per day in the range: how many conversations, and how many ended paid.
+  function dayBars(s, k) {
+    const days = [];
+    for (let t = k.win.from; t < k.win.to && days.length < 31; t = addDays(new Date(t), 1).getTime()) days.push(t);
+    if (days.length < 2) return "";
+    const rows = days.map((t) => {
+      const end = addDays(new Date(t), 1).getTime(), mine = k.done.filter((c) => { const x = startedAt(s, c); return x >= t && x < end; });
+      return { t, n: mine.length, paid: mine.filter((c) => c.outcome === "purchased").length };
+    });
+    const max = Math.max(1, ...rows.map((r) => r.n));
+    return `<section class="block"><header class="block-head"><h2>By day</h2></header>
+      <div class="card dbars" role="img" aria-label="Conversations per day">${rows.map((r) => `<div class="dbar" title="${esc(fmtDay(new Date(r.t)))}: ${plural(r.n, "conversation")}, ${r.paid} paid"><span class="dbar-fill"><i style="height:${Math.round((r.n / max) * 100)}%"></i></span><small>${new Date(r.t).getDate()}</small></div>`).join("")}</div></section>`;
+  }
+
   function renderHome(s) {
     const k = stats(s);
     const hour = new Date().getHours();
     const hello = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-    const recent = s.conversations.filter((c) => c.status !== "live").slice(0, 5);
+    const recent = k.done.slice(0, 5);
     const n = k.review.length;
     const lead = n ? `<em>${plural(n, "conversation")}</em> ${n === 1 ? "needs" : "need"} you.` : "Nothing needs you.";
     const figure = (label, value, cls, dot, note) => `<div><dt><span class="dot ${dot}"></span>${label}</dt><dd class="num ${cls}">${value}${note ? `<small>${note}</small>` : ""}</dd></div>`;
     return `
+      ${homeControls()}
       <section class="hero">
         <p class="eyebrow">${hello}, ${esc(profile().name)} <span aria-hidden="true">·</span> ${today}</p>
-        <h2 class="hero-line">${lead} <span>${money(k.paidCents)} paid by the agent today.</span></h2>
+        <h2 class="hero-line">${lead} <span>${money(k.paidCents)} paid by the agent ${k.win.phrase}.</span></h2>
         <dl class="figures card">
-          ${figure("Calls handled", k.handled, "", "", "today")}${figure("Sales paid", k.paid, "accent", "", money(k.paidCents))}${figure("Not paid", k.notPaid, "bad", "bad", "after a purchase attempt")}${figure("Saved for customers", money(k.saved), "save", "ok", "from advice and offers")}
+          ${figure("Calls handled", k.handled, "", "", k.win.label)}${figure("Sales paid", k.paid, "accent", "", money(k.paidCents))}${figure("Not paid", k.notPaid, "bad", "bad", "after a purchase attempt")}${figure("Saved for customers", money(k.saved), "save", "ok", "from advice and offers")}
         </dl>
         ${k.live ? `<p class="active-line small">${icon("phone")}<b>Active now</b><span class="muted">${esc(k.live.customer)} is on a ${esc(CHANNEL[k.live.channel] === "Voice" ? "call" : "text thread")} about ${esc(k.live.intent.charAt(0).toLowerCase() + k.live.intent.slice(1))}.</span></p>` : ""}
       </section>
@@ -149,9 +202,10 @@
         </section>
         <section class="block">
           <header class="block-head"><h2>Recent conversations</h2>${arrowLink("View all", 'data-go="conversations"')}</header>
-          <div class="card panel-list"><ul class="lines">${recent.map(recentRow).join("")}</ul></div>
+          <div class="card panel-list">${recent.length ? `<ul class="lines">${recent.map(recentRow).join("")}</ul>` : `<p class="empty">No conversations ${k.win.phrase}.</p>`}</div>
         </section>
-      </div>`;
+      </div>
+      ${dayBars(s, k)}`;
   }
 
   const filterConvs = (s) => {
