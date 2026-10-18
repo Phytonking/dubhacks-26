@@ -2,29 +2,38 @@
  * Every colour and font in the console references these by name.
  */
 :root {
-  /* Plum surfaces: each step is about 4 lightness points from its neighbour */
-  --color-bg:          oklch(12% 0.03 320);
-  --color-surface:     oklch(15.5% 0.035 320);
-  --color-raised:      oklch(19.5% 0.04 320);
-  --color-rule:        oklch(27% 0.045 320);
-  --color-ink:         oklch(96% 0.01 320);
-  --color-ink-2:       oklch(88% 0.015 320);
-  --color-muted:       oklch(72% 0.03 320);
+  /* Three plum tiers, about 5 lightness points apart: page, panel, raised */
+  --color-bg:          oklch(19% 0.055 320);
+  --color-surface:     oklch(24% 0.06 320);
+  --color-raised:      oklch(29.5% 0.07 322);
+  --color-rule:        oklch(35% 0.075 335);
+  --color-edge:        oklch(66% 0.24 350 / 0.28);
+  --color-ink:         oklch(97% 0.01 320);
+  --color-ink-2:       oklch(91% 0.015 320);
+  --color-muted:       oklch(79% 0.035 320);
 
-  /* Pink is a verb: primary action, focus, the selected-row marker */
+  /* Magenta is the lead colour: fills and markers, plus a lighter step for text */
   --color-accent:      oklch(66% 0.24 350);
+  --color-accent-text: oklch(80% 0.16 350);
   --color-accent-ink:  oklch(15% 0.02 320);
-  --color-accent-wash: oklch(26% 0.09 350);
+  --color-accent-wash: oklch(31% 0.11 350);
 
-  /* Violet is the quiet second voice: selection, switches that are on, small marks */
-  --color-violet:      oklch(74% 0.14 295);
-  --color-violet-fill: oklch(52% 0.17 295);
-  --color-violet-wash: oklch(24% 0.07 295);
+  /* Violet is the supporting voice: links, avatar rings, timeline, switches */
+  --color-violet:      oklch(76% 0.14 295);
+  --color-violet-fill: oklch(54% 0.17 295);
+  --color-violet-wash: oklch(30% 0.08 295);
 
-  /* State colours: always with an icon and a label */
-  --color-save:        oklch(79% 0.14 155);
-  --color-guard:       oklch(85% 0.12 90);
-  --color-block:       oklch(72% 0.17 25);
+  /* State colours: always with an icon and a label. They win over magenta. */
+  --color-save:        oklch(80% 0.14 155);
+  --color-guard:       oklch(86% 0.12 90);
+  --color-block:       oklch(74% 0.17 25);
+
+  /* Page background: a soft magenta-to-violet glow top-left over the page tier */
+  --page-bg:
+    radial-gradient(ellipse 55% 42% at 14% -4%, oklch(48% 0.19 350 / 0.5), transparent 70%),
+    radial-gradient(ellipse 45% 38% at 34% 0%, oklch(44% 0.15 295 / 0.38), transparent 72%),
+    radial-gradient(ellipse 50% 40% at 100% 100%, oklch(40% 0.14 295 / 0.3), transparent 70%),
+    var(--color-bg);
 
   --color-scrim:       oklch(7% 0.03 320 / 0.65);
 
@@ -65,7 +74,7 @@
 html, body { margin: 0; overflow-x: clip; }
 html { accent-color: var(--color-accent); scrollbar-color: var(--color-rule) transparent; }
 body {
-  background: var(--color-bg);
+  background: var(--page-bg) fixed;
   color: var(--color-ink-2);
   font: 400 var(--text-sm)/1.45 var(--font-body);
   -webkit-font-smoothing: antialiased;

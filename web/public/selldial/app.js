@@ -24,9 +24,21 @@
     plus: '<path d="M12 5v14M5 12h14"/>',
     alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
     clock: '<circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 2"/>',
+    home: '<path d="M3 11.5 12 4l9 7.5M5.5 10v10h13V10"/>',
+    chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.7a3.5 3.5 0 0 1 0 6.6M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/>',
+    sales: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>',
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 11v5M12 8h.01"/>',
+    msg: '<rect x="3" y="5" width="18" height="12" rx="3"/><path d="M8 21l3-4"/>',
     phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
   };
   const icon = (n) => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
+
+  const NAV_ICON = { home: "home", conversations: "chat", customers: "users", sales: "sales", settings: "gear", about: "info" };
+  const initials = (name) => String(name).split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  const avatar = (name) => `<span class="ava ${[...String(name)].reduce((n, ch) => n + ch.charCodeAt(0), 0) % 3 === 0 ? "v" : ""}" aria-hidden="true">${esc(initials(name))}</span>`;
+  const via = (c) => `<span class="via">${icon(c.channel === "voice" ? "phone" : "msg")}${channelKind(c)}</span>`;
 
   const profile = () => ({ name: "Eshaan" });
 
@@ -74,11 +86,11 @@
 
   function convRow(c) {
     return `<tr class="clickable" data-conv="${esc(c.id)}">
-      <td><button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">${esc(c.customer)}</button></td>
-      <td class="muted hide-sm">${channelKind(c)}</td>
+      <td><span class="who">${avatar(c.customer)}<button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">${esc(c.customer)}</button></span></td>
+      <td class="muted hide-sm">${via(c)}</td>
       <td>${esc(c.intent)}</td>
       <td>${outcomeChip(c)}</td>
-      <td class="right small muted num">${ago(c.started)}</td>
+      <td class="right"><span class="t-mono">${ago(c.started)}</span></td>
     </tr>`;
   }
 
@@ -97,18 +109,18 @@
 
   function reviewRow(s, c) {
     return `<li class="line review-line">
-      <div class="line-main">
+      <div class="line-who">${avatar(c.customer)}<div class="line-main">
         <div class="row-head"><span class="title">${esc(c.customer)}</span><span class="chip"><span class="dot bad"></span>${reviewKind(c)}</span></div>
         <div class="small muted">${esc(reviewReason(s, c))}</div>
-      </div>
-      <div class="line-side"><span class="small muted num">${ago(c.started)}</span>${arrowLink("Open", `data-conv="${esc(c.id)}"`, `Open conversation with ${c.customer}`)}</div>
+      </div></div>
+      <div class="line-side stack"><span class="t-mono">${ago(c.started)}</span>${arrowLink("Open", `data-conv="${esc(c.id)}"`, `Open conversation with ${c.customer}`)}</div>
     </li>`;
   }
 
   function recentRow(c) {
     return `<li class="line"><button class="line-btn" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">
-      <span class="line-main"><span class="title">${esc(c.customer)}</span><span class="small muted">${esc(c.intent)} · ${channelKind(c)}</span></span>
-      <span class="line-side"><span class="chip-col">${outcomeChip(c)}</span><span class="small muted num">${ago(c.started)}</span></span>
+      <span class="line-who">${avatar(c.customer)}<span class="line-main"><span class="title">${esc(c.customer)}</span><span class="small muted">${esc(c.intent)} · ${via(c)}</span></span></span>
+      <span class="line-side stack">${outcomeChip(c)}<span class="t-mono">${ago(c.started)}</span></span>
     </button></li>`;
   }
 
@@ -119,25 +131,27 @@
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     const recent = s.conversations.filter((c) => c.status !== "live").slice(0, 5);
     const n = k.review.length;
-    const lead = n ? `${plural(n, "conversation")} ${n === 1 ? "needs" : "need"} you.` : "Nothing needs you.";
-    const figure = (label, value, cls = "") => `<div><dt>${label}</dt><dd class="num ${cls}">${value}</dd></div>`;
+    const lead = n ? `<em>${plural(n, "conversation")}</em> ${n === 1 ? "needs" : "need"} you.` : "Nothing needs you.";
+    const figure = (label, value, cls, dot, note) => `<div><dt><span class="dot ${dot}"></span>${label}</dt><dd class="num ${cls}">${value}${note ? `<small>${note}</small>` : ""}</dd></div>`;
     return `
       <section class="hero">
         <p class="eyebrow">${hello}, ${esc(profile().name)} <span aria-hidden="true">·</span> ${today}</p>
         <h2 class="hero-line">${lead} <span>${money(k.paidCents)} paid by the agent today.</span></h2>
-        <dl class="figures">
-          ${figure("Calls handled", k.handled)}${figure("Sales paid", k.paid)}${figure("Not paid", k.notPaid)}${figure("Saved for customers", money(k.saved), "save")}
+        <dl class="figures card">
+          ${figure("Calls handled", k.handled, "", "", "today")}${figure("Sales paid", k.paid, "accent", "", money(k.paidCents))}${figure("Not paid", k.notPaid, "bad", "bad", "after a purchase attempt")}${figure("Saved for customers", money(k.saved), "save", "ok", "from advice and offers")}
         </dl>
         ${k.live ? `<p class="active-line small">${icon("phone")}<b>Active now</b><span class="muted">${esc(k.live.customer)} is on a ${esc(CHANNEL[k.live.channel] === "Voice" ? "call" : "text thread")} about ${esc(k.live.intent.charAt(0).toLowerCase() + k.live.intent.slice(1))}.</span></p>` : ""}
       </section>
-      <section class="block">
-        <header class="block-head"><h2>Needs review</h2><span class="small muted num">${n}</span></header>
-        ${n ? `<ul class="lines">${k.review.map((c) => reviewRow(s, c)).join("")}</ul>` : `<p class="empty">Nothing needs review. Every call went well.</p>`}
-      </section>
-      <section class="block">
-        <header class="block-head"><h2>Recent conversations</h2>${arrowLink("View all", 'data-go="conversations"')}</header>
-        <ul class="lines">${recent.map(recentRow).join("")}</ul>
-      </section>`;
+      <div class="home-cols">
+        <section class="block">
+          <header class="block-head"><h2>Needs review</h2><span class="tally">${n}</span></header>
+          <div class="card panel-list">${n ? `<ul class="lines">${k.review.map((c) => reviewRow(s, c)).join("")}</ul>` : `<p class="empty">Nothing needs review. Every call went well.</p>`}</div>
+        </section>
+        <section class="block">
+          <header class="block-head"><h2>Recent conversations</h2>${arrowLink("View all", 'data-go="conversations"')}</header>
+          <div class="card panel-list"><ul class="lines">${recent.map(recentRow).join("")}</ul></div>
+        </section>
+      </div>`;
   }
 
   const filterConvs = (s) => {
@@ -152,10 +166,11 @@
     const rows = filterConvs(s);
     const opt = (v, label) => `<option value="${v}"${v === ui.convOutcome ? " selected" : ""}>${label}</option>`;
     return `
-      <div class="filters" style="margin-bottom:12px">
+      <div class="filters toolbar">
         <label class="select"><span>Outcome</span><select data-ui="convOutcome">${opt("all", "All outcomes")}${Object.entries(OUTCOMES).map(([v, l]) => opt(v, l)).join("")}</select></label>
         <input class="search push" id="conv-search" type="search" aria-label="Search conversations" placeholder="Search customer or topic" value="${esc(ui.convQuery)}">
       </div>
+      <p class="count-line"><span class="tally">${rows.length}</span> ${rows.length === 1 ? "conversation" : "conversations"}, most recent first</p>
       <div class="card table-card"><div class="table-wrap flat"><table class="conv-table">
         <thead><tr><th>Customer</th><th class="hide-sm">Channel</th><th>About</th><th>Outcome</th><th class="right">Time</th></tr></thead>
         <tbody>${rows.map(convRow).join("") || `<tr><td colspan="5" class="empty">No conversations match. <button class="btn ghost" type="button" data-conv-clear>Clear filters</button></td></tr>`}</tbody>
@@ -179,18 +194,19 @@
     const last = (c) => {
       if (custLive(s, c.name)) return `<span class="muted">On a call now</span>`;
       const l = custConvs(s, c.name)[0];
-      return l ? `${esc(l.intent)}<div class="small muted num">${ago(l.started)}</div>` : `<span class="muted">—</span>`;
+      return l ? `${esc(l.intent)}<div class="t-mono">${ago(l.started)}</div>` : `<span class="muted">—</span>`;
     };
     return `
-      <div class="filters" style="margin-bottom:12px">
+      <div class="filters toolbar">
         <label class="select"><span>Region</span><select data-ui="custRegion">${opt("all", ui.custRegion, "All regions")}${regions.map((x) => opt(x, ui.custRegion, x)).join("")}</select></label>
         <label class="select"><span>Status</span><select data-ui="custStatus">${opt("all", ui.custStatus, "All statuses")}${statuses.map((x) => opt(x, ui.custStatus, x)).join("")}</select></label>
         <input class="search push" id="cust-search" type="search" aria-label="Search customers" placeholder="Search name or number" value="${esc(ui.custQuery)}">
       </div>
+      <p class="count-line"><span class="tally">${rows.length}</span> ${rows.length === 1 ? "customer" : "customers"}, most recent first</p>
       <div class="card table-card"><div class="table-wrap flat"><table class="conv-table">
         <thead><tr><th>Name</th><th class="hide-sm">Phone</th><th class="hide-sm">Region</th><th>Status</th><th>Last conversation</th></tr></thead>
         <tbody>${rows.map((c) => `<tr class="clickable" data-cust="${esc(c.name)}">
-          <td><button class="row-link" type="button" data-cust="${esc(c.name)}" aria-label="Open ${esc(c.name)}">${esc(c.name)}</button></td>
+          <td><span class="who">${avatar(c.name)}<button class="row-link" type="button" data-cust="${esc(c.name)}" aria-label="Open ${esc(c.name)}">${esc(c.name)}</button></span></td>
           <td class="mono hide-sm">${esc(c.phone)}</td>
           <td class="hide-sm">${esc(c.region)}</td>
           <td>${statusChip(c.status)}</td>
@@ -221,7 +237,7 @@
     const tab = (id, label) => `<button class="tab" type="button" role="tab" id="tab-${id}" data-sale-tab="${id}" aria-selected="${ui.saleTab === id}" aria-controls="sale-panel"${ui.saleTab === id ? "" : ' tabindex="-1"'}>${label}</button>`;
     return `
       <div class="tabs" role="tablist" aria-label="Sales views">${tab("list", "Sales")}${tab("analytics", "Analytics")}</div>
-      <div class="filters" style="margin-bottom:12px">
+      <div class="filters toolbar">
         <label class="select"><span>Region</span><select data-ui="saleRegion">${optHtml("all", ui.saleRegion, "All regions")}${regions.map((x) => optHtml(x, ui.saleRegion, x)).join("")}</select></label>
         <label class="select"><span>Time</span><select data-ui="saleTime">${Object.entries(TIMES).map(([v, l]) => optHtml(v, ui.saleTime, l)).join("")}</select></label>
         ${list ? `<label class="select"><span>Payment</span><select data-ui="salePay">${optHtml("all", ui.salePay, "All payments")}${optHtml("paid", ui.salePay, "Paid by agent")}${optHtml("notpaid", ui.salePay, "Not paid")}</select></label>
@@ -238,21 +254,26 @@
     const paid = rows.filter(isPaid).length;
     const pay = (c) => isPaid(c) ? `<span class="chip"><span class="dot ok"></span>Paid by agent</span>` : `<span class="chip"><span class="dot bad"></span>Not paid</span>`;
     return `
-      <p class="small muted" style="margin:0 0 12px">${plural(rows.length, "sale")} · ${paid} paid by agent · ${rows.length - paid} not paid</p>
+      <dl class="mini-figs">
+        <div><dt>Sales</dt><dd>${rows.length}</dd></div>
+        <div><dt><span class="dot ok"></span>Paid by agent</dt><dd class="accent">${paid}</dd></div>
+        <div><dt><span class="dot bad"></span>Not paid</dt><dd>${rows.length - paid}</dd></div>
+        <div><dt>Paid total</dt><dd class="mono accent">${money(sumCents(rows.filter(isPaid)))}</dd></div>
+      </dl>
       <div class="card table-card"><div class="table-wrap flat"><table class="conv-table">
         <thead><tr><th>Customer</th><th class="hide-sm">Item</th><th class="right">Amount</th><th class="hide-sm">Region</th><th class="hide-sm">Date</th><th>Payment</th></tr></thead>
         <tbody>${rows.map((c) => `<tr class="clickable" data-conv="${esc(c.id)}">
-          <td><button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open sale to ${esc(c.customer)}">${esc(c.customer)}</button><div class="small muted show-sm">${esc(c.item)} · ${saleDate(c.started)}</div></td>
+          <td><span class="who">${avatar(c.customer)}<span><button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open sale to ${esc(c.customer)}">${esc(c.customer)}</button><div class="small muted show-sm">${esc(c.item)} · ${saleDate(c.started)}</div></span></span></td>
           <td class="hide-sm">${esc(c.item)}</td>
           <td class="right money">${money(c.amount_cents)}</td>
           <td class="hide-sm">${esc(c.region)}</td>
-          <td class="hide-sm muted num">${saleDate(c.started)}</td>
+          <td class="hide-sm"><span class="t-mono">${saleDate(c.started)}</span></td>
           <td>${pay(c)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No sales match. <button class="btn ghost" type="button" data-sale-clear>Clear filters</button></td></tr>`}</tbody>
       </table></div></div>`;
   }
 
   // ---------- analytics: plain SVG and CSS, counted from the same sales as the list ----------
-  const chartBlock = (title, takeaway, body) => `<section class="chart"><h3>${title}</h3><p class="small muted">${takeaway}</p>${body}</section>`;
+  const chartBlock = (title, takeaway, body) => `<section class="chart card"><h3>${title}</h3><p class="small muted">${takeaway}</p>${body}</section>`;
   const sumCents = (rows) => rows.reduce((n, c) => n + (c.amount_cents || 0), 0);
   const group = (rows, key) => rows.reduce((m, c) => ((m[key(c)] ||= []).push(c), m), {});
   const hbars = (items) => { // items: [{label, value, note}]; bar width is relative to the largest
@@ -305,13 +326,15 @@
     if (real.length >= 2) {
       const x = (i) => 4 + (i / Math.max(count - 1, 1)) * 152, y = (v) => 4 + (1 - v) * 40;
       const line = real.map((p) => `${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join(" "), end = real[real.length - 1];
-      trend = `<svg class="spark" viewBox="0 0 160 48" role="img" aria-label="Payment rate over time, from ${pct(real[0].v)} to ${pct(end.v)}"><polyline points="${line}" fill="none" stroke="var(--color-violet)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${x(end.i).toFixed(1)}" cy="${y(end.v).toFixed(1)}" r="3.5" fill="var(--color-violet)"/></svg>`;
+      trend = `<svg class="spark" viewBox="0 0 160 48" role="img" aria-label="Payment rate over time, from ${pct(real[0].v)} to ${pct(end.v)}"><polyline points="${line}" fill="none" stroke="var(--color-accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${x(end.i).toFixed(1)}" cy="${y(end.v).toFixed(1)}" r="4" fill="var(--color-accent)"/></svg>`;
       const d = Math.round((end.v - real[0].v) * 100);
       note = d === 0 ? "about the same as at the start of the range" : `${d > 0 ? "up" : "down"} ${Math.abs(d)} points since the start of the range`;
     }
     const payRate = chartBlock("Payment rate",
       `${paid.length} of ${plural(rows.length, "attempted sale")} ${paid.length === 1 ? "was" : "were"} paid by the agent${note ? `, ${note}` : ""}.`,
-      `<div class="rate"><span class="rate-fig">${pct(paid.length / rows.length)}</span>${trend}</div>`);
+      `<div class="rate"><span class="rate-fig">${pct(paid.length / rows.length)}</span>${trend}</div>
+      <div class="split-bar" role="img" aria-label="${paid.length} paid, ${notPaid} not paid"><span class="ok" style="flex:${paid.length}"></span><span class="bad" style="flex:${notPaid}"></span></div>
+      <div class="legend small"><span><span class="dot ok"></span>${paid.length} paid by agent</span><span><span class="dot bad"></span>${notPaid} not paid</span></div>`);
 
     // 4. Top items sold: paid sales, ranked by revenue.
     const items = Object.entries(group(paid, (c) => c.item)).map(([item, cs]) => ({ item, n: cs.length, cents: sumCents(cs) })).sort((a, b) => b.cents - a.cents || b.n - a.n).slice(0, 5);
@@ -329,7 +352,7 @@
   const setRow = (title, desc, control) => `<li class="set-row">
     <div class="grow"><div class="title">${title}</div>${desc ? `<div class="small muted">${desc}</div>` : ""}</div>
     <div class="set-control">${control}</div></li>`;
-  const setCard = (title, sub, rows) => `<section class="block"><header class="block-head"><h2>${title}</h2></header><p class="small muted set-sub">${sub}</p><ul class="lines">${rows}</ul></section>`;
+  const setCard = (title, sub, rows) => `<section class="block"><header class="block-head"><h2>${title}</h2></header><p class="small muted set-sub">${sub}</p><div class="card panel-list"><ul class="lines">${rows}</ul></div></section>`;
 
   const amountText = (d) => d.max_pct != null ? `${d.max_pct}%` : money(d.max_cents, d.max_cents % 100 === 0);
   const offerDesc = (d) => d.added
@@ -406,12 +429,12 @@
     ];
     return `<div class="about">
       <header class="about-lead">
-        <img src="selldial-logo-icon.png" alt="" width="53" height="64">
-        <h2 class="about-title">Selldial is an AI phone and text line that helps customers buy easily.</h2>
+        <img src="selldial-logo-icon.png" alt="" width="66" height="80">
+        <div><h2 class="about-title">An AI phone and text line that helps customers <em>buy easily.</em></h2></div>
       </header>
       <section>
         <h3 class="about-h">How a purchase goes</h3>
-        <ol class="about-steps">${steps.map(([t, d], i) => `<li><span class="step-n mono">0${i + 1}</span><b>${t}</b><span class="muted">${d}</span></li>`).join("")}</ol>
+        <ol class="about-steps">${steps.map(([t, d], i) => `<li><span class="step-n">0${i + 1}</span><b>${t}</b><span class="muted">${d}</span></li>`).join("")}</ol>
       </section>
       <section>
         <h3 class="about-h">Trust rules</h3>
@@ -433,7 +456,7 @@
   }
   const drawerHead = (title, sub, back) => `<div class="drawer-head"><div class="row">
     ${back ? `<button class="btn ghost icon-btn" type="button" data-cust="${esc(back)}" aria-label="Back to ${esc(back)}">${icon("back")}</button>` : ""}
-    <div class="grow"><h2 class="title" id="drawer-title" style="font-size:17px;margin:0">${esc(title)}</h2><div class="small muted">${sub}</div></div>
+    ${avatar(title)}<div class="grow"><h2 class="title" id="drawer-title" style="font-size:17px;margin:0">${esc(title)}</h2><div class="small muted">${sub}</div></div>
     <button class="btn ghost icon-btn" id="drawer-close" type="button" data-close aria-label="Close">${icon("close")}</button></div></div>`;
 
   // The decision timeline: one step each for Verified, Recommended, Owner approval (only when one was needed) and Payment.
@@ -559,7 +582,7 @@
     const counts = { home: k.review.length };
     $("#nav").innerHTML = Object.entries(VIEWS).map(([key, x]) => `
       <button class="nav-link" data-go="${key}" ${key === v ? 'aria-current="page"' : ""}>
-        <span>${x.label}</span>${counts[key] ? `<span class="count" title="${counts[key]} need review"><span class="sr-only">${counts[key]} need review</span><span aria-hidden="true">${counts[key]}</span></span>` : ""}
+        ${icon(NAV_ICON[key]).replace('class="icon"', 'class="icon nav-ico"')}<span>${x.label}</span>${counts[key] ? `<span class="count" title="${counts[key]} need review"><span class="sr-only">${counts[key]} need review</span><span aria-hidden="true">${counts[key]}</span></span>` : ""}
       </button>`).join("");
     $("#view-title").textContent = view.title ? view.title() : view.label;
     $("#avatar").textContent = profile().name.trim().charAt(0).toUpperCase();
