@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Suspense } from "react";
-import { Sidebar } from "@/components/sidebar";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -12,15 +10,11 @@ export const metadata: Metadata = {
   description: "Run your AI sales agent: conversations, contacts, and settings.",
 };
 
+// The shell only. The owner console (sidebar) lives in app/(console)/layout.tsx; the public secure-form pages (app/f) have their own plain layout.
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="min-h-full flex">
-        <Suspense fallback={<aside className="w-56 shrink-0 border-r border-stone-200" />}>
-          <Sidebar />
-        </Suspense>
-        <main className="flex-1 min-w-0 p-8">{children}</main>
-      </body>
+      <body className="min-h-full flex">{children}</body>
     </html>
   );
 }

@@ -6,6 +6,7 @@ const links = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/inbox", label: "Inbox" },
   { href: "/contacts", label: "Contacts" },
+  { href: "/forms", label: "Forms" },
   { href: "/agent", label: "Agent" },
 ];
 
