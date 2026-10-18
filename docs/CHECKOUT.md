@@ -19,6 +19,9 @@ customer text ──► checkout_quote ──► checkout_quotes (amount fixed s
 - `checkout_status` reports waiting / approval / paid (brand + last 4) / declined / locked.
 - Over the owner's limit (default $1,500, `orgs.ownerLimitCents` or `agents.guardrails.ownerLimitCents`): no link until the owner approves in the console. A declined order can never be paid.
 
+## With negotiation (`agent/src/engine/tools/offers.ts`)
+`negotiation_accept` records what the customer agreed to (plan, lines, monthly credit, months) on `contacts.memory.offers`. `checkout_quote` with `use_accepted_offer: true` prices exactly that, taking the credit from our record (the model cannot supply one), says when it ends, and marks the offer `redeemed` once the purchase is paid so it cannot be used twice. A plan with nothing due today (no connection charge) has nothing to charge: the deal stays recorded for the team, as before. Re-quoting the same order returns the live quote, so a re-check never resets an approval or a link.
+
 ## Card data rules (tested in `agent/scripts/checkout-test.ts`)
 - A card number, CVC or expiry typed or said in chat is redacted before storage (`agent/src/sensitive.ts`), including mistyped numbers; the assistant is also blocked from asking for them.
 - The card only goes to `/pay/<token>`. `submitPayment` validates (Luhn, expiry, CVC length, ZIP), charges, and keeps **only brand and last 4**. No number, expiry or CVC reaches Mongo, the thread, `tool_calls`, model requests or logs (a test scans every collection).
@@ -34,4 +37,4 @@ Pending (waiting on owner approval or on the customer's card), Paid (sale counte
 A real processor, refunds, receipts by email, a proactive "approved" text when the owner is offline from the console (the agent replies on its next turn; the notice message triggers it), and moving the customer list out of the live snapshot.
 
 ## Run
-`cd agent && pnpm checkout-test` (25 checks, no network). The payment page: `cd web && pnpm dev`, then open the link the agent texted.
+`cd agent && pnpm checkout-test` (28 checks, no network). Against the real model: `pnpm checkout-eval` (14 checks on a scripted customer: buys a phone, sends a card in chat, pays, big order needing approval, declined card). The payment page: `cd web && pnpm dev`, then open the link the agent texted.

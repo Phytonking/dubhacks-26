@@ -76,17 +76,24 @@ const FAIL_TEXT: Record<string, string> = {
 };
 
 // ---- quotes -------------------------------------------------------------------------------------------------------
-export type QuoteItem = { kind: "plan" | "device" | "addon" | "tradein"; sku?: string; label: string; qty: number; dueTodayCents: number; monthlyCents: number };
+export type QuoteItem = { kind: "plan" | "device" | "addon" | "tradein"; sku?: string; label: string; qty: number; dueTodayCents: number; monthlyCents: number; creditCents?: number; creditMonths?: number };
 export type QuoteStatus = "open" | "awaiting_approval" | "approved" | "paid" | "payment_failed" | "declined" | "cancelled";
 const usd = (c: number) => `$${(c / 100).toFixed(2)}`;
 
-export async function createQuote(db: Db, a: { orgId: ObjectId; contactId: ObjectId; conversationId: ObjectId; items: QuoteItem[]; summary: string; ownerLimitCents?: number; now?: Date }) {
+export async function createQuote(db: Db, a: { orgId: ObjectId; contactId: ObjectId; conversationId: ObjectId; items: QuoteItem[]; summary: string; ownerLimitCents?: number; offerAt?: Date | null; now?: Date }) {
   const now = a.now ?? new Date();
   const dueTodayCents = a.items.reduce((n, i) => n + i.dueTodayCents, 0);
   const monthlyCents = a.items.reduce((n, i) => n + i.monthlyCents, 0);
   if (!(dueTodayCents > 0)) throw new CheckoutError("nothing_due", "Nothing is due today, so there is nothing to charge. Tell the customer what happens next instead of sending a payment link.");
   const limit = a.ownerLimitCents ?? DEFAULT_OWNER_LIMIT_CENTS;
   const requiresApproval = dueTodayCents > limit;
+  // the same order quoted again (a model that re-checks, a customer who repeats themselves) returns the live quote: it must not reset an approval or a link
+  const sig = (xs: QuoteItem[]) => JSON.stringify(xs.map((i) => [i.kind, i.sku ?? i.label, i.qty, i.dueTodayCents, i.monthlyCents]));
+  const live: any = await db.collection("checkout_quotes").findOne({ orgId: a.orgId, conversationId: a.conversationId, status: { $in: ["open", "awaiting_approval", "approved"] }, expiresAt: { $gt: now } }, { sort: { createdAt: -1, _id: -1 } });
+  if (live && sig(live.items) === sig(a.items) && live.dueTodayCents === dueTodayCents && String(live.offerAt ?? "") === String(a.offerAt ?? "")) {
+    const ap: any = await db.collection("approvals").findOne({ quoteId: live._id }, { sort: { createdAt: -1 } });
+    return { id: live._id, approvalId: ap?._id ?? null, dueTodayCents, monthlyCents, requiresApproval: live.requiresApproval as boolean, status: live.status as QuoteStatus, existing: true as const };
+  }
   // one live quote per conversation: a new quote replaces the old one (and its pending approval and links)
   const olds = await db.collection("checkout_quotes").find({ orgId: a.orgId, conversationId: a.conversationId, status: { $in: ["open", "awaiting_approval", "approved"] } }).project({ _id: 1 }).toArray();
   if (olds.length) {
@@ -97,7 +104,7 @@ export async function createQuote(db: Db, a: { orgId: ObjectId; contactId: Objec
   }
   const ins = await db.collection("checkout_quotes").insertOne({
     orgId: a.orgId, contactId: a.contactId, conversationId: a.conversationId, items: a.items, summary: a.summary.slice(0, 200), dueTodayCents, monthlyCents, requiresApproval,
-    ownerLimitCents: limit, status: requiresApproval ? "awaiting_approval" : "open", expiresAt: new Date(now.getTime() + QUOTE_HOURS * 3600_000), createdAt: now, updatedAt: now,
+    ownerLimitCents: limit, offerAt: a.offerAt ?? null, status: requiresApproval ? "awaiting_approval" : "open", expiresAt: new Date(now.getTime() + QUOTE_HOURS * 3600_000), createdAt: now, updatedAt: now,
   } as never);
   let approvalId: ObjectId | null = null;
   if (requiresApproval) {
@@ -108,7 +115,7 @@ export async function createQuote(db: Db, a: { orgId: ObjectId; contactId: Objec
     approvalId = ap.insertedId;
     await db.collection("notifications").insertOne({ orgId: a.orgId, contactId: a.contactId, conversationId: a.conversationId, kind: "approval", message: `Approval needed: ${a.summary} (${usd(dueTodayCents)} due today, over your ${usd(limit)} limit)`, urgency: "high", read: false, createdAt: now } as never);
   }
-  return { id: ins.insertedId, approvalId, dueTodayCents, monthlyCents, requiresApproval, status: (requiresApproval ? "awaiting_approval" : "open") as QuoteStatus };
+  return { id: ins.insertedId, approvalId, dueTodayCents, monthlyCents, requiresApproval, status: (requiresApproval ? "awaiting_approval" : "open") as QuoteStatus, existing: false as const };
 }
 
 /** Owner decision on an over-limit quote. Idempotent per decision; a resolved approval cannot be flipped. */
@@ -209,6 +216,8 @@ export async function submitPayment(db: Db, a: { token: string; raw: Record<stri
   await db.collection("orders").updateOne({ orgId: claimed.orgId, conversationId: claimed.conversationId, quoteIds: { $ne: quote._id } },
     { $inc: { amountCents: quote.dueTodayCents }, $addToSet: { quoteIds: quote._id }, $set: { item: quote.summary, status: "paid", source: "agent_checkout", monthlyCents: quote.monthlyCents, updatedAt: now } });
   await db.collection("checkout_quotes").updateOne({ _id: quote._id }, { $set: { status: "paid", paidAt: now, updatedAt: now } });
+  // a negotiated concession is used up by the purchase it was priced into (the customer's accepted offer, matched by its timestamp)
+  if (quote.offerAt) await db.collection("contacts").updateOne({ _id: claimed.contactId, orgId: claimed.orgId, "memory.offers.at": quote.offerAt }, { $set: { "memory.offers.$.status": "redeemed", "memory.offers.$.redeemedAt": now, "memory.offers.$.quoteId": quote._id } });
   await db.collection("payment_requests").updateOne({ _id: claimed._id }, { $set: { status: "completed", completedAt: now, processingAt: null } });
   await db.collection("notifications").insertOne({ orgId: claimed.orgId, contactId: claimed.contactId, conversationId: claimed.conversationId, kind: "sale", message: `Sale: ${quote.summary}, ${usd(quote.dueTodayCents)} paid (${res.brand} ending ${res.last4})`, urgency: "normal", read: false, createdAt: now } as never);
   await marker(db, claimed, `Payment completed: ${usd(quote.dueTodayCents)} paid by ${res.brand} ending ${res.last4}. Order recorded${quote.monthlyCents ? `; ${usd(quote.monthlyCents)}/mo going forward` : ""}`, now);

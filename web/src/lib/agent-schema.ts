@@ -99,7 +99,7 @@ export const agentSpecs: CollectionSpec[] = [
     // What the customer agreed to buy, priced server-side. The amount comes from here, never from the page or the model.
     name: "checkout_quotes",
     schema: obj(["orgId", "contactId", "conversationId", "items", "dueTodayCents", "monthlyCents", "requiresApproval", "status", "expiresAt", "createdAt"], {
-      orgId: oid, contactId: oid, conversationId: oid, items: { bsonType: "array" }, summary: str, dueTodayCents: num, monthlyCents: num, requiresApproval: bool, ownerLimitCents: num,
+      orgId: oid, contactId: oid, conversationId: oid, items: { bsonType: "array" }, summary: str, dueTodayCents: num, monthlyCents: num, requiresApproval: bool, ownerLimitCents: num, offerAt: { bsonType: ["date", "null"] },
       status: en("open", "awaiting_approval", "approved", "paid", "payment_failed", "declined", "cancelled"), expiresAt: date, createdAt: date, updatedAt: date, paidAt: dateOrNull,
     }),
     indexes: [{ keys: { orgId: 1, conversationId: 1, createdAt: -1 } }, { keys: { orgId: 1, status: 1, createdAt: -1 } }],

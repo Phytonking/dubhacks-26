@@ -54,6 +54,7 @@ export const checkout_quote: Tool = {
   name: "checkout_quote", risk: "write_low", timeoutMs: 6000,
   description: "Price what the customer wants to buy (plan, phones, add-ons, optional trade-in) EXACTLY, from the catalog. Returns what is due today and per month and whether the owner must approve. Use it before saying any total. Read the result back and get a clear yes before sending the payment link. A new quote replaces the previous one.",
   parameters: { type: "object", properties: {
+    use_accepted_offer: { type: "boolean", description: "true to price the plan, lines and monthly credit the customer just agreed to through negotiation_accept (taken from our record of what they accepted, never from you)" },
     plan: { type: "string", description: "plan name, e.g. 'Experience Beyond'" },
     lines: { type: "integer", minimum: 1, maximum: 12, description: "how many lines on that plan" },
     phones: { type: "array", maxItems: 6, items: { type: "object", properties: {
@@ -70,6 +71,15 @@ export const checkout_quote: Tool = {
     const items: QuoteItem[] = []; const notes: string[] = []; const names: string[] = [];
     const fail = (error: string, hint: string, extra: Record<string, unknown> = {}) => ({ ok: false as const, error, data: { hint, ...extra } });
 
+    let offerAt: Date | null = null;
+    let accepted: any = null;
+    if (a.use_accepted_offer) {
+      const c: any = await col("contacts").findOne({ _id: ctx.contactId, orgId: ctx.orgId }, { projection: { memory: 1 } });
+      accepted = [...(c?.memory?.offers ?? [])].reverse().find((o: any) => o.status === "accepted");
+      if (!accepted) return fail("no_accepted_offer", "There is no accepted, unused offer on record for this customer. Price what they asked for directly (plan, lines).");
+      if (!a.plan) a.plan = accepted.plan;
+      if (a.lines == null) a.lines = accepted.lines;
+    }
     if (a.plan) {
       const lines = Number(a.lines ?? 1);
       const rows: any[] = await col("tmo_plans").find({ orgId: ctx.orgId, status: { $in: ["current", "limited_time"] } }).toArray();
@@ -77,9 +87,15 @@ export const checkout_quote: Tool = {
       const plan = p.row;
       if (lines < (plan.minLines ?? 1) || (plan.maxLines != null && lines > plan.maxLines)) return fail("plan_line_limit", `${plan.name} allows ${plan.minLines ?? 1}${plan.maxLines != null ? `-${plan.maxLines}` : "+"} lines, not ${lines}.`);
       if (plan.eligibility && plan.eligibility !== acct.discountGroup) return fail("plan_not_eligible", `${plan.name} is only for ${String(plan.eligibility).replace("_", " ")} accounts. Offer the standard version instead.`);
-      const monthly = planTotalCents(plan.linePrices ?? [], plan.extraLineCents ?? 0, lines);
+      const list = planTotalCents(plan.linePrices ?? [], plan.extraLineCents ?? 0, lines);
       const conn = (plan.deviceConnectionCents ?? 0) * lines;
-      items.push({ kind: "plan", sku: plan.sku, label: `${plan.name}, ${lines} line${lines > 1 ? "s" : ""}`, qty: lines, dueTodayCents: conn, monthlyCents: monthly });
+      // a concession the customer accepted (recorded by negotiation_accept) applies only to the plan and lines it was made for, for the months it was offered
+      const sameDeal = accepted && String(accepted.plan).toLowerCase() === String(plan.name).toLowerCase() && Number(accepted.lines ?? lines) === lines;
+      if (a.use_accepted_offer && !sameDeal) return fail("offer_does_not_match", `The accepted offer was for ${accepted.plan}, ${accepted.lines} line(s). Quote exactly that, or quote this plan at list price without use_accepted_offer.`);
+      const credit = sameDeal ? Math.min(accepted.creditCents ?? 0, list) : 0;
+      if (sameDeal) offerAt = new Date(accepted.at);
+      items.push({ kind: "plan", sku: plan.sku, label: `${plan.name}, ${lines} line${lines > 1 ? "s" : ""}${credit ? `, with the ${usd(credit)}/mo credit you agreed` : ""}`, qty: lines, dueTodayCents: conn, monthlyCents: list - credit, ...(credit ? { creditCents: credit, creditMonths: accepted.months } : {}) });
+      if (credit) notes.push(`the ${usd(credit)} a month credit lasts ${accepted.months} months; after that the list price of ${usd(list)} a month applies`);
       names.push(`${plan.name} (${lines} line${lines > 1 ? "s" : ""})`);
       if (plan.pricesIncludeAutopay) notes.push("plan prices assume AutoPay");
     }
@@ -135,14 +151,17 @@ export const checkout_quote: Tool = {
     if (!items.length) return fail("nothing_to_quote", "Say what they want: a plan with a number of lines, a phone, or an add-on.");
 
     let q;
-    try { q = await createQuote(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, items, summary: names.join(", "), ownerLimitCents: await ownerLimit(ctx.db, ctx.orgId), now: ctx.now }); }
+    try { q = await createQuote(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, items, summary: names.join(", "), offerAt, ownerLimitCents: await ownerLimit(ctx.db, ctx.orgId), now: ctx.now }); }
     catch (e) { if (e instanceof CheckoutError) return fail(e.code, e.message); throw e; }
     return {
       ok: true, sideEffect: true,
       data: {
         quote_id: String(q.id), items: items.map((i) => ({ item: i.label, due_today: usd(i.dueTodayCents), per_month: i.monthlyCents ? usd(i.monthlyCents) : null })),
         due_today: usd(q.dueTodayCents), per_month_after: usd(q.monthlyCents), requires_owner_approval: q.requiresApproval, notes,
-        next: q.requiresApproval
+        status: q.status,
+        next: q.status === "approved"
+          ? "The owner already approved this exact order. Do not quote again: tell them it is approved and, after a clear yes, call checkout_send_payment_link."
+          : q.requiresApproval
           ? "This is over the owner's limit and now waits for their approval. Tell the customer the total, that it needs a quick approval, and that you will message them when it is approved. Do not send a payment link yet."
           : "Read the items and totals back and ask if they want to go ahead. Only after a clear yes, call checkout_send_payment_link.",
       },

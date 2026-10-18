@@ -312,6 +312,43 @@ await t("chat: a customer who texts their card number gets it redacted at the do
   void contactId; void conversationId;
 });
 
+// ======================= negotiation -> checkout =======================
+await t("negotiation: an accepted offer is priced into the quote from OUR record (the model cannot supply a credit), lasts its months, and is used up by the purchase", async () => {
+  const { contactId, conversationId } = await kit.newContact("+14255550188", { name: "Kim Ode" }); await grantConsent(contactId);
+  const ctx = await toolCtx(contactId, conversationId);
+  const none = await call("checkout_quote", { use_accepted_offer: true }, ctx); ok(!none.result.ok && none.result.error === "no_accepted_offer", "nothing accepted yet: " + JSON.stringify(none.result));
+  const at = new Date(NOW.getTime() - 60_000);
+  await db.collection("contacts").updateOne({ _id: contactId }, { $set: { "memory.offers": [{ creditCents: 1500, months: 12, plan: "Experience More 2.0", lines: 3, gives: ["autopay"], summary: "3 lines on More with a $15 credit", status: "accepted", at }] } });
+  const wrong = await call("checkout_quote", { use_accepted_offer: true, plan: "Essentials Saver", lines: 2 }, ctx); ok(!wrong.result.ok && wrong.result.error === "offer_does_not_match", JSON.stringify(wrong.result));
+  const q = await call("checkout_quote", { use_accepted_offer: true }, ctx);
+  ok(q.result.ok && q.data.per_month_after === "$170.00" && q.data.due_today === "$105.00" && q.data.notes.some((n: string) => /\$15\.00 a month credit lasts 12 months.*\$185\.00/.test(n)), JSON.stringify(q.data));
+  const stored: any = await db.collection("checkout_quotes").findOne({ _id: new ObjectId(q.data.quote_id) }); ok(stored.offerAt && stored.items[0].creditCents === 1500 && stored.items[0].creditMonths === 12, "quote remembers the offer");
+  const token = await sendLink(ctx); const pay = await submitPayment(db, { token, raw: CARD, now: NOW }); ok(pay.ok && pay.amountCents === 10500, "paid the connection charge");
+  const c2: any = await db.collection("contacts").findOne({ _id: contactId }); ok(c2.memory.offers[0].status === "redeemed" && c2.memory.offers[0].redeemedAt, "offer used up: " + JSON.stringify(c2.memory.offers[0]));
+  const again = await call("checkout_quote", { use_accepted_offer: true }, ctx); ok(!again.result.ok && again.result.error === "no_accepted_offer", "an offer cannot be redeemed twice");
+  // the same plan at list price (no offer) is not discounted
+  const list = await call("checkout_quote", { plan: "Experience More", lines: 3 }, ctx); ok(list.data.per_month_after === "$185.00", "list price: " + JSON.stringify(list.data));
+});
+await t("negotiation: negotiation_accept now points the agent at checkout when something is due today", async () => {
+  const { contactId, conversationId } = await kit.newContact("+14255550171", { name: "Ed Ng", memory: { negotiation: { at: new Date(NOW.getTime() - 600_000), key: "P-MORE", round: 2, step: 2, gives: ["autopay"], plan: "Experience More 2.0", lines: 3, lastCreditCents: 1000, turnId: "earlier-turn" } } });
+  const r = await call("negotiation_accept", { summary: "3 lines on More with a $10 credit" }, await toolCtx(contactId, conversationId));
+  ok(r.result.ok && /checkout_quote/.test(r.data.next) && /use_accepted_offer/.test(r.data.next), JSON.stringify(r.data));
+});
+
+await t("quote: re-quoting the same order returns the live quote (an approval or link is never reset); a changed order replaces it", async () => {
+  const { contactId, conversationId } = await kit.newContact("+14255550199", { name: "Mo Tan" }); await grantConsent(contactId);
+  const ctx = await toolCtx(contactId, conversationId);
+  const q1 = await call("checkout_quote", { phones: [{ device: "iPhone 17 Pro Max", payment: "full" }] }, ctx);
+  const ap: any = await db.collection("approvals").findOne({ conversationId, status: "texted" });
+  await resolveApproval(db, { orgId, approvalId: ap._id, decision: "approved", now: NOW });
+  const q2 = await call("checkout_quote", { phones: [{ device: "iPhone 17 Pro Max", payment: "full" }] }, ctx);
+  ok(q2.data.quote_id === q1.data.quote_id && q2.data.status === "approved" && /Do not quote again/.test(q2.data.next), "same quote, still approved: " + JSON.stringify(q2.data));
+  ok((await db.collection("approvals").countDocuments({ conversationId })) === 1 && (await db.collection("checkout_quotes").countDocuments({ conversationId })) === 1, "no duplicate approval or quote");
+  await freshLimits(); const link = await call("checkout_send_payment_link", { customer_confirmed: true }, ctx); ok(link.result.ok, "link works after the re-quote: " + JSON.stringify(link.result));
+  const q3 = await call("checkout_quote", { phones: [{ device: "iPhone 17e", payment: "full" }] }, ctx);
+  ok(q3.data.quote_id !== q1.data.quote_id && q3.data.requires_owner_approval === false && (await db.collection("checkout_quotes").findOne({ _id: new ObjectId(q1.data.quote_id) }) as any).status === "cancelled", "a different order replaces the old quote");
+});
+
 // ======================= the console =======================
 await t("console: pending, paid, failed and approval states show up in the snapshot, and Approve works from the console action", async () => {
   process.env.MONGODB_URI = kit.mongo.getUri(); process.env.MONGODB_DB = "t";
