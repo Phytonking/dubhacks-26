@@ -666,7 +666,8 @@
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { if ($(".nav").classList.contains("open")) { setMenu(false); return $("[data-menu]").focus(); } return closeDrawer(); }
     if (e.key !== "Tab" || !$("#drawer").classList.contains("open")) return;
-    const focusable = [...$("#drawer").querySelectorAll("button, [href], input, [tabindex]:not([tabindex='-1'])")];
+    const focusable = [...$("#drawer").querySelectorAll("button:not(:disabled), [href], input:not(:disabled), summary, [tabindex]:not([tabindex='-1'])")];
+    if (!focusable.length) return e.preventDefault();
     const first = focusable[0], last = focusable[focusable.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
