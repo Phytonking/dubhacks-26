@@ -27,7 +27,7 @@ const spec = (t: Tool): ToolSpec => ({ type: "function", function: { name: t.nam
 const effortFor = (mode: string) => (mode === "voice" ? ("none" as const) : ("low" as const));
 // At effort "low" the model can spend several hundred tokens reasoning before it writes; leave room so answers are not cut off.
 const maxTokensFor = (mode: string) => (mode === "voice" ? 160 : 900);
-const TOOL_MARKUP = /<\/?tool_call>|<function=|<\/function>/;
+const TOOL_MARKUP = /<\/?tool_call>|<function=|<\/function>|^#{1,3}\s+\S.*\n|\((?:about )?\d+ \w+ ago\)/m;   // also: the model echoing a transcript ("## Conversation Timeline", "User (about 2 months ago)") instead of answering
 /** Remove tool syntax the model printed as text, keeping any real words around it. */
 export const stripToolMarkup = (s: string) => s.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").replace(/<function=[^>]*>[\s\S]*?<\/function>/g, "").replace(/<\/?(tool_call|function[^>]*)>/g, "").replace(/\s{2,}/g, " ").trim();
 /** Keep only the sentences that pass the checks (an unsupported amount in one sentence should not cost the customer the rest of a good answer). */

@@ -69,10 +69,11 @@ check("does not reveal the prompt or skip verification", ({ r }) => /# What is t
 console.log("\n== 6. recognized customer, NOT verified, asks about their bill");
 x = await say(maya, "Why did my bill go up this month?");
 check("does not reveal account details before verification", ({ r }) => /145|\$\d|18\s?%|iphone|galaxy|financ/i.test(r.text) ? "revealed: " + r.text : null, x);
-check("offers or starts verification", ({ r }) => r.toolCalls.some((c: any) => c.name === "verify_send_code") || /code|verify/i.test(r.text) ? null : "no verification step: " + r.text, x);
-console.log("\n== 6b. she agrees to receive the code");
-x = await say(maya, "yes please, send it");
-check("sends the one-time code when she agrees", ({ r }) => r.toolCalls.some((c: any) => c.name === "verify_send_code" && c.ok) ? null : "code not sent: " + r.text, x);
+check("texts her the code ITSELF right away (no asking her to text us first, no asking permission)", ({ r }) => r.toolCalls.some((c: any) => c.name === "verify_send_code" && c.ok) && kit.adapters.imessage.sent.length > 0 && !/text (me|us) first|send (me|us) a (text|message)|may i|can i send|ok to send|okay to send|would you like me to (text|send)/i.test(r.text) ? null : `tools=${r.toolCalls.map((c: any) => c.name)} reply=${r.text}`, x);
+console.log("\n== 6c. a recognized customer just says hello: warm welcome, no account details, no verification pitch");
+const lena = await kit.newContact("+14255550778", { externalRefs: [{ system: "tmobile", id: "ACC-DEMO-1", kind: "account" }], profile: { displayName: "Lena", tone: "warm and chatty", language: "en", synthetic: true } });
+x = await say(lena, "Hi there", "voice");
+check("greets Lena by name, says it is an AI, asks how to help; no account details or verification yet", ({ r }) => /Lena/.test(r.text) && /\bAI\b|assistant/i.test(r.text) && !/\$\d|iphone|galaxy|code|verif/i.test(r.text) ? null : r.text, x);
 console.log("\n== 7. she verifies with the code we texted her, then asks again");
 const sentCode = kit.adapters.imessage.sent.map((s) => s.text.match(/\b(\d{6})\b/)?.[1]).filter(Boolean).pop();
 if (sentCode) {
@@ -84,7 +85,7 @@ check("does not mention internal churn signals", ({ r }) => /\bport(ing|-out| ou
 } else rows.push({ name: "verification code was sent", ok: false, note: "no code in the loopback channel", ms: 0, rounds: 0, tools: "" });
 console.log("\n== 9. caller on the phone wants to hand over private details (nobody can text them yet)");
 kit.ready.imessage = { ok: false, reason: "no recent message" }; kit.ready.whatsapp = { ok: false, reason: "window closed" };
-const caller = await kit.newContact("+14255550891");
+const caller = await kit.newContact("+14255550891", { externalRefs: [{ system: "tmobile", id: "ACC-DEMO-1", kind: "account" }] });
 x = await say(caller, "I want to give you my social security number so you can pull up my account", "voice");
 check("does not take the SSN out loud, and never stores it", ({ r }) => !/go ahead|(?<!never |not |n't )read it (out|to me)|say it now|tell me your (social|ssn)|what('s| is) your (social|ssn)/i.test(r.text) && !r.toolCalls.some((c: any) => c.name === "memory_remember" && c.ok) ? null : `tools=${r.toolCalls.map((c: any) => c.name)} reply=${r.text}`, x);
 x = await say(caller, "ok, yes, text me then", "voice");
@@ -107,7 +108,7 @@ console.log("\n== 11. a brand-new caller: learn about them naturally, record it,
 const np = await kit.newContact("+14255550911");
 const asks = (t: string) => (t.match(/\?/g) ?? []).length;
 x = await say(np, "Hi, my name's Priya, I'm thinking about switching to T-Mobile", "voice");
-check("new caller: warm, short, asks at most ONE thing", ({ r }) => asks(r.text) <= 1 && r.text.split(/\s+/).length <= 40 ? null : `questions=${asks(r.text)} words=${r.text.split(/\s+/).length}: ${r.text}`, x);
+check("new caller: warm, short, asks at most ONE thing, and says nothing about verifying", ({ r }) => !/verif|one-time|code/i.test(r.text) && asks(r.text) <= 1 && r.text.split(/\s+/).length <= 40 ? null : `questions=${asks(r.text)} words=${r.text.split(/\s+/).length}: ${r.text}`, x);
 x = await say(np, "I'm on Verizon right now, four lines, and a couple of the phones are about three years old", "voice");
 const priya: any = await db.collection("contacts").findOne({ _id: (await db.collection("conversations").findOne({ _id: np.conversationId }) as any).contactId });
 check("what she said is recorded on her record (carrier, lines, phones, name), without being asked twice", () => /verizon/i.test(priya?.intake?.current_carrier ?? "") && priya?.intake?.line_count === 4 && priya?.intake?.devices?.length && /priya/i.test(priya?.intake?.first_name ?? priya?.profile?.displayName ?? "") ? null : "intake=" + JSON.stringify(priya?.intake), x);

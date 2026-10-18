@@ -13,7 +13,7 @@ const toolCtx = async () => {
   const contact: any = await db.collection("contacts").findOne({ _id: kit.contactId });
   const conversation: any = await db.collection("conversations").findOne({ _id: kit.conversationId });
   return { db, orgId, contactId: kit.contactId, conversationId: kit.conversationId, channel: "imessage" as const, mode: "text" as const,
-    party: { contact, conversation, address: kit.phone, created: false, matchedBy: "channel_handle" as const, externalRefs: [] }, customer: {} as never, turnId: "turn-x",
+    party: { contact, conversation, address: kit.phone, created: false, matchedBy: "channel_handle" as const, externalRefs: [{ system: "tmobile", id: "ACC-1", kind: "account" }] }, customer: {} as never, turnId: "turn-x",
     sourceMessageId: null, now: kit.now.t, messenger, env: kit.deps(new ScriptedLlm([])).env, guard: { cfg: { maxDiscountPct: 10 }, evidence: [] as string[] } };
 };
 const reset = async () => { for (const a of Object.values(adapters)) { a.sent.length = 0; a.failNext = 0; } await db.collection("messages").deleteMany({ purpose: { $exists: true } }); await db.collection("verifications").deleteMany({}); await db.collection("opt_outs").deleteMany({}); kit.ready.imessage = { ok: true }; kit.ready.whatsapp = { ok: true }; kit.ready.sms = { ok: false, reason: "campaign not eligible" }; await db.collection("contacts").updateOne({ _id: kit.contactId }, { $unset: { consent: "", verifiedPhone: "" } }); await db.collection("messages").deleteMany({ conversationId: kit.conversationId }); };
@@ -154,15 +154,20 @@ await t("verify tools end to end: the code reaches the phone, and appears nowher
   ok(!dump.includes(code), "the code leaked into storage or the model's view");
   ok(((await db.collection("contacts").findOne({ _id: kit.contactId })) as any).verifiedPhone?.number === kit.phone, "verified");
 });
-await t("verify_send_code without consent tells the model what to do and sends nothing; a failed send voids the code", async () => {
+await t("verify_send_code: an account holder gets the code without being asked to text first or to opt in; a new person is told no verification is needed; a failed send voids the code", async () => {
   await reset(); const ctx = await toolCtx(); const deps = kit.deps(new ScriptedLlm([]));
+  const none = await executeTool(deps, { ...ctx, party: { ...ctx.party, externalRefs: [] } } as never, { id: "c0", type: "function", function: { name: "verify_send_code", arguments: "{}" } });
+  ok(!none.result.ok && none.result.error === "not_needed" && adapters.imessage.sent.length === 0 && (await db.collection("verifications").countDocuments({})) === 0, "new person: " + none.content);
+  await db.collection("messages").deleteMany({}); await db.collection("contacts").updateOne({ _id: kit.contactId }, { $unset: { consent: "" } });
   let r = await executeTool(deps, ctx as never, { id: "c1", type: "function", function: { name: "verify_send_code", arguments: "{}" } });
-  ok(!r.result.ok && r.result.error === "no_consent" && r.content.includes("consent_record") && adapters.imessage.sent.length === 0, r.content);
-  ok((await db.collection("verifications").countDocuments({})) === 0, "no dangling code");
-  await db.collection("contacts").updateOne({ _id: kit.contactId }, { $set: { "consent.text": { granted: true, at: kit.now.t, source: "voice" } } });
-  adapters.imessage.failNext = 1; kit.ready.whatsapp = { ok: false }; 
+  ok(r.result.ok && adapters.imessage.sent.length === 1, "no separate opt-in needed: " + r.content);
+  await reset(); adapters.imessage.failNext = 1; kit.ready.whatsapp = { ok: false };
   r = await executeTool(deps, ctx as never, { id: "c2", type: "function", function: { name: "verify_send_code", arguments: "{}" } });
   ok(!r.result.ok && r.result.error === "send_failed" && (await db.collection("verifications").countDocuments({})) === 0, "failed send must void the code: " + r.content);
+  await reset(); kit.ready.imessage = { ok: false }; kit.ready.whatsapp = { ok: false };
+  r = await executeTool(deps, ctx as never, { id: "c3", type: "function", function: { name: "verify_send_code", arguments: "{}" } });
+  ok(r.result.error === "no_channel" && /not able to send a text/.test(r.result.reply ?? "") && !/message|text us|send us/i.test((r.result.reply ?? "").replace("not able to send a text", "")), "plain failure, nothing asked of the caller: " + (r.result.reply ?? r.content));
+  kit.ready.imessage = { ok: true };
 });
 
 // ---------------- secure forms ----------------

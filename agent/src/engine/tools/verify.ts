@@ -1,13 +1,14 @@
 import { checkCode, issueCode, markSent, voidCode } from "../../verification";
 import type { Tool } from "../types";
-import { reachHint } from "./reach";
 
 // The code never appears in: tool results, tool_calls audit rows, agent_turns, stored messages (redacted), or anything the model sees.
 export const verify_send_code: Tool = {
   name: "verify_send_code", risk: "write_high", timeoutMs: 10_000,
-  description: "Text a 6-digit one-time code to the number you are talking to, so they can prove it is theirs. You never see the code. Ask permission first if they have not texted us.",
+  description: "Text a 6-digit one-time code to the number you are talking to, so they can prove it is theirs. You never see the code. Only for a recognized customer who wants account details: just send it, do not ask them to text you first and do not ask permission. Not for new people.",
   parameters: { type: "object", properties: {} },
   async run(ctx) {
+    if (!ctx.party.externalRefs.some((r) => r.system === "tmobile" && r.kind === "account"))   // verification protects an existing account; a new person has none
+      return { ok: false, error: "not_needed", data: { hint: "This person has no account on file, so there is nothing to verify. Help them as a new customer." } };
     const number = ctx.party.address;
     const issued = await issueCode(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, number, secret: ctx.env.verifySecret, now: ctx.now });
     if (!issued.ok) return { ok: false, error: issued.error, data: { retryAfterSeconds: issued.retryAfterSec } };
@@ -16,13 +17,14 @@ export const verify_send_code: Tool = {
       orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, purpose: "otp", agentTurnId: ctx.turnId,
       body: `${brand}: Your verification code is ${issued.code}. It expires in 5 minutes. Don't share it with anyone.`,
       redact: "[verification code sent]", idempotencyKey: `otp:${issued.id}`,
+      implicitConsent: true,
       channels: ctx.channel === "voice" ? undefined : [ctx.channel, "imessage", "whatsapp", "sms"],
     });
     if (!sent.ok) {
       await voidCode(ctx.db, issued.id);   // never delivered: does not count against the person's limit and cannot be guessed
-      if (sent.error === "no_channel") {   // nothing can text them yet (they called but never messaged us): give the model the numbers to read out
-        const reach = await reachHint(ctx, "code");
-        return { ok: false, error: "no_channel", data: { hint: "We cannot text them yet. Tell them which number to message, then stop.", ...reach.data }, audit: { error: "no_channel" }, sideEffect: true, reply: reach.reply };
+      if (sent.error === "no_channel") {   // no channel can carry a first message to this person right now (provider limits): say so plainly, do not push the work onto the caller
+        const reply = "I'm not able to send a text to this number right now, so I can't open your account details here. I'm happy to help with plans, phones and prices, or I can connect you with a person for your account.";
+        return { ok: false, error: "no_channel", data: { hint: "A code could not be delivered. Do not ask the caller to text us. Offer general help or a person." }, audit: { error: "no_channel" }, sideEffect: true, reply };
       }
       const hint = sent.error === "no_consent" ? "Ask if you may text them a code, then call consent_record." : undefined;
       return { ok: false, error: sent.error, data: hint ? { hint } : undefined, audit: { error: sent.error } };

@@ -106,12 +106,12 @@ await t("the remembered move-to-text appears at the top of the next turn, so a c
   const ctx = await buildContext(db, deps().env, { orgId, conversationId: kit.conversationId, channel: "imessage", mode: "text", batch: [{ _id: id, body: "hi, it's me", ts: kit.now.t }] });
   ok(/Open commitments \(bring up first\): .*moving to text to receive a secure form.*forms_send_secure_form/.test(ctx.messages[0].content as string), ((ctx.messages[0].content as string).match(/Open commitments[^\n]*/)?.[0] ?? "none"));
 });
-await t("verify_send_code from a caller nobody can text yet: the code is voided, and the model is handed the numbers to read out (instead of a dead end)", async () => {
-  notReady(); await db.collection("verifications").deleteMany({}); await db.collection("contacts").updateOne({ _id: kit.contactId }, { $set: { "memory.openLoops": [] } });
-  const r = await call("verify_send_code", {}, deps(async () => "+16289990001")); const data: any = JSON.parse(r.content);
-  ok(!r.result.ok && r.result.error === "no_channel" && data.text_options?.length === 2 && data.text_options[0].say && /message/.test(data.hint), r.content);
+await t("verify_send_code when nobody can reach the caller: plain 'cannot text right now', code voided, and the caller is NOT asked to text us", async () => {
+  notReady(); await db.collection("verifications").deleteMany({});
+  await db.collection("contacts").updateOne({ _id: kit.contactId }, { $set: { externalRefs: [{ system: "tmobile", id: "ACC-R", kind: "account" }] } });
+  const ctx = await ctxFor(); const r = await call("verify_send_code", {}, deps(async () => "+16289990001"), { ...ctx, party: { ...ctx.party, externalRefs: [{ system: "tmobile", id: "ACC-R", kind: "account" }] } } as never);
+  ok(!r.result.ok && r.result.error === "no_channel" && /not able to send a text/.test(r.result.reply ?? "") && !/text_options/.test(r.content), r.content);
   ok((await db.collection("verifications").countDocuments({})) === 0 && adapters.imessage.sent.length === 0, "no code outstanding, nothing sent");
-  ok(((await db.collection("contacts").findOne({ _id: kit.contactId })) as any).memory.openLoops.some((l: any) => /verification code/.test(l.text)), "move-to-text remembered");
 });
 await t("forms_send_secure_form with nowhere to send: link revoked, numbers returned", async () => {
   notReady(); await db.collection("form_requests").deleteMany({});
@@ -152,12 +152,12 @@ await t("in a text conversation the same message uses written numbers, not spoke
   const r = await runTurn(d, await voiceInput("can I send you my address?", "imessage"));
   ok(r.text.includes("+1 (628) 999-0001") && r.text.includes("+1 (206) 555-0100") && !/six two eight/.test(r.text) && !/repeat the number/.test(r.text), r.text);
 });
-await t("verify_send_code when nobody can text the caller yet also answers with the prepared message (code voided, nothing sent)", async () => {
+await t("through the model: verify_send_code for a caller nobody can text answers with the prepared plain message (code voided, nothing sent, no 'please text us')", async () => {
   notReady(); await db.collection("verifications").deleteMany({}); adapters.imessage.sent.length = 0;
   const llm = new ScriptedLlm([{ tools: [{ name: "verify_send_code", args: {} }] }, { content: "WRONG" }]);
   const d = kit.deps(llm); d.env.assignIMessage = async () => "+16289990001";
   const r = await runTurn(d, await voiceInput("please send me the code"));
-  ok(r.text === EXPECT_VOICE && llm.requests.length === 1 && (await db.collection("verifications").countDocuments({})) === 0 && adapters.imessage.sent.length === 0, r.text);
+  ok(/not able to send a text/.test(r.text) && !/WRONG/.test(r.text) && llm.requests.length === 1 && (await db.collection("verifications").countDocuments({})) === 0 && adapters.imessage.sent.length === 0, r.text);
 });
 await t("asking how to CALL is not forced: the model gets the phone number and phrases the answer itself", async () => {
   notReady(); const llm = new ScriptedLlm([{ tools: [{ name: "contact_options", args: { purpose: "call_us" } }] }, { content: "You can call us at +1 (206) 555-0100." }]);

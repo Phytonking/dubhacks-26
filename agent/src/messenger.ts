@@ -18,6 +18,8 @@ export type MessengerCfg = {
 export type SendArgs = {
   orgId: ObjectId; contactId: ObjectId; conversationId: ObjectId; purpose: Purpose;
   body: string; redact?: string; channels?: ChannelId[]; idempotencyKey?: string; agentTurnId?: string;
+  /** The person is in a live conversation asking for the very thing being sent (e.g. a code for their own account): no separate opt-in needed. Opt-outs and rate limits still apply. */
+  implicitConsent?: boolean;
 };
 export type SendOutcome =
   | { ok: true; channel: ChannelId; messageId: ObjectId; duplicate?: boolean }
@@ -70,7 +72,7 @@ export class Messenger {
       if (!address) continue;
       const r = await this.cfg.ready(channel, { orgId: a.orgId, contact, conversationId: a.conversationId, address });
       if (!r.ok) { notReady = `${channel}: ${r.reason ?? "not ready"}`; continue; }
-      if (PROACTIVE.includes(a.purpose) && !(await this.hasConsent(contact, a.conversationId, a.orgId, channel))) { sawConsentGap = true; continue; }
+      if (PROACTIVE.includes(a.purpose) && !a.implicitConsent && !(await this.hasConsent(contact, a.conversationId, a.orgId, channel))) { sawConsentGap = true; continue; }
       // newest inbound on this channel carries the provider routing needed to reply (space, agent user)
       const inbound: any = await db.collection("messages").findOne({ orgId: a.orgId, conversationId: a.conversationId, channel, direction: "in", ref: { $ne: null } }, { sort: { ts: -1 } });
       const clientMsgId = `${key}:${channel}`;
