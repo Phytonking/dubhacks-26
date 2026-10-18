@@ -1,4 +1,4 @@
-/** Selldial console: home, overview, conversations, customers, sales, settings and about. */
+/** Selldial console: home, conversations, customers, sales, settings and about. */
 (() => {
   const api = window.SelldialAPI;
   const CUST = window.SELLDIAL_CUSTOMERS;
@@ -21,6 +21,7 @@
   const ICON = {
     check: '<path d="M20 6 9 17l-5-5"/>',
     arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    close: '<path d="M18 6 6 18M6 6l12 12"/>',
     phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
   };
   const icon = (n) => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
@@ -41,160 +42,119 @@
   ];
   const channelState = () => ({ ...Object.fromEntries(CHANNELS.map((c) => [c.key, c.on])), ...store.get("channels", {}) });
 
-  function statusChip(c) {
-    if (c.status === "live") return `<span class="chip ok"><span class="dot pulse"></span>Live</span>`;
-    if (c.status === "awaiting_approval") return `<span class="chip warn">Awaiting owner</span>`;
-    if (c.status === "handoff") return `<span class="chip bad">Handed off</span>`;
-    if (c.outcome === "purchased") return `<span class="chip brand">Purchased</span>`;
-    if (c.outcome === "waited") return `<span class="chip info">Advised to wait</span>`;
-    return `<span class="chip">Closed</span>`;
+  // One outcome per conversation. A pending owner approval counts as Not paid until it resolves.
+  const OUTCOMES = { paid: "Paid", notpaid: "Not paid", handoff: "Handed off", waited: "Advised to wait" };
+  function outcomeOf(c) {
+    if (c.outcome === "purchased") return "paid";
+    if (c.outcome === "waited") return "waited";
+    if (c.outcome === "handoff" || c.status === "handoff") return "handoff";
+    return "notpaid";
   }
+  function outcomeChip(c) {
+    const o = outcomeOf(c);
+    const dot = o === "paid" || o === "waited" ? "ok" : c.status === "awaiting_approval" ? "warn" : "bad";
+    return `<span class="chip"><span class="dot ${dot}"></span>${OUTCOMES[o]}</span>`;
+  }
+  const channelKind = (c) => c.channel === "voice" ? "Voice" : "Text";
+
   const riskChip = (r) => `<span class="chip ${r === "high" ? "bad" : r === "medium" ? "warn" : "ok"}">${cap(r)} risk</span>`;
 
   function stats(s) {
-    const convs = s.conversations;
-    const purchased = convs.filter((c) => c.outcome === "purchased");
-    const waited = convs.filter((c) => c.outcome === "waited");
+    const done = s.conversations.filter((c) => c.status !== "live");
+    const paid = done.filter((c) => c.outcome === "purchased");
     return {
-      revenue: purchased.reduce((n, c) => n + c.amount_cents, 0), purchases: purchased.length,
-      waited: waited.length, saved: waited.reduce((n, c) => n + c.saved_cents, 0),
-      live: convs.filter((c) => c.status === "live").length,
-      pendingApprovals: s.approvals.filter((a) => a.status === "texted"),
-      openHandoffs: s.handoffs.filter((h) => !h.claimed_by),
+      handled: done.length,
+      paid: paid.length, paidCents: paid.reduce((n, c) => n + c.amount_cents, 0),
+      notPaid: done.filter((c) => outcomeOf(c) === "notpaid").length,
+      saved: done.reduce((n, c) => n + (c.saved_cents || 0), 0),
+      live: s.conversations.find((c) => c.status === "live"),
+      review: done.filter(isBad),
     };
   }
 
   // ---------- views ----------
   const VIEWS = {
-    home: { label: "Home", render: renderHome, title: () => `Welcome back, ${profile().name}` },
-    overview: { label: "Overview", render: renderOverview },
+    home: { label: "Home", render: renderHome },
     conversations: { label: "Conversations", render: renderConversations },
     customers: { label: "Customers", render: renderCustomers },
     sales: { label: "Sales", render: renderSales },
     settings: { label: "Settings", render: renderSettings },
     about: { label: "About", render: renderAbout },
   };
-  const ui = { convFilter: "all", convQuery: "", convRegion: "all", convTime: "all", convCustomer: "all", custQuery: "", custSegment: "all", custRegion: "all", custRisk: "all", promoEdit: null };
+  const ui = { convOutcome: "all", convQuery: "", custQuery: "", custSegment: "all", custRegion: "all", custRisk: "all", promoEdit: null };
 
-  function convRow(c, compact) {
+  function convRow(c) {
     return `<tr class="clickable" data-conv="${esc(c.id)}">
-      <td><button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">${esc(c.customer)}</button><div class="small muted">${esc(CHANNEL[c.channel])} · ${esc(c.region || "—")}</div></td>
-      <td>${esc(c.intent)}${!compact && c.recommendation ? `<div class="small muted">→ ${esc(c.recommendation.pick)}</div>` : ""}</td>
-      <td>${statusChip(c)}</td>
-      ${compact ? "" : `<td class="right num">${c.amount_cents != null ? money(c.amount_cents) : c.saved_cents ? `<span class="muted">saved ${money(c.saved_cents)}</span>` : "—"}</td>`}
+      <td><button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">${esc(c.customer)}</button></td>
+      <td class="muted hide-sm">${channelKind(c)}</td>
+      <td>${esc(c.intent)}</td>
+      <td>${outcomeChip(c)}</td>
       <td class="right small muted num">${ago(c.started)}</td>
     </tr>`;
   }
 
-  function needsList(k) {
-    const items = [
-      ...k.pendingApprovals.map((a) => `<li class="row">
-        <div><div class="title">${esc(a.customer)} · ${money(a.amount_cents)}</div>
-        <div class="small muted">Waiting for ${esc(a.owner)} to text YES · sent ${ago(a.sent)}</div></div>
-        <div class="row"><button class="btn" data-resend="${esc(a.id)}">Resend text</button><button class="btn danger" data-cancel="${esc(a.id)}">Cancel</button></div></li>`),
-      ...k.openHandoffs.map((h) => `<li class="row">
-        <div><div class="title">${esc(h.customer)}</div><div class="small muted">${esc(h.reason)} · waiting ${ago(h.waiting).replace(" ago", "")}</div></div>
-        <button class="btn primary" data-claim="${esc(h.id)}">Claim</button></li>`),
-    ];
-    return items.length ? `<ul class="list">${items.join("")}</ul>` : `<div class="empty">Nothing waiting on you.</div>`;
+  // A call "went badly" when it ended unpaid after a purchase attempt, was handed off, or failed verification.
+  const isBad = (c) => c.outcome === "not_paid" || c.outcome === "handoff" || c.status === "handoff";
+  const reviewKind = (c) => c.outcome === "not_paid" ? "Not paid" : c.verified ? "Handed off" : "Failed verification";
+  function reviewReason(s, c) {
+    const h = s.handoffs.find((x) => x.conversation === c.id);
+    if (h) return h.reason;
+    const a = s.approvals.find((x) => x.conversation === c.id && x.status === "declined");
+    if (a) return `Owner declined ${money(a.amount_cents)}, over the ${money(a.limit_cents)} limit`;
+    return c.intent;
+  }
+
+  function reviewRow(s, c) {
+    return `<li class="review-row">
+      <div class="review-main">
+        <div class="row-head"><span class="title">${esc(c.customer)}</span><span class="chip"><span class="dot bad"></span>${reviewKind(c)}</span></div>
+        <div class="small muted">${esc(reviewReason(s, c))}</div>
+      </div>
+      <span class="small muted num">${ago(c.started)}</span>
+      <button class="btn" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">Open</button>
+    </li>`;
   }
 
   function renderHome(s) {
-    const k = stats(s), sales = s.sales, live = s.conversations.find((c) => c.status === "live");
-    const atRisk = CUST.customers.filter((c) => c.churn_risk === "high").slice(0, 4);
+    const k = stats(s);
+    const hour = new Date().getHours();
+    const hello = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+    const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    const recent = s.conversations.filter((c) => c.status !== "live").slice(0, 5);
     return `
-      <div class="grid split">
-        <div class="grid" style="align-content:start">
-          <div class="card hero-card">
-            <div class="card-body">
-              ${live ? `<div class="row"><div><span class="chip ok"><span class="dot pulse"></span>Live now</span>
-                <div class="hero-line">${esc(live.customer)} is on a ${esc(CHANNEL[live.channel]).toLowerCase()} call: ${esc(live.intent)}</div>
-                <div class="small muted">Selldial's pick so far: ${esc(live.recommendation?.pick || "still listening")}</div></div>
-</div>`
-              : `<div class="hero-line">No calls right now.</div>`}
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h2>Needs you</h2><span class="small muted">${plural(k.pendingApprovals.length, "approval")} · ${plural(k.openHandoffs.length, "handoff")}</span></div>
-            ${needsList(k)}
-          </div>
-          <div class="card">
-            <div class="card-head"><h2>Recent conversations</h2><button class="btn ghost" data-go="conversations">View all</button></div>
-            <div class="table-wrap"><table><tbody>${s.conversations.slice(0, 4).map((c) => convRow(c, true)).join("")}</tbody></table></div>
-          </div>
-        </div>
-        <div class="grid" style="align-content:start">
-          <div class="card">
-            <div class="card-head"><h2>This month</h2><span class="small muted">synthetic</span></div>
-            <dl class="statlist">
-              <div><dt>Revenue</dt><dd class="num">${money(sales.revenue_cents, true)}</dd></div>
-              <div><dt>Conversions</dt><dd class="num">${num(sales.funnel.purchased)} <span class="muted small">${pct(sales.funnel.purchased, sales.funnel.contacts)}</span></dd></div>
-              <div><dt>Told to wait</dt><dd class="num">${num(sales.funnel.waited)}</dd></div>
-              <div><dt>Saved for customers</dt><dd class="num ok-text">${money(sales.saved_for_customers_cents, true)}</dd></div>
-            </dl>
-            <div class="card-foot"><button class="btn ghost" data-go="sales">Open sales ${icon("arrow")}</button></div>
-          </div>
-          <div class="card">
-            <div class="card-head"><h2>Customers to call back</h2><button class="btn ghost" data-go="customers">All customers</button></div>
-            <ul class="list">${atRisk.map((c) => `<li class="has-btn"><button class="list-btn" type="button" data-cust="${esc(c.id)}">
-              <span class="row"><span class="title">${esc(c.name)}</span>${riskChip(c.churn_risk)}</span>
-              <span class="small muted" style="display:block">${esc(c.note)}</span></button></li>`).join("") || `<li class="empty">No high-risk customers.</li>`}</ul>
-          </div>
-        </div>
-      </div>`;
-  }
-
-  function renderOverview(s) {
-    const k = stats(s), a = CUST.analytics;
-    const chMax = Math.max(...Object.values(a.support_channels));
-    return `
+      <div class="greeting"><h2>${hello}, ${esc(profile().name)}</h2><span class="muted">${today}</span></div>
       <div class="grid kpis">
-        <div class="card kpi"><div class="label">Revenue closed today</div><div class="value num">${money(k.revenue)}</div><div class="hint">${plural(k.purchases, "purchase")} via Visa checkout</div></div>
-        <div class="card kpi accent"><div class="label">Talked out of a sale</div><div class="value num">${k.waited}</div><div class="hint">${money(k.saved)} kept in customers' pockets</div></div>
-        <div class="card kpi"><div class="label">Needs you</div><div class="value num">${k.pendingApprovals.length + k.openHandoffs.length}</div><div class="hint">${plural(k.pendingApprovals.length, "approval")} · ${plural(k.openHandoffs.length, "handoff")}</div></div>
-        <div class="card kpi"><div class="label">Accounts in dataset</div><div class="value num">${num(a.accounts)}</div><div class="hint">${num(a.lines)} lines</div></div>
+        <div class="card kpi"><div class="label">Calls handled</div><div class="value num">${k.handled}</div><div class="hint">voice and text today</div></div>
+        <div class="card kpi"><div class="label">Sales paid</div><div class="value num">${k.paid}</div><div class="hint">${money(k.paidCents)} paid by agent</div></div>
+        <div class="card kpi"><div class="label">Not paid</div><div class="value num">${k.notPaid}</div><div class="hint">after a purchase attempt</div></div>
+        <div class="card kpi accent"><div class="label">Saved for customers</div><div class="value num">${money(k.saved)}</div><div class="hint">by advising to wait</div></div>
       </div>
-      <div class="grid split">
-        <div class="card">
-          <div class="card-head"><h2>Recent conversations</h2><button class="btn ghost" data-go="conversations">View all</button></div>
-          <div class="table-wrap"><table><tbody>${s.conversations.slice(0, 6).map((c) => convRow(c, true)).join("")}</tbody></table></div>
-        </div>
-        <div class="grid" style="align-content:start">
-          <div class="card"><div class="card-head"><h2>Needs you</h2></div>${needsList(k)}</div>
-          <div class="card">
-            <div class="card-head"><h2>Support contacts by channel</h2><span class="small muted">sandbox data</span></div>
-            <div class="card-body bars">${Object.entries(a.support_channels).map(([ch, n]) => `
-              <div class="bar-row"><span>${cap(ch)}</span><span class="bar"><span style="width:${(n / chMax) * 100}%"></span></span><span class="num small">${num(n)}</span></div>`).join("")}
-            </div>
-          </div>
-        </div>
-      </div>`;
+      <div class="card section">
+        <div class="card-head"><h2>Needs review</h2><span class="small muted num">${k.review.length}</span></div>
+        ${k.review.length ? `<ul class="list">${k.review.map((c) => reviewRow(s, c)).join("")}</ul>` : `<div class="empty">Nothing needs review. Every call went well.</div>`}
+      </div>
+      <div class="card section">
+        <div class="card-head"><h2>Recent conversations</h2><button class="btn ghost" type="button" data-go="conversations">View all</button></div>
+        <div class="table-wrap"><table><tbody>${recent.map((c) => convRow(c)).join("")}</tbody></table></div>
+      </div>
+      ${k.live ? `<p class="active-line small">${icon("phone")}<b>Active now</b><span class="muted">${esc(k.live.customer)} is on a ${esc(CHANNEL[k.live.channel] === "Voice" ? "call" : "text thread")} about ${esc(k.live.intent.charAt(0).toLowerCase() + k.live.intent.slice(1))}.</span></p>` : ""}`;
   }
 
   function renderConversations(s) {
-    const filters = [["all", "All"], ["live", "Live"], ["awaiting_approval", "Awaiting owner"], ["handoff", "Handed off"], ["closed", "Closed"]];
-    const regions = [...new Set(s.conversations.map((c) => c.region).filter(Boolean))].sort();
-    const customers = [...new Set(s.conversations.map((c) => c.customer))].sort();
-    const within = { all: Infinity, hour: 60, today: 24 * 60, week: 7 * 24 * 60 }[ui.convTime];
-    const q = ui.convQuery.toLowerCase();
+    const q = ui.convQuery.trim().toLowerCase();
     const rows = s.conversations
-      .filter((c) => ui.convFilter === "all" || c.status === ui.convFilter)
-      .filter((c) => ui.convRegion === "all" || c.region === ui.convRegion)
-      .filter((c) => ui.convCustomer === "all" || c.customer === ui.convCustomer)
-      .filter((c) => c.started <= within)
-      .filter((c) => !q || [c.customer, c.intent, c.recommendation?.pick].join(" ").toLowerCase().includes(q));
-    const opt = (v, cur, label) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
+      .filter((c) => c.status !== "live")
+      .filter((c) => ui.convOutcome === "all" || outcomeOf(c) === ui.convOutcome)
+      .filter((c) => !q || [c.customer, c.intent].join(" ").toLowerCase().includes(q));
+    const opt = (v, label) => `<option value="${v}"${v === ui.convOutcome ? " selected" : ""}>${label}</option>`;
     return `
       <div class="filters" style="margin-bottom:12px">
-        <div class="seg" role="group" aria-label="Filter by status">${filters.map(([v, l]) => `<button data-conv-filter="${v}" aria-pressed="${ui.convFilter === v}">${l}</button>`).join("")}</div>
-        <label class="select"><span>Region</span><select data-ui="convRegion">${opt("all", ui.convRegion, "All regions")}${regions.map((r) => opt(r, ui.convRegion, r)).join("")}</select></label>
-        <label class="select"><span>Time</span><select data-ui="convTime">${[["all", "Any time"], ["hour", "Last hour"], ["today", "Today"], ["week", "Last 7 days"]].map(([v, l]) => opt(v, ui.convTime, l)).join("")}</select></label>
-        <label class="select"><span>Customer</span><select data-ui="convCustomer">${opt("all", ui.convCustomer, "All customers")}${customers.map((c) => opt(c, ui.convCustomer, c)).join("")}</select></label>
-        <input class="search" id="conv-search" type="search" aria-label="Search conversations" placeholder="Search intent or pick…" value="${esc(ui.convQuery)}">
+        <label class="select"><span>Outcome</span><select data-ui="convOutcome">${opt("all", "All outcomes")}${Object.entries(OUTCOMES).map(([v, l]) => opt(v, l)).join("")}</select></label>
+        <input class="search push" id="conv-search" type="search" aria-label="Search conversations" placeholder="Search customer or topic" value="${esc(ui.convQuery)}">
       </div>
-      <div class="card"><div class="table-wrap"><table>
-        <thead><tr><th>Customer</th><th>Intent → agent's pick</th><th>Status</th><th class="right">Amount</th><th class="right">Started</th></tr></thead>
-        <tbody>${rows.map((c) => convRow(c, false)).join("") || `<tr><td colspan="5" class="empty">No conversations match these filters.</td></tr>`}</tbody>
+      <div class="card table-card"><div class="table-wrap flat"><table class="conv-table">
+        <thead><tr><th>Customer</th><th class="hide-sm">Channel</th><th>About</th><th>Outcome</th><th class="right">Time</th></tr></thead>
+        <tbody>${rows.map(convRow).join("") || `<tr><td colspan="5" class="empty">No conversations match. <button class="btn ghost" type="button" data-conv-clear>Clear filters</button></td></tr>`}</tbody>
       </table></div></div>`;
   }
 
@@ -393,40 +353,56 @@
 
   // ---------- drawers ----------
   let drawerOpener = null;
-  function showDrawer(html) {
+  function showDrawer(html, opener) {
     $("#drawer").innerHTML = html;
-    if (!$("#drawer").classList.contains("open")) drawerOpener = document.activeElement;
+    if (!$("#drawer").classList.contains("open")) drawerOpener = opener || document.activeElement;
     $("#drawer").classList.add("open");
     $("#drawer").inert = false;
     $("#drawer-backdrop").hidden = false;
     $("#drawer-close").focus();
   }
   const drawerHead = (title, sub) => `<div class="drawer-head"><div class="row"><div><h2 class="title" id="drawer-title" style="font-size:17px;margin:0">${esc(title)}</h2><div class="small muted">${sub}</div></div>
-    <button class="btn ghost" id="drawer-close" type="button">Close</button></div></div>`;
+    <button class="btn ghost icon-btn" id="drawer-close" type="button" data-close aria-label="Close">${icon("close")}</button></div></div>`;
 
-  function openConversation(id) {
-    const c = api.state.conversations.find((x) => x.id === id);
-    if (!c) return toast("That conversation isn't in this snapshot.");
-    const r = c.recommendation;
-    showDrawer(`${drawerHead(c.customer, `${esc(c.intent)} · <span class="mono">${esc(c.id)}</span>`)}
+  function openConversation(id, opener) {
+    const s = api.state, c = s.conversations.find((x) => x.id === id);
+    if (!c || c.status === "live") return toast("That conversation isn't in this snapshot.");
+    const r = c.recommendation, o = outcomeOf(c);
+    const ap = s.approvals.find((a) => a.conversation === c.id);
+    const h = s.handoffs.find((x) => x.conversation === c.id);
+    const ask = c.events.find((e) => e.kind === "customer");
+    const talk = c.events.filter((e) => e.kind === "customer" || e.kind === "agent");
+    const apText = ap && {
+      texted: `Waiting for the owner, ${ap.owner}, to reply YES. Texted ${ago(ap.sent)}.`,
+      approved: `The owner, ${ap.owner}, approved it.`,
+      declined: `The owner, ${ap.owner}, declined it.`,
+      cancelled: "Cancelled before the owner replied.",
+    }[ap.status];
+    const advice = r
+      ? `<div class="pick">${esc(r.pick)}</div>
+         <ul class="why">${(r.reasons || [r.reason]).slice(0, 3).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+         <div class="small muted"><b>Runner-up:</b> ${esc(r.runner_up)}</div>`
+      : `<div>The agent made no recommendation.</div>${h ? `<div class="small muted">${esc(h.reason)}. ${h.claimed_by ? `Claimed by ${esc(h.claimed_by)}.` : "Waiting for a person."}</div>` : ""}`;
+    const sec = (label, body) => `<section class="report-sec"><p class="section-label">${label}</p>${body}</section>`;
+    showDrawer(`${drawerHead(c.customer, `${channelKind(c)} · ${ago(c.started)}`)}
       <div class="drawer-body">
-        <div class="meta">
-          <div><span>Channel</span>${esc(CHANNEL[c.channel])}</div>
-          <div><span>Region</span>${esc(c.region || "—")}</div>
-          <div><span>Status</span>${statusChip(c)}</div>
-        </div>
-        ${r ? `<div><p class="section-label">Recommendation</p><div class="rec"><div class="pick">${esc(r.pick)}</div><div class="why">${esc(r.reason)}</div><div class="runner"><b>Runner-up:</b> ${esc(r.runner_up)}</div></div></div>` : ""}
-        <div><p class="section-label">Transcript and actions</p><div class="transcript">
-          ${c.events.map((e) => {
-            const cls = e.kind === "guard" ? `guard ${e.ok ? "ok" : "blocked"}` : e.kind;
-            const tag = e.kind === "tool" ? `<span class="tag">${esc(e.name)}</span>` : e.kind === "guard" ? `<span class="tag">rule ${e.rule}</span>` : "";
-            return `<div class="ev ${cls}"><div class="time">${e.t ? `${e.t}m` : "now"}</div><div class="bubble">${tag}${esc(e.text)}</div></div>`;
-          }).join("")}
-        </div></div>
-      </div>`);
+        <section class="report-head">${outcomeChip(c)}<p>${esc(c.summary || c.intent)}</p></section>
+        ${sec("What the customer wanted", `<div class="title">${esc(c.intent)}</div>${ask ? `<div class="small muted">“${esc(ask.text)}”</div>` : ""}`)}
+        ${sec("What the agent recommended", advice)}
+        ${sec("Payment", `<div class="row-head"><span class="title">${o === "paid" ? "Paid by agent" : "Not paid"}</span>${c.amount_cents != null ? `<span class="num">${money(c.amount_cents)}</span><span class="chip">Mock</span>` : `<span class="muted">No purchase attempted</span>`}</div>`)}
+        ${ap ? sec("Owner approval", `<div>${esc(apText)}</div><div class="small muted">${money(ap.amount_cents)} is over the ${money(ap.limit_cents)} limit.</div>`) : ""}
+        <details class="transcript-box"><summary>Transcript <span class="muted">${plural(talk.length, "message")}</span></summary>
+          <div class="transcript">${talk.map((e) => `<div class="ev ${e.kind}"><div class="time">${ago(e.t)}</div><div class="bubble">${esc(e.text)}</div></div>`).join("")}</div>
+        </details>
+      </div>`, opener);
+    markSelected(c.id);
   }
 
-  function openCustomer(id) {
+  function markSelected(id) {
+    document.querySelectorAll("tr[data-conv]").forEach((tr) => tr.classList.toggle("selected", tr.dataset.conv === id));
+  }
+
+  function openCustomer(id, opener) {
     const c = CUST.customers.find((x) => x.id === id);
     if (!c) return;
     showDrawer(`${drawerHead(c.name, `<span class="mono">${esc(c.id)}</span> · ${esc(c.region)}`)}
@@ -441,7 +417,7 @@
         </div>
         <div><p class="section-label">Situation</p><div class="rec"><div class="pick">${esc(c.note)}</div><div class="runner">Plan: ${esc(c.plan || "—")} · prefers ${esc(c.contact_preference)} · ${plural(c.support_contacts, "support contact")}</div></div></div>
         <div><p class="section-label">Selldial would look at</p><div class="small">${esc(cap(c.theme))}</div></div>
-      </div>`);
+      </div>`, opener);
   }
 
   function closeDrawer() {
@@ -449,6 +425,7 @@
     $("#drawer").classList.remove("open");
     $("#drawer").inert = true;
     $("#drawer-backdrop").hidden = true;
+    markSelected(null);
     if (drawerOpener?.isConnected) drawerOpener.focus();
     drawerOpener = null;
   }
@@ -466,7 +443,7 @@
 
   function render() {
     const s = api.state, v = current(), k = stats(s), view = VIEWS[v];
-    const counts = { home: k.pendingApprovals.length + k.openHandoffs.length, conversations: k.live };
+    const counts = { home: k.review.length };
     $("#nav").innerHTML = Object.entries(VIEWS).map(([key, x]) => `
       <button class="nav-link" data-go="${key}" ${key === v ? 'aria-current="page"' : ""}>
         <span>${x.label}</span>${counts[key] ? `<span class="badge">${counts[key]}</span>` : ""}
@@ -478,26 +455,22 @@
   }
 
   document.addEventListener("click", async (e) => {
-    const el = e.target.closest("[data-go],[data-conv],[data-cust],[data-claim],[data-resend],[data-cancel],[data-conv-filter],[data-promo-edit],[data-promo-cancel]");
+    const el = e.target.closest("[data-go],[data-close],[data-conv],[data-cust],[data-conv-clear],[data-promo-edit],[data-promo-cancel]");
     if (!el) return;
     const d = el.dataset;
+    const opener = el.matches("tr") ? el.querySelector(".row-link") || el : el;
     try {
-      if (d.go) location.hash = `#/${d.go}`;
-      else if (d.claim) { await api.claimHandoff(d.claim, profile().name); toast("Handoff claimed"); render(); }
-      else if (d.resend) { await api.resendApproval(d.resend); toast("Text resent to the owner"); render(); }
-      else if (d.cancel) {
-        if (!confirm("Cancel this order and release the Visa hold?")) return;
-        await api.cancelApproval(d.cancel); toast("Order cancelled, hold released"); render();
-      }
-      else if (d.convFilter) { ui.convFilter = d.convFilter; render(); }
+      if ("close" in d) closeDrawer();
+      else if (d.go) location.hash = `#/${d.go}`;
+      else if ("convClear" in d) { ui.convOutcome = "all"; ui.convQuery = ""; render(); }
       else if (d.promoEdit) {
         const p = api.state.policy.discounts.find((x) => x.code === d.promoEdit);
         ui.promoEdit = { code: p.code, applies_to: p.applies_to, kind: p.max_pct != null ? "pct" : "cents", amount: p.max_pct != null ? p.max_pct : p.max_cents / 100, requires: p.requires || "" };
         render(); $("#promo-form input[name=amount]").focus();
       }
       else if ("promoCancel" in d) { ui.promoEdit = null; render(); }
-      else if (d.cust) openCustomer(d.cust);
-      else if (d.conv) openConversation(d.conv);
+      else if (d.cust) openCustomer(d.cust, opener);
+      else if (d.conv) openConversation(d.conv, opener);
     } catch (err) {
       toast(err.message);
     }

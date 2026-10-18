@@ -103,6 +103,7 @@ window.SELLDIAL_DEMO = {
     },
     {
       "id": "c_1041",
+      "summary": "Dev asked about the Galaxy S26. The agent advised waiting 9 days to save $200.00.",
       "customer": "Dev P.",
       "phone": "•••• 4410",
       "channel": "imessage",
@@ -116,6 +117,7 @@ window.SELLDIAL_DEMO = {
       "recommendation": {
         "pick": "Wait 9 days",
         "reason": "The Galaxy S26 trade-in promo on Oct 26 raises his credit from $300.00 to $500.00.",
+        "reasons": ["The Galaxy S26 trade-in promo on Oct 26 raises his credit from $300.00 to $500.00.", "Waiting costs him nothing: the agent will text him that morning."],
         "runner_up": "Buy today at $699.99 after the $300.00 trade-in."
       },
       "events": [
@@ -164,6 +166,7 @@ window.SELLDIAL_DEMO = {
     },
     {
       "id": "c_1040",
+      "summary": "Jordan chose 3 iPhone 17s. Not paid yet: the owner has to approve it first.",
       "customer": "Jordan T.",
       "phone": "•••• 7731",
       "channel": "sms",
@@ -226,6 +229,7 @@ window.SELLDIAL_DEMO = {
     },
     {
       "id": "c_1039",
+      "summary": "A caller asked to change the account owner and failed verification twice. Handed off to a person.",
       "customer": "Unknown caller",
       "phone": "•••• 2208",
       "channel": "voice",
@@ -273,6 +277,7 @@ window.SELLDIAL_DEMO = {
     },
     {
       "id": "c_1038",
+      "summary": "Priya bought a Pixel 11. Paid by agent.",
       "customer": "Priya S.",
       "phone": "•••• 5562",
       "channel": "sms",
@@ -329,6 +334,7 @@ window.SELLDIAL_DEMO = {
     },
     {
       "id": "c_1037",
+      "summary": "Sam asked about a new iPhone. The agent advised a battery replacement, saving him $710.99.",
       "customer": "Sam K.",
       "phone": "•••• 9014",
       "channel": "voice",
@@ -372,6 +378,7 @@ window.SELLDIAL_DEMO = {
     },
     {
       "id": "c_1036",
+      "summary": "Lena switched from Verizon and bought an iPhone 17 Pro. Paid by agent.",
       "customer": "Lena W.",
       "phone": "•••• 3385",
       "channel": "imessage",
@@ -400,6 +407,16 @@ window.SELLDIAL_DEMO = {
           "text": "pick=iphone_17_pro_switch runner_up=byod"
         },
         {
+          "t": 114,
+          "kind": "agent",
+          "text": "Switching pays off your remaining $640.00 Verizon balance. The iPhone 17 Pro is the best fit. The runner-up is keeping your phone and switching plan only."
+        },
+        {
+          "t": 111,
+          "kind": "customer",
+          "text": "Let's do the Pro."
+        },
+        {
           "t": 110,
           "kind": "tool",
           "name": "checkout.create",
@@ -407,6 +424,55 @@ window.SELLDIAL_DEMO = {
         }
       ],
       "region": "Everett"
+    },
+    {
+      "id": "c_1033",
+      "summary": "Marcus wanted 40% off a Galaxy S26 Ultra. Handed off to Rae at Store 112.",
+      "customer": "Marcus L.",
+      "phone": "•••• 3302",
+      "channel": "voice",
+      "status": "handoff",
+      "verified": true,
+      "started": 34,
+      "intent": "Galaxy S26 Ultra price match",
+      "outcome": "handoff",
+      "amount_cents": null,
+      "saved_cents": 0,
+      "recommendation": null,
+      "events": [
+        { "t": 34, "kind": "customer", "text": "A competitor has the S26 Ultra at 40% off. Match it." },
+        { "t": 33, "kind": "guard", "rule": 1, "ok": false, "text": "Blocked: 40% isn't in the policy table. Only PRICE_MATCH (up to $100.00) applies" },
+        { "t": 32, "kind": "agent", "text": "I can match up to $100.00, but not 40%. Let me bring in a teammate who can look at your options." },
+        { "t": 31, "kind": "guard", "rule": 5, "ok": true, "text": "Customer upset. Handed off to Rae (Store 112) with a summary" }
+      ],
+      "region": "Seattle"
+    },
+    {
+      "id": "c_1027",
+      "summary": "Taylor tried to buy a Galaxy Z Fold 7. The owner declined, so it was not paid.",
+      "customer": "Taylor N.",
+      "phone": "•••• 5090",
+      "channel": "sms",
+      "status": "closed",
+      "verified": true,
+      "started": 165,
+      "intent": "Galaxy Z Fold 7",
+      "outcome": "not_paid",
+      "amount_cents": 189999,
+      "saved_cents": 0,
+      "recommendation": {
+        "pick": "Galaxy Z Fold 7",
+        "reason": "She asked for a foldable, and the Fold 7 is the current model with the best trade-in offer.",
+        "runner_up": "Galaxy S26 Ultra at $1,299.99, if the price is the concern."
+      },
+      "events": [
+        { "t": 165, "kind": "customer", "text": "I want the Fold 7. Can you set it up?" },
+        { "t": 162, "kind": "tool", "name": "checkout.create", "text": "visa hold 189999 cents, pending owner approval" },
+        { "t": 162, "kind": "guard", "rule": 3, "ok": false, "text": "Held: $1,899.99 is above the owner's $1,500.00 limit. Texted the owner" },
+        { "t": 151, "kind": "tool", "name": "approval.declined", "text": "Owner replied NO. Visa hold released" },
+        { "t": 150, "kind": "agent", "text": "The account owner declined this one, so I haven't charged you. I can show you a lower-priced option." }
+      ],
+      "region": "Bellevue"
     }
   ],
   "approvals": [
