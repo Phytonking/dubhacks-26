@@ -14,6 +14,8 @@ export const verify_send_code: Tool = {
     if (await alreadyVerified(ctx)) return { ok: true, data: { status: "already_verified", hint: "They are already verified; do not send another code. Answer their question." } };
     const number = ctx.party.address;
     const issued = await issueCode(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, number, secret: ctx.env.verifySecret, now: ctx.now });
+    // A code went out seconds ago and is still good: that is not a failure. Report it as sent so the turn does not apologise, re-announce it, or try again.
+    if (!issued.ok && issued.error === "cooldown") return { ok: true, data: { status: "already_sent", hint: "A code was texted to them a moment ago and is still valid. Do not say you are sending one again; ask them to read it out when it arrives." }, audit: { status: "already_sent" } };
     if (!issued.ok) return { ok: false, error: issued.error, data: { retryAfterSeconds: issued.retryAfterSec } };
     const brand = ctx.env.brandFallback;
     const sent = await ctx.messenger.send({

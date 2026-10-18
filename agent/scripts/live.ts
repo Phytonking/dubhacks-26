@@ -8,6 +8,7 @@ import { Orchestrator } from "../src/orchestrator";
 import { SandboxLink } from "../src/sandbox-link";
 import { PhotonAdapter, Worker, type ChannelAdapter, type ChannelId } from "../src/recorded-io";
 import { mongoCursorStore, photonEventHandler } from "../src/photon-worker";
+import { trackEvent } from "../src/inbound-log";
 import { webhookServer } from "../src/webhook";
 import { handleCallEvent } from "../src/calls";
 import { randomBytes } from "node:crypto";
@@ -182,12 +183,21 @@ if (v2) {
 const handler = photonEventHandler(workers, async (line) => (await db.collection("channel_lines").findOne({ address: line }))?.orgId ?? null, log,
   async (evt, reason) => { await db.collection("unrouted_events").insertOne({ evt, reason, at: new Date() }); });
 const MAX_AGE_MS = 10 * 60_000;   // replay guard: never answer a text older than this (restarts replay the stream)
+const orgForLine = async (line: string) => ((await db.collection("channel_lines").findOne({ address: line }))?.orgId ?? null) as ObjectId | null;
+/** Run one Photon event through the right handler and record what happened to it (the console's live inbound feed reads this). */
+const process_ = async (e: import("../src/photon").PhotonEvent, source: "socket" | "webhook", run: () => Promise<unknown>) => {
+  const track = await trackEvent(db, e, source, orgForLine, log);
+  try { const r: any = await run(); await track.done(r?.ok === false ? (r.reason === "unrouted" ? "unrouted" : "error") : !track.orgId && (track.kind === "text" || track.kind === "call") ? "unrouted" : "handled", r?.reason); }
+  catch (err) { await track.done("error", (err as Error).message.slice(0, 200)); throw err; }
+};
 const events = new PhotonEvents(photon, mongoCursorStore(db, `live:${process.env.PHOTON_PROJECT_ID}`), async (e) => {
   const m = e.data?.object;
-  if (e.type === "message.received" && Date.now() - new Date(e.timestamp).getTime() > MAX_AGE_MS) { log(`SKIP stale ${e.type} (${Math.round((Date.now() - new Date(e.timestamp).getTime()) / 60000)} min old): not answering`); return; }
+  if (e.type === "message.received" && Date.now() - new Date(e.timestamp).getTime() > MAX_AGE_MS) { log(`SKIP stale ${e.type} (${Math.round((Date.now() - new Date(e.timestamp).getTime()) / 60000)} min old): not answering`); const t = await trackEvent(db, e, "socket", orgForLine, log); await t.done("stale"); return; }
   log(`EVENT ${e.type} platform=${m?.platform} from=${mask(String(m?.sentBy?.handle ?? "-"))} to=${mask(String(m?.receivedBy?.handle ?? "-"))}${m?.content?.text ? ` text="${m.content.text}"` : ""}`);
-  if (e.type.startsWith("call.")) { await handleCallEvent(db, e, log); return; }   // voice: log every call (who, when, how long, outcome)
-  await handler(e);
+  await process_(e, "socket", async () => {
+    if (e.type.startsWith("call.")) return handleCallEvent(db, e, log);   // voice: log every call (who, when, how long, outcome)
+    return handler(e);
+  });
 }, log);
 events.start();
 // Health watch: hand back any chat a system fault locked to a person, and alarm if too many turns end in an escalation, block or failure.
@@ -197,10 +207,19 @@ setInterval(() => registerLines().catch((e) => log(`line refresh failed: ${e.mes
 const whSecret = process.env.PHOTON_WEBHOOK_SIGNING_SECRET?.trim();
 if (whSecret && process.env.PHOTON_WEBHOOK_PORT) {
   const port = Number(process.env.PHOTON_WEBHOOK_PORT);
-  webhookServer({ secrets: [whSecret, ...(process.env.PHOTON_WEBHOOK_PREVIOUS_SECRET ? [process.env.PHOTON_WEBHOOK_PREVIOUS_SECRET.trim()] : [])], handler: handler as any, log }).listen(port, "127.0.0.1", () => log(`webhook receiver listening on :${port} (signature required)`));
+  webhookServer({ secrets: [whSecret, ...(process.env.PHOTON_WEBHOOK_PREVIOUS_SECRET ? [process.env.PHOTON_WEBHOOK_PREVIOUS_SECRET.trim()] : [])], handler: ((e: any, persisted: () => void) => process_(e, "webhook", () => handler(e, persisted))) as any, log }).listen(port, "127.0.0.1", () => log(`webhook receiver listening on :${port} (signature required)`));
 }
 log(`LISTENING. Text the iMessage number above from your Apple ID now; replies come from the agent engine.`);
 
 const stop = async () => { log("stopping: closing events, scheduler and voice server, deleting sandbox"); events.stop(); await scheduler?.stop(); await voice?.close(); await orch.destroy(orgId); await mongo.close(); process.exit(0); };
 process.on("SIGINT", stop); process.on("SIGTERM", stop);
+// A dropped network (DNS, Atlas, Photon socket) must not kill the process that answers calls: the drivers reconnect on their own. Anything else
+// is a real bug: exit non-zero so scripts/supervise.sh restarts us with a clean state.
+const TRANSIENT = /ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|MongoNetworkError|MongoServerSelectionError|MongoNetworkTimeoutError|PoolClearedError|socket hang up|fetch failed|websocket error/i;
+const survive = (kind: string) => (e: unknown) => {
+  const msg = e instanceof Error ? `${e.name}: ${e.message}${(e as { cause?: Error }).cause ? ` (${(e as { cause?: Error }).cause!.message})` : ""}` : String(e);
+  if (TRANSIENT.test(msg)) { log(`${kind} (network, staying up): ${msg.slice(0, 200)}`); return; }
+  log(`${kind} (fatal, exiting for restart): ${msg.slice(0, 400)}`); process.exit(1);
+};
+process.on("unhandledRejection", survive("unhandledRejection")); process.on("uncaughtException", survive("uncaughtException"));
 setInterval(() => log(`heartbeat: events=${events.stats.events} errors=${events.stats.errors} subscribed=${events.stats.subscribed} lastSeq=${events.stats.lastSeq}`), 60_000);

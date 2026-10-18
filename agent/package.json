@@ -6,10 +6,11 @@
   "scripts": {
     "e2e": "tsx --env-file=../web/.env.local scripts/e2e.ts",
     "live": "tsx --env-file=../web/.env.local scripts/live.ts",
+    "live:forever": "sh scripts/supervise.sh",
     "report": "tsx scripts/report.ts",
     "typecheck": "tsc --noEmit",
     "conv-suite": "tsx --env-file=../web/.env.local scripts/conv-suite.ts",
-    "test": "tsx scripts/identity-test.ts && tsx scripts/engine-test.ts && tsx scripts/messenger-test.ts && tsx scripts/scheduler-test.ts && tsx scripts/voice-test.ts && tsx scripts/summarizer-test.ts && tsx scripts/reach-test.ts && tsx scripts/safety-test.ts && tsx scripts/intake-test.ts && tsx scripts/offers-test.ts && tsx scripts/handoff-test.ts"
+    "test": "tsx scripts/identity-test.ts && tsx scripts/engine-test.ts && tsx scripts/messenger-test.ts && tsx scripts/scheduler-test.ts && tsx scripts/voice-test.ts && tsx scripts/summarizer-test.ts && tsx scripts/reach-test.ts && tsx scripts/safety-test.ts && tsx scripts/intake-test.ts && tsx scripts/offers-test.ts && tsx scripts/handoff-test.ts && tsx scripts/inbound-test.ts"
   },
   "dependencies": {
     "@daytona/sdk": "latest",

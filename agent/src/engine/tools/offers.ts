@@ -167,6 +167,16 @@ export const negotiation_accept: Tool = {
     if (!planName) return { ok: false, error: "needs_plan", data: { hint: "Say which plan they agreed to (plan, lines)." } };
     const offer = { creditCents: credit, months: DEFAULT_AUTHORITY.maxMonths, plan: planName, lines: neg?.lines ?? a.lines ?? 1, gives: neg?.gives ?? [], summary: a.summary, status: "accepted", at: ctx.now };
     await ctx.db.collection("contacts").updateOne({ _id: ctx.contactId, orgId: ctx.orgId }, { $push: { "memory.offers": offer } as never, $unset: { "memory.negotiation": "" } });
+    // The sale itself: an order (what was agreed and what it is worth per month) and an approval for the team to finish. The console reads both.
+    const plan: any = (await ctx.db.collection("tmo_plans").find({ orgId: ctx.orgId, status: "current", name: rx(planName) }).limit(1).toArray())[0];
+    const listCents = plan ? planTotalCents(plan.linePrices ?? [], plan.extraLineCents ?? 0, offer.lines) : 0;
+    const monthlyCents = Math.max(0, listCents - credit);
+    const items = `${planName}, ${offer.lines} line${offer.lines === 1 ? "" : "s"}${credit ? `, ${usd(credit)}/mo credit for ${offer.months} months` : " at list price"}`;
+    const orderKey = { orgId: ctx.orgId, conversationId: ctx.conversationId, status: "pending", item: planName };   // one open order per plan per conversation: a repeated "yes" updates it
+    const orderSet = { contactId: ctx.contactId, amountCents: monthlyCents, listCents, creditCents: credit, months: offer.months, lines: offer.lines, summary: a.summary, items, source: "agent", turnId: ctx.turnId, updatedAt: ctx.now };
+    await ctx.db.collection("orders").updateOne(orderKey, { $set: orderSet, $setOnInsert: { createdAt: ctx.now } }, { upsert: true });
+    await ctx.db.collection("approvals").updateOne({ orgId: ctx.orgId, conversationId: ctx.conversationId, status: "texted", plan: planName },
+      { $set: { contactId: ctx.contactId, items, amountCents: monthlyCents, sentAt: ctx.now, updatedAt: ctx.now }, $setOnInsert: { createdAt: ctx.now, checkout: "", resendCount: 0 } }, { upsert: true });
     await ctx.db.collection("notifications").insertOne({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, kind: "deal", message: `Customer accepted: ${a.summary}${credit ? ` (${usd(credit)}/mo credit for ${offer.months} months on ${planName})` : ` (${planName} at list price)`}. Please finish the order.`, urgency: "high", read: false, createdAt: ctx.now } as never);
     return { ok: true, data: { status: "recorded", next: "Tell them it is noted and a team member will finish setting it up and confirm. Do not say it is already applied." }, sideEffect: true };
   },

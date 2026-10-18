@@ -1,7 +1,7 @@
 // Negotiation ladder, authority caps, promotion eligibility.   pnpm exec tsx scripts/offers-test.ts
 import { readFileSync } from "node:fs";
 import { ObjectId } from "mongodb";
-import { executeTool } from "../src/engine/turn";
+import { executeTool, runTurn } from "../src/engine/turn";
 import { creditCap, creditForRound, DEFAULT_AUTHORITY, unmetConditions } from "../src/engine/tools/offers";
 import { ScriptedLlm, ok, t, finish, makeKit } from "./_testkit";
 
@@ -87,6 +87,22 @@ await t("acceptance records the deal and tells the team; it refuses when nothing
   ok(acc.result.ok && /Do not say it is already applied/.test(acc.content), acc.content);
   const after: any = await db.collection("contacts").findOne({ _id: c.contactId }); ok(after.memory.offers?.length === 1 && !after.memory.negotiation && after.memory.offers[0].status === "accepted", JSON.stringify(after.memory));
   ok((await db.collection("notifications").countDocuments({ contactId: c.contactId, kind: "deal" })) === 1, "team told");
+  const ord: any = await db.collection("orders").find({ conversationId: c.conversationId }).toArray(); ok(ord.length === 1 && ord[0].status === "pending" && ord[0].item === "Experience More 2.0" && ord[0].creditCents > 0 && ord[0].amountCents > 0 && ord[0].amountCents < ord[0].listCents, "the sale is written as a pending order worth the discounted monthly total: " + JSON.stringify(ord));
+  const apr: any = await db.collection("approvals").find({ conversationId: c.conversationId }).toArray(); ok(apr.length === 1 && apr[0].status === "texted" && apr[0].amountCents === ord[0].amountCents, "and as an approval for the team: " + JSON.stringify(apr));
+  await run(c, "negotiation_accept", { summary: "again", plan: "Experience More 2.0", lines: 2 });
+  ok((await db.collection("orders").countDocuments({ conversationId: c.conversationId })) === 1, "a repeated yes updates the open order instead of adding a second");
+});
+await t("backstop: 'I've noted that' after a clear yes, with no negotiation_accept, records the deal; a maybe or an unrelated note does not", async () => {
+  const c = await kit.newContact("+14255550890");
+  const say = (body: string, sender = "agent") => db.collection("messages").insertOne({ orgId, conversationId: c.conversationId, channel: "imessage", direction: sender === "agent" ? "out" : "in", sender, body, channelMsgId: "bk" + Math.random(), deliveryStatus: "delivered", handling: "agent", attempts: 0, ts: new Date(kit.now.t.getTime() - 60_000) } as never);
+  await say("Experience More 2.0 is $90 a month for one line with AutoPay. Want me to note that for the team?");
+  const turn = async (text: string, reply: string) => { const id = await kit.addInbound(c.conversationId, text); return runTurn(kit.deps(new ScriptedLlm([{ content: reply }])), { orgId, conversationId: c.conversationId, channel: "imessage", mode: "text", batch: [{ _id: id, body: text, ts: kit.now.t }] }); };
+  await turn("maybe, let me think about it", "No problem. I've noted that and a team member will confirm whenever you're ready.");
+  ok((await db.collection("orders").countDocuments({ conversationId: c.conversationId })) === 0, "a maybe records nothing");
+  const r = await turn("yes, let's do it", "Great. I've noted that and a team member will confirm it with you.");
+  const o: any[] = await db.collection("orders").find({ conversationId: c.conversationId }).toArray();
+  ok(o.length === 1 && o[0].item === "Experience More 2.0" && o[0].status === "pending", "the yes was recorded by the engine: " + JSON.stringify(o));
+  ok(r.toolCalls.some((x) => x.name === "negotiation_accept" && x.ok), "and it shows in the turn's tool calls");
 });
 await t("the authority is configurable per business", async () => {
   await db.collection("agents").updateOne({ orgId }, { $set: { "guardrails.negotiation": { maxMonthlyCreditCents: 500, maxPct: 10 } } });

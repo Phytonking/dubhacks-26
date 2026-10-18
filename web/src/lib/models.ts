@@ -22,6 +22,7 @@ export type Agent = {
   guardrails: { maxDiscountPct: number; escalateOn: string[] };
   enabledChannels: Record<Channel, boolean>;
   sandboxId: string | null;
+  deploy?: { startedAt?: Date; steps: { name: string; ok: boolean; ms: number; detail?: string | null; at?: Date }[] };
   updatedAt: Date;
 };
 
@@ -66,6 +67,7 @@ export type Message = {
   handling?: "agent" | "ignored" | "opted_out" | "rejected" | "human";
   guardrail?: { verdict: string; reason?: string } | null;
   attempts?: number;
+  ref?: { spaceId?: string; senderId?: string; parentMessageId?: string } | null;
   deliveryError: string | null;
   attachments: Attachment[];
   reactions: Reaction[];
@@ -87,6 +89,7 @@ export type User = {
   name: string;
   role: "owner" | "admin";
   authProviderId: string | null; // auth approach TBD
+  phone?: string | null; // E.164; ties the owner/tester to their number
   createdAt: Date;
 };
 

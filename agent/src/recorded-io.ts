@@ -4,6 +4,7 @@ import type { AgentLink } from "./sandbox-link";
 import { resolveParty } from "./identity";
 import { redactSensitive } from "./sensitive";
 import { clearOptOut, detectKeyword, isOptedOut, keywordReply, setOptOut } from "./optout";
+import { loadCustomerSection } from "./tmo-customer";
 
 // The only code path allowed to touch a channel. Every message is written to Mongo around the send (PRD §6).
 export type ChannelId = "imessage" | "whatsapp" | "sms" | "voice";
@@ -121,7 +122,8 @@ export class Worker {
       db.collection("knowledge").find({ orgId: a.orgId, status: "ready" }).toArray(),
     ]);
     // config travels with the turn (fresh every time: owner edits apply without restart)
-    const reply = await this.link.send(String(agent!._id), { turnId, channel, text: safe.text, history, conversationId: String(conv._id), config: { org, agent, knowledge } });
+    const customer = await loadCustomerSection(db, a.orgId, contact as any, channel);   // null unless the contact is linked to T-Mobile data in Atlas
+    const reply = await this.link.send(String(agent!._id), { turnId, channel, text: safe.text, history, conversationId: String(conv._id), config: { org, agent, knowledge, customer } });
     // platform-side audit: the sandbox cannot write to Mongo, so the Worker records what it reports
     for (const tc of reply.toolCalls) {
       await db.collection("tool_calls").insertOne({ orgId: a.orgId, conversationId: conv._id, tool: tc.tool, args: (tc.args ?? {}) as object, result: tc.result ?? null, status: "ok", ms: tc.ms, approvedBy: null, ts: new Date() });

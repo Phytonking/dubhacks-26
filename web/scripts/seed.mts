@@ -1,7 +1,7 @@
 import { ObjectId } from "mongodb";
 import { collections, getDb } from "../src/lib/db";
 import { applySchema } from "../src/lib/schema";
-import type { Channel, Contact, Conversation, ContactStage, Message } from "../src/lib/models";
+import type { Channel, Contact, Conversation } from "../src/lib/models";
 
 const db = await getDb();
 // Guard: never wipe a populated database (e.g. Atlas) unless explicitly asked.
@@ -35,68 +35,37 @@ await c.agents.insertOne({
   harness: null,
   persona: "You are Sunny, the assistant for Sunrise Bike Shop. Help customers pick a bike, book tune-ups, and answer store questions.",
   guardrails: { maxDiscountPct: 10, escalateOn: ["refund", "complaint", "injury"] },
-  enabledChannels: { imessage: true, whatsapp: false, sms: false, voice: false },
+  enabledChannels: { imessage: true, whatsapp: false, sms: true, voice: false },
   sandboxId: null,
   updatedAt: mins(120),
 });
 
-type Seed = {
-  name: string;
-  phone: string;
-  stage: ContactStage;
-  score: number;
-  facts: string[];
-  mode?: "agent" | "human";
-  thread: [("in" | "out"), "customer" | "agent" | "owner", string][];
-};
-
-const seeds: Seed[] = [
-  { name: "Maya Chen", phone: "+12065550101", stage: "qualified", score: 88, facts: ["Commutes 8 mi each way", "Budget ~$1,500"],
-    thread: [["in", "customer", "Hi! Looking for a commuter bike under $1500"], ["out", "agent", "Hey Maya! Happy to help. How far is your commute, and is there much hill?"], ["in", "customer", "8 miles each way, a few hills"], ["out", "agent", "A gravel/commuter hybrid or a light e-bike would fit. Want to come test ride Saturday?"], ["in", "customer", "Yes, Saturday 11am works"]] },
-  { name: "Devon Brooks", phone: "+12065550102", stage: "engaged", score: 55, facts: ["Owns a 2019 Trek"], mode: "human",
-    thread: [["in", "customer", "My brakes are squealing, can I get a tune-up this week?"], ["out", "agent", "Sure! Thursday 2pm or Friday 10am?"], ["in", "customer", "Also I was charged twice for last visit"], ["out", "owner", "Hi Devon, Sam here. Looking at that charge now, will refund today."]] },
-  { name: "Priya Nair", phone: "+12065550103", stage: "new", score: 20, facts: [],
-    thread: [["in", "customer", "What are your hours on Sunday?"], ["out", "agent", "We're closed Sundays, open Mon-Sat 10am-6pm. Anything I can help with?"]] },
-  { name: "Luis Ortega", phone: "+12065550104", stage: "won", score: 95, facts: ["Bought e-bike Oct 3", "Wants helmet bundle"],
-    thread: [["in", "customer", "Picked up the e-bike, love it. Do you do helmet bundles?"], ["out", "agent", "Congrats Luis! Yes, 10% off a helmet with any bike purchase this month."]] },
-  { name: "Hannah Weiss", phone: "+12065550105", stage: "lost", score: 30, facts: ["Went with competitor"],
-    thread: [["in", "customer", "Do you price match?"], ["out", "agent", "We can take 10% off in some cases. What's the quote you have?"], ["in", "customer", "Never mind, ordered elsewhere"]] },
-];
-
-for (const [i, s] of seeds.entries()) {
+// ---- primary test user: the real tester (set PRIMARY_TEST_PHONE=+1XXXXXXXXXX in .env.local) ----
+// Baseline is intentionally NOT fake customers: every other contact is created by the Worker when a real person texts the line.
+const phone = process.env.PRIMARY_TEST_PHONE?.trim();
+let seeds: unknown[] = [];
+if (phone) {
   const contactId = new ObjectId();
-  const convId = new ObjectId();
-  const channel: Channel = "imessage";
-  const baseMin = 600 - i * 90;
-  const contact: Contact = {
-    _id: contactId, orgId, name: s.name, stage: s.stage, score: s.score, notes: "",
-    facts: s.facts.map((text) => ({ text, sourceMessageId: null, learnedAt: mins(baseMin) })), handles: [{ channel, address: s.phone }], createdAt: mins(baseMin + 5),
-  };
-  const msgs: Message[] = s.thread.map(([direction, sender, body], j) => ({
-    _id: new ObjectId(), orgId, conversationId: convId, channel, direction, sender, body,
-    channelMsgId: `seed-${i}-${j}`, deliveryStatus: "delivered", deliveryError: null,
-    attachments: [], reactions: [], replyTo: null, ts: mins(baseMin - j * 3),
-  }));
-  const last = msgs[msgs.length - 1];
-  const conv: Conversation = {
-    _id: convId, orgId, contactId, mode: s.mode ?? "agent", lastChannel: channel,
-    lastMessageAt: last.ts, lastMessagePreview: last.body.slice(0, 80),
-  };
-  await c.contacts.insertOne(contact);
-  await c.conversations.insertOne(conv);
-  await c.messages.insertMany(msgs);
+  const channels: Channel[] = ["sms", "imessage"];
+  await c.contacts.insertOne({
+    _id: contactId, orgId, name: "Primary test user", stage: "engaged", score: 50,
+    notes: "Main tester (T-Mobile). Owner-side phone for Sunrise Bike Shop.", facts: [],
+    handles: channels.map((channel) => ({ channel, address: phone })), createdAt: mins(60),
+  } as Contact);
+  await c.conversations.insertOne({
+    _id: new ObjectId(), orgId, contactId, mode: "agent", lastChannel: "sms", lastMessageAt: mins(60), lastMessagePreview: "",
+  } as Conversation);
+  seeds = [phone];
+} else {
+  console.warn("PRIMARY_TEST_PHONE not set: seeded no contact. The first person to text the line becomes the first contact.");
 }
 
 // ---- supporting data ----
 await c.users.insertOne({
   _id: new ObjectId(), orgId, email: "owner@sunrisebikes.example", name: "Sam Rivera",
-  role: "owner", authProviderId: null, createdAt: mins(60 * 24 * 14),
+  role: "owner", authProviderId: null, phone: phone ?? null, createdAt: mins(60 * 24 * 14),
 });
-await c.channelLines.insertOne({
-  _id: new ObjectId(), orgId, channel: "imessage", provider: "photon", photonLineId: null,
-  address: "+12065550199", status: "pending", capabilities: ["typing", "reactions", "threads", "attachments"],
-  createdAt: mins(60 * 24),
-});
+// channel_lines are created from real Photon resources by the live runner / onboarding (no fake placeholder line)
 const kid = new ObjectId();
 const faqText = "Hours: Mon-Sat 10am-6pm. Tune-ups $89, 3-day turnaround. Trade-ins credited toward any bike. Free fitting with every bike purchase.";
 await c.knowledge.insertOne({
@@ -108,16 +77,5 @@ await c.knowledgeChunks.insertMany(
     _id: new ObjectId(), orgId, knowledgeId: kid, idx, text, embedding: null, createdAt: mins(60 * 24 * 3),
   })),
 );
-for (let d = 6; d >= 0; d--) {
-  await c.usage.insertOne({
-    _id: new ObjectId(), orgId, day: new Date(now - d * 86_400_000).toISOString().slice(0, 10),
-    tokensIn: 4000 + d * 300, tokensOut: 1500 + d * 90, messagesIn: 10 + d, messagesOut: 12 + d, sandboxSec: 3600,
-  });
-}
-await c.toolCalls.insertOne({
-  _id: new ObjectId(), orgId, conversationId: null, tool: "lookup_inventory", args: { query: "commuter bike" }, result: { matches: 3 },
-  status: "ok", ms: 180, approvedBy: null, ts: mins(500),
-});
-
-console.log(`Seeded org "Sunrise Bike Shop" with ${seeds.length} contacts.`);
+console.log(`Seeded org "Sunrise Bike Shop" with ${seeds.length} contact(s) (primary test user only).`);
 process.exit(0);

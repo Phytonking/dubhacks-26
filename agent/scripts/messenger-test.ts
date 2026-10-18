@@ -226,7 +226,7 @@ await t("forms: validation (required, email, select, unexpected field), expiry, 
 await t("end to end through the model: asks for consent, records it, verifies by code, then reads the account", async () => {
   await reset();
   const k2 = await kit.newContact("+14255550900", { externalRefs: [{ system: "tmobile", id: "ACC-9", kind: "account" }] });
-  const mk = async (text: string) => { const id = await kit.addInbound(k2.conversationId, text); return { orgId, conversationId: k2.conversationId, channel: "imessage" as const, mode: "text" as const, batch: [{ _id: id, body: text, ts: kit.now.t }] }; };
+  const mk = async (text: string) => { const id = await kit.addInbound(k2.conversationId, text); return { orgId, conversationId: k2.conversationId, channel: "voice" as const, mode: "voice" as const, batch: [{ _id: id, body: text, ts: kit.now.t }] }; };   // a phone call: the code is still needed (texting verifies by channel)
   const deps = kit.deps(new ScriptedLlm([{ tools: [{ name: "verify_send_code", args: {} }] }, { content: "Sent you a 6-digit code. What is it?" }]));
   // implicit consent: they texted us just now, so the code can go out
   const r1 = await runTurn(deps, await mk("why did my bill go up?"));
