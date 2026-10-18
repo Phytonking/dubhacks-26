@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRD — Voice Flow: caller → Photon → ElevenLabs → our agent (v0.1)</title>
+<style>
+  :root{--bg:#fafaf7;--fg:#1a1a17;--muted:#66655e;--line:#e3e1d8;--card:#fff;--accent:#2f5d50;--soft:#e4efe9;--warn:#9a5b00;--warnsoft:#fbf0dc;--bad:#9b2c2c;--badsoft:#f8e3e3;--mono:ui-monospace,Menlo,monospace}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 28px 96px;display:grid;grid-template-columns:200px 1fr;gap:44px}
+  nav{position:sticky;top:0;align-self:start;padding-top:48px;font-size:14px}
+  nav .t{font-weight:700;margin-bottom:8px}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:3px 0}
+  nav a:hover{color:var(--accent)}
+  main{padding-top:48px;min-width:0}
+  h1{font-size:32px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:22px;margin:54px 0 12px;padding-top:20px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 6px}
+  .meta{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:12px;padding:1px 9px;border-radius:99px;font-weight:600;margin-right:4px;background:var(--soft);color:var(--accent)}
+  .pill.warn{background:var(--warnsoft);color:var(--warn)}.pill.bad{background:var(--badsoft);color:var(--bad)}.pill.plan{background:#ecece4;color:#66655e}
+  code{font-family:var(--mono);font-size:13px;background:#efede4;padding:1px 5px;border-radius:4px}
+  pre{background:#1d2421;color:#e8efe9;padding:14px 16px;border-radius:8px;overflow:auto;font:12.5px/1.55 var(--mono)}
+  pre code{background:none;padding:0;color:inherit}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:10px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1efe6}
+  .callout{background:var(--soft);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{background:var(--warnsoft);border-color:var(--warn)}
+  .callout.bad{background:var(--badsoft);border-color:var(--bad)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;overflow:auto}
+  ul,ol{padding-left:22px}
+  a{color:var(--accent)}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr}nav{display:none}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="t">Contents</div>
+  <a href="#summary">1. Summary</a>
+  <a href="#flow">2. The call, step by step</a>
+  <a href="#options">3. Where the brain lives</a>
+  <a href="#bridge">4. Voice Bridge</a>
+  <a href="#data">5. Data &amp; memory</a>
+  <a href="#actions">6. Actions (tools)</a>
+  <a href="#latency">7. Latency</a>
+  <a href="#fail">8. Failure modes</a>
+  <a href="#security">9. Security &amp; compliance</a>
+  <a href="#verify">10. Verified vs unknown</a>
+  <a href="#phases">11. Build order</a>
+  <a href="#open">12. Open questions</a>
+</nav>
+
+<main>
+<p class="meta"><span class="pill">Draft v0.1</span> 2026-10-18 · owner: Avi Agola · builds on <a href="AGENT-ARCHITECTURE.html">AGENT-ARCHITECTURE.html</a>; supersedes the "LiveKit voice gateway" part of <a href="PRD-agent-runtime-photon-voice.html">PRD-agent-runtime-photon-voice.html</a></p>
+<h1>Voice Flow</h1>
+<p class="meta">Caller → Photon → ElevenLabs → our agent → ElevenLabs → caller, with the same business knowledge, memory and actions as text, and everything stored in Mongo.</p>
+
+<div class="callout warn"><b>Update 2026-10-18:</b> new measurements changed parts of this document. See <a href="VOICE-LATENCY.html">VOICE-LATENCY.html</a>. Key corrections: (1) Daytona sandboxes <b>can</b> reach the internet now (Modal answered from inside one in 0.2 s), so the agent can run the whole turn in the sandbox instead of a separate host "Voice Bridge"; (2) Photon's <code>call.started</code> event carries <code>caller.handle</code>, so the caller's number is known before they speak, independent of ElevenLabs caller ID; (3) model reasoning effort <code>none</code> cuts first-word time from about 320 ms to about 140 ms.</div>
+<div class="callout warn"><b>Review 2026-10-18:</b> The ElevenLabs webhook signature is now verified from the official SDK: header <code>ElevenLabs-Signature: t=&lt;unix&gt;,v0=&lt;hex&gt;</code>, HMAC-SHA256 over <code>"&lt;t&gt;.&lt;rawBody&gt;"</code>, 30-minute tolerance (C11). The Voice Bridge is implemented as the voice server of the shared engine, hosted on the platform in v1 (C1). See <a href="AGENT-MASTER.html">AGENT-MASTER.html</a>.</div>
+<h2 id="summary">1. Summary</h2>
+<p>ElevenLabs is now the <b>voice layer</b>: it takes the call from Photon over SIP, does speech-to-text, decides when the caller has finished talking, and turns replies into speech. It is not our agent. To keep one agent across text and voice, ElevenLabs should call <b>our</b> brain for every reply. ElevenLabs supports that: an agent can use a <b>Custom LLM</b>, a server that speaks the OpenAI chat-completions format and streams its answer.</p>
+<div class="callout"><b>Proposal.</b> Build a small <b>Voice Bridge</b> service in <code>agent/</code>. Each time the caller finishes a sentence, ElevenLabs POSTs the conversation to the bridge. The bridge looks up the business and the caller, builds the same context our text agent uses (business rules, knowledge, the caller's profile and past texts), streams a reply from the model, runs tools, and streams the words back for ElevenLabs to speak. After the call, ElevenLabs sends a <b>post-call webhook</b> and the bridge saves the transcript, summary and facts to Mongo. The call shows up in the owner's inbox next to that customer's texts.</div>
+<p><b>Why the change from the earlier voice PRD:</b> that plan had Photon send calls to a SIP server we would run (LiveKit) and do speech-to-text and text-to-speech ourselves. You chose ElevenLabs for that part, which removes the hardest piece. What's left for us is the brain and the data, which is what this doc covers.</p>
+<p><b>Status:</b> the Photon side is configured (inbound calls to <code>+1206…3267</code> go to <code>sips:sip.rtc.elevenlabs.io:5061</code>). Nothing in this doc is built or tested yet.</p>
+
+<h2 id="flow">2. The call, step by step</h2>
+<div class="diagram">
+<svg viewBox="0 0 940 520" width="100%" font-family="-apple-system,Segoe UI,sans-serif" font-size="12">
+  <defs><marker id="v1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#66655e"/></marker></defs>
+  <g stroke="#b4b1a3" stroke-dasharray="4 4"><path d="M90 50 V510"/><path d="M270 50 V510"/><path d="M460 50 V510"/><path d="M660 50 V510"/><path d="M850 50 V510"/></g>
+  <g stroke="#2f5d50" fill="#e4efe9"><rect x="40" y="10" width="100" height="34" rx="6"/><rect x="220" y="10" width="100" height="34" rx="6"/><rect x="410" y="10" width="100" height="34" rx="6"/><rect x="610" y="10" width="100" height="34" rx="6"/><rect x="800" y="10" width="100" height="34" rx="6"/></g>
+  <g fill="#1a1a17" font-weight="600" text-anchor="middle"><text x="90" y="32">Caller</text><text x="270" y="32">Photon</text><text x="460" y="32">ElevenLabs</text><text x="660" y="32">Voice Bridge</text><text x="850" y="32">Mongo + LLM</text></g>
+  <g stroke="#66655e" fill="none" marker-end="url(#v1)" stroke-width="1.3">
+    <path d="M90 80 H270"/><path d="M270 110 H460"/>
+    <path d="M460 190 H90"/>
+    <path d="M90 230 H460"/>
+    <path d="M460 295 H660"/><path d="M660 325 H850"/><path d="M850 350 H660" stroke-dasharray="3 3"/><path d="M660 375 H460"/>
+    <path d="M460 410 H90"/>
+    <path d="M460 455 H660"/><path d="M660 485 H850"/>
+  </g>
+  <g fill="#1a1a17" font-size="11.5">
+    <text x="100" y="74"><tspan font-weight="600">1</tspan> dials +1206…3267</text>
+    <text x="280" y="104"><tspan font-weight="600">2</tspan> SIP call over TLS to ElevenLabs</text>
+    <text x="110" y="184"><tspan font-weight="600">3</tspan> agent says its greeting (fixed text)</text>
+    <text x="100" y="224"><tspan font-weight="600">4</tspan> caller speaks (audio)</text>
+    <text x="470" y="262"><tspan font-weight="600">5</tspan> speech-to-text, detects end of turn</text>
+    <text x="470" y="289"><tspan font-weight="600">6</tspan> POST messages (SSE)</text>
+    <text x="670" y="319"><tspan font-weight="600">7</tspan> load context, call LLM, tools</text>
+    <text x="705" y="344">tokens</text>
+    <text x="470" y="369"><tspan font-weight="600">8</tspan> stream reply sentences</text>
+    <text x="110" y="404"><tspan font-weight="600">9</tspan> text-to-speech audio</text>
+    <text x="470" y="449"><tspan font-weight="600">10</tspan> after hang-up: webhook</text>
+    <text x="670" y="479"><tspan font-weight="600">11</tspan> save call, transcript, facts</text>
+  </g>
+  <text x="470" y="510" fill="#66655e" font-size="11">Steps 4 to 9 repeat for every turn of the conversation.</text>
+</svg>
+</div>
+<ol>
+<li>The caller dials the business's Photon number. Photon already routes inbound calls to ElevenLabs over SIP (done).</li>
+<li>ElevenLabs answers, plays a fixed first message (this is where we say it's an AI assistant), and the caller speaks.</li>
+<li>For each turn ElevenLabs transcribes the speech and sends the whole conversation so far to the Voice Bridge as a chat-completions request.</li>
+<li>The bridge works out <i>which business</i> (from the number dialled) and <i>which customer</i> (from the caller's number), loads memory, and streams a reply.</li>
+<li>ElevenLabs speaks the reply as it arrives. If the caller interrupts, ElevenLabs closes the stream and the bridge stops the model call.</li>
+<li>When the call ends, ElevenLabs posts the full transcript and analysis. The bridge stores them and updates the customer's profile.</li>
+</ol>
+
+<h2 id="options">3. Where the brain lives: two ways to wire it</h2>
+<div class="grid2">
+<div class="card"><h3>A. Custom LLM (recommended)</h3>
+<p>ElevenLabs calls our bridge for every reply. <b>One brain</b> for text and voice: same persona, knowledge, guardrails, memory, tools. Owner edits in the console apply instantly to calls.</p>
+<p><b>Cost:</b> we are now in the latency path (§7), we must stream, and we need a public HTTPS endpoint.</p></div>
+<div class="card"><h3>B. ElevenLabs' own LLM + our tools</h3>
+<p>The agent's prompt and knowledge live in ElevenLabs. It calls our API through <b>webhook tools</b> only when it needs data or an action.</p>
+<p><b>Cost:</b> two brains that drift apart (prompt copied into ElevenLabs), guardrails only by prompt, memory only if the model chooses to call a tool. <b>Benefit:</b> least latency risk, least code.</p></div>
+</div>
+<table>
+<tr><th>Requirement</th><th>A. Custom LLM</th><th>B. Own LLM + tools</th></tr>
+<tr><td>One persona, one knowledge base across channels</td><td>Yes, automatically</td><td>Manual sync</td></tr>
+<tr><td>Caller's past texts and facts in context</td><td>Yes, built into every turn</td><td>Only if the model calls a lookup tool first</td></tr>
+<tr><td>Guardrails enforced outside the model</td><td>Yes (sentence-level, §4)</td><td>Prompt only</td></tr>
+<tr><td>Reply latency</td><td>Higher, our responsibility</td><td>Lowest</td></tr>
+<tr><td>Everything lands in Mongo live</td><td>Yes</td><td>Mostly at call end</td></tr>
+<tr><td>Effort</td><td>Medium</td><td>Small</td></tr>
+</table>
+<div class="callout warn"><b>Safety net:</b> start with B for a 30-minute smoke test (proves the phone path works end to end with ElevenLabs' stock agent), then switch the same agent to A. If A cannot hit the latency target after tuning, B with a richer set of tools is the fallback. The decision uses measured numbers (§7).</div>
+
+<h2 id="bridge">4. The Voice Bridge</h2>
+<p>A small HTTP service in <code>agent/</code> (new file <code>voice-bridge.ts</code>), always on, reachable on public HTTPS. For the hackathon, run it locally behind a tunnel (e.g. Cloudflare Tunnel or ngrok); later deploy it to an always-on host. Two endpoints:</p>
+<table>
+<tr><th>Endpoint</th><th>Called by</th><th>Does</th></tr>
+<tr><td><code>POST /voice/llm/chat/completions</code></td><td>ElevenLabs, once per caller turn</td><td>Identify, build context, stream the reply, run tools</td></tr>
+<tr><td><code>POST /voice/webhooks/elevenlabs</code></td><td>ElevenLabs, once after each call</td><td>Verify signature, finalize the call record, import transcript, extract facts</td></tr>
+</table>
+<h3>Per-turn logic</h3>
+<ol>
+<li><b>Authenticate</b> the request (shared secret; see §9).</li>
+<li><b>Identify the call.</b> ElevenLabs gives agents <code>system__caller_id</code>, <code>system__called_number</code> and <code>system__conversation_id</code> as dynamic variables. We put them into the agent's system prompt on one machine-readable line, e.g. <code>[call caller={{system__caller_id}} called={{system__called_number}} conv={{system__conversation_id}}]</code>. The bridge reads that line from the incoming system message and strips it before the model sees it.</li>
+<li><b>Resolve</b> business (<code>channel_lines</code> by the called number), customer (contact by the caller's E.164 number, any channel), conversation (the one per contact) and call record (<code>calls</code>, created on the first turn, keyed by the ElevenLabs conversation id).</li>
+<li><b>Build context</b> with the same builder as text (<code>context.ts</code>): business rules, voice style, top knowledge matches, the caller's profile and facts, conversation summary, the last texts and calls, then the live call transcript from the request. Mongo reads run in parallel.</li>
+<li><b>Stream the model.</b> Tool loop on the host (up to 3 rounds; see §6). If a tool is slow, send a short filler first ("One moment... "), as ElevenLabs recommends.</li>
+<li><b>Guardrails on the stream.</b> Hold text until a sentence is complete, check it (discount cap, forbidden claims), then release it. A violating sentence is replaced by a safe line. This is how our existing text guardrail works, applied per sentence instead of per message.</li>
+<li><b>Persist.</b> Save the caller's turn immediately; save the agent's turn when its stream completes (flag it <code>interrupted</code> if the caller cut in).</li>
+</ol>
+<h3>Interruptions</h3>
+<p>When the caller talks over the agent, ElevenLabs drops the connection. The bridge must cancel the model request right away (no wasted tokens, no stale text) and only store what could have been spoken.</p>
+
+<h2 id="data">5. Data and memory</h2>
+<ul>
+<li><b>Same customer across channels.</b> A caller who texted last week is recognized by phone number. Contact lookup for voice searches handles across <i>all</i> channels, then adds a <code>voice</code> handle if missing. (Current unique index is per channel, so the lookup is a query change, not a schema change.)</li>
+<li><b>One conversation per contact</b> (existing rule). Call turns are <code>messages</code> with <code>channel:"voice"</code> and a <code>callId</code>, so the inbox shows texts and calls in one timeline.</li>
+<li><b><code>calls</code> collection</b> (exists, empty): add <code>provider:"elevenlabs"</code>, <code>providerConversationId</code> (unique), <code>analysis</code>, <code>costCents</code>, <code>terminationReason</code>.</li>
+<li><b>Message ids for dedupe:</b> <code>channelMsgId = "el:{conversationId}:{turnIndex}"</code>, so retries and the post-call import never create duplicates (existing unique index on channel + id).</li>
+<li><b>Post-call import is authoritative.</b> Live rows can be incomplete (interruptions). When the webhook arrives, the bridge reconciles by turn index against ElevenLabs' transcript.</li>
+<li><b>After the call:</b> store ElevenLabs' summary on the call and in the conversation summary; run fact extraction (name, needs, budget) into <code>contacts.facts</code> with a pointer to the source message; update stage if clear; add a <code>usage</code> record (voice seconds, tokens).</li>
+<li><b>Recordings:</b> do not store audio by default (consent rules differ by state; see §9). Store transcripts only.</li>
+</ul>
+
+<h2 id="actions">6. Actions the agent can take on a call</h2>
+<table>
+<tr><th>Action</th><th>How</th><th>When</th></tr>
+<tr><td>Look up product / price / hours</td><td>Host-side <code>knowledge_search</code> (exists for text)</td><td>V2</td></tr>
+<tr><td>Remember a fact, update lead stage</td><td><code>remember_fact</code>, <code>update_stage</code>, ids from the call, never from the model</td><td>V4</td></tr>
+<tr><td>Hand off to a human</td><td>Return ElevenLabs' <code>transfer_to_number</code> system tool call with the owner's number (a setting on the business). If nobody answers, take a callback request.</td><td>V4</td></tr>
+<tr><td>End the call politely</td><td>ElevenLabs system tool <code>end_call</code></td><td>V4</td></tr>
+<tr><td>Take a callback request / message</td><td>Create a contact note + owner notification in the console</td><td>V4</td></tr>
+<tr><td>Text the caller a follow-up (link, address)</td><td>Send on the channel they already use with us; depends on Photon text sending, which works on iMessage and is blocked on SMS (campaign)</td><td>later</td></tr>
+<tr><td>Book an appointment / take payment</td><td>Needs real integrations</td><td>later</td></tr>
+</table>
+<p class="meta">System tools (<code>end_call</code>, <code>transfer_to_number</code>, <code>skip_turn</code>, <code>language_detection</code>, <code>voicemail_detection</code>) are sent to a Custom LLM in the standard OpenAI <code>tools</code> parameter, and the model's tool calls come back in OpenAI format. Our own tools run inside the bridge and are never exposed to ElevenLabs.</p>
+
+<h2 id="latency">7. Latency</h2>
+<p>Voice feels broken above about 1.5 s of silence. Target: <b>first audio within 1.5 s of the caller finishing, median; under 2.5 s at p95.</b> (Earlier PRD target was 1.2 s median, which may be too tight with a third-party voice layer; confirm by ear.)</p>
+<table>
+<tr><th>Stage</th><th>Estimate</th><th>Source</th></tr>
+<tr><td>End-of-turn detection and speech-to-text</td><td>~300–500 ms</td><td><span class="pill warn">estimate</span> ElevenLabs-owned</td></tr>
+<tr><td>Network ElevenLabs → bridge</td><td>~50–100 ms</td><td><span class="pill warn">estimate</span></td></tr>
+<tr><td>Context load (Mongo, parallel)</td><td>~30–80 ms</td><td><span class="pill warn">estimate</span> Atlas round trip</td></tr>
+<tr><td>Model: time to first sentence</td><td>~400–700 ms</td><td>Measured: whole 56-token reply from Modal took 473 ms (non-streaming); first-token time while streaming not yet measured</td></tr>
+<tr><td>Text-to-speech start</td><td>~150–300 ms</td><td><span class="pill warn">estimate</span> ElevenLabs-owned</td></tr>
+<tr><td><b>Total</b></td><td><b>~1.0–1.7 s</b></td><td>Needs a real call to confirm</td></tr>
+</table>
+<h3>Where we save time</h3>
+<ul>
+<li><b>Skip the sandbox on the hot path.</b> The text path does sandbox <code>/turn</code> → model → sandbox <code>/finalize</code>, which measured about 880 ms for a voice-style turn. The bridge builds the prompt itself and calls the model directly, saving roughly the two sandbox round trips. Tools that truly need the sandbox (later) are called only when needed.</li>
+<li>Stream tokens and release at sentence boundaries; ElevenLabs can start speaking before the reply is finished.</li>
+<li>Short replies: 1–2 sentences, numbers spelled out (existing voice style rule).</li>
+<li>Keep the bridge warm and near Atlas and Modal (region choice when we deploy).</li>
+<li>Prompt-cache the stable prefix (business rules + knowledge) if the provider supports it.</li>
+</ul>
+<div class="callout warn"><b>Unknown that can break the plan:</b> our model gateway currently calls Modal with <code>stream:false</code>. Whether the Modal endpoint streams, and its first-token time, decides whether Option A is viable. This is the first thing to measure (V1).</div>
+
+<h2 id="fail">8. Failure modes</h2>
+<table>
+<tr><th>Failure</th><th>What the caller experiences</th><th>Mitigation</th></tr>
+<tr><td>Bridge down or tunnel dropped</td><td>Silence or error after the greeting</td><td>Health check; ElevenLabs fixed first message so the call isn't dead; consider an ElevenLabs fallback to its own LLM if configurable (<span class="pill warn">verify</span>); alert on 5xx</td></tr>
+<tr><td>Model slow or errors</td><td>Long pause</td><td>Timeout at ~4 s with a spoken fallback ("Let me get someone to call you back") and a callback task</td></tr>
+<tr><td>Mongo slow</td><td>Long pause</td><td>Context load timeout; fall back to business rules + live transcript only</td></tr>
+<tr><td>Caller number missing or withheld</td><td>Agent doesn't know them</td><td>Create an anonymous contact keyed by the call id; merge later if they identify themselves</td></tr>
+<tr><td>Post-call webhook never arrives</td><td>None live; call record stays open</td><td>Reconciler: fetch missing conversations from ElevenLabs' API after N minutes (<span class="pill warn">verify endpoint</span>)</td></tr>
+<tr><td>Duplicate webhook delivery</td><td>None</td><td>Idempotent on <code>providerConversationId</code> and per-turn ids</td></tr>
+<tr><td>Many simultaneous calls</td><td>Rejected or queued by ElevenLabs/Photon</td><td>Each call is an independent stream, so the bridge scales with LLM caps shared with text; concurrency limits depend on plans (unknown)</td></tr>
+<tr><td>Prompt injection by speech ("ignore your rules")</td><td>—</td><td>Same defenses as text: ids from the call not the model, guardrails outside the model, tools scoped to this contact</td></tr>
+</table>
+
+<h2 id="security">9. Security and compliance</h2>
+<ul>
+<li><b>Bridge auth.</b> Use a long random secret. ElevenLabs' Custom LLM page says to store an API-key secret in their settings but does not state which header it is sent in; verify with a test request, and also put an unguessable token in the URL path as a second factor. Reject everything else.</li>
+<li><b>Webhook auth.</b> Verify the <code>ElevenLabs-Signature</code> header against the raw body with their SDK's <code>constructEvent</code>. Their docs don't state the tolerance window; reject stale timestamps anyway. Optionally allow-list their published egress IPs.</li>
+<li><b>Business and caller come from the call, not from claims.</b> The called number maps to the business through <code>channel_lines</code>; speech cannot change it.</li>
+<li><b>Secrets stay out of prompts.</b> Don't put keys in dynamic variables that reach the model; ElevenLabs offers <code>secret__</code> variables restricted to headers.</li>
+<li><b>Disclosure and recording.</b> Say up front that this is an AI assistant. Don't record audio by default. Some US states require all-party consent for recording; get legal input before enabling recordings or outbound calling.</li>
+<li><b>SIP inbound auth.</b> ElevenLabs recommends digest authentication over IP allow-lists because carrier IPs vary. Photon supports sending SIP credentials; we currently send none. Worth adding once a first call works.</li>
+<li><b>PII.</b> Transcripts are personal data; same retention and delete-contact path as messages (open item R10 in the database review).</li>
+</ul>
+
+<h2 id="verify">10. What is verified and what is not</h2>
+<table>
+<tr><th>Claim</th><th>Status</th></tr>
+<tr><td>Photon routes inbound calls to a SIP address we set; default profile exists; set to ElevenLabs</td><td><span class="pill">verified via API</span></td></tr>
+<tr><td>ElevenLabs Custom LLM: OpenAI-compatible, must stream SSE, ends with <code>[DONE]</code>; system tools sent as OpenAI <code>tools</code></td><td><span class="pill">from docs</span></td></tr>
+<tr><td>System variables <code>system__caller_id</code>, <code>system__called_number</code>, <code>system__conversation_id</code>, <code>system__call_id</code> exist</td><td><span class="pill">from docs</span></td></tr>
+<tr><td>Caller id is populated on a call through Photon's SIP trunk</td><td><span class="pill bad">unknown</span> ElevenLabs says <code>X-CALLER-ID</code> / <code>X-CALL-ID</code> headers are needed; whether Photon sends them is untested</td></tr>
+<tr><td>Which auth header ElevenLabs sends to a Custom LLM</td><td><span class="pill bad">unknown</span> not documented</td></tr>
+<tr><td>Conversation-start webhook works for SIP trunk calls (documented for Twilio)</td><td><span class="pill bad">unknown</span> we don't depend on it</td></tr>
+<tr><td>Post-call webhook payload (transcript, analysis, metadata, dynamic variables) and <code>ElevenLabs-Signature</code></td><td><span class="pill">from docs</span></td></tr>
+<tr><td>Modal streams and its first-token time</td><td><span class="pill bad">unknown</span></td></tr>
+<tr><td>Our line (<code>voip_line</code>) is accepted as a voice line by ElevenLabs/Photon</td><td><span class="pill bad">unknown</span> needs a real call</td></tr>
+<tr><td>End-to-end latency numbers</td><td><span class="pill warn">estimates only</span></td></tr>
+</table>
+<p>The caller-id risk matters most. If Photon doesn't pass the caller's number, the agent can't recognize returning customers. The fallback is asking the caller for their number, or asking Photon whether SIP headers can be added.</p>
+
+<h2 id="phases">11. Build order</h2>
+<table>
+<tr><th>Step</th><th>Scope</th><th>Done when</th></tr>
+<tr><td><b>V0</b> · smoke test (30 min)</td><td>You: import the number into ElevenLabs, assign the stock agent. Call it.</td><td>You hear the greeting and a reply; Photon "Recent calls" shows the call</td></tr>
+<tr><td><b>V1</b> · bridge echo</td><td>Bridge endpoint with a fixed streamed reply; tunnel; switch the agent to Custom LLM. Log the full first request. Also measure Modal streaming first-token time.</td><td>We learn: is caller id present, which auth header arrives, real latency</td></tr>
+<tr><td><b>V2</b> · real brain</td><td>Identify business and caller; context builder; stream from Modal; knowledge search; sentence guardrails; cancel on interrupt</td><td>Caller asks the tune-up price and gets the right answer from the business's knowledge</td></tr>
+<tr><td><b>V3</b> · persistence</td><td>Live turn saving; <code>calls</code> record; post-call webhook with signature check; transcript import; summary and facts</td><td>Call appears in the inbox with a transcript, next to that customer's texts</td></tr>
+<tr><td><b>V4</b> · actions</td><td><code>remember_fact</code>, <code>update_stage</code>, transfer to owner, end call, callback request</td><td>Caller asks for a human and is transferred; facts show on the contact</td></tr>
+<tr><td><b>V5</b> · harden</td><td>Timeouts and fallbacks, SIP digest auth, per-call token caps, alerts, load test, retention</td><td>Failure-mode table in §8 each exercised once</td></tr>
+<tr><td><b>V6</b> · later</td><td>Outbound calls (consent + quiet hours), follow-up texts, appointments</td><td>—</td></tr>
+</table>
+<p>The console needs a calls view and a voice timeline entry in the inbox (small, after V3). A shared test for the memory rules from the architecture doc also applies: a canary fact on one caller must never reach another.</p>
+
+<h2 id="open">12. Open questions</h2>
+<ul>
+<li>Do you already have an ElevenLabs agent published, and on which plan (concurrency, Custom LLM availability)?</li>
+<li>Voice choice, language, and first message wording (must include AI disclosure).</li>
+<li>Owner's phone number for human transfer, and what to do outside business hours.</li>
+<li>Where the bridge will run once we leave the tunnel stage (needs always-on, low latency to Atlas and Modal).</li>
+<li>Whether to keep the SMS campaign work on the critical path now that voice and iMessage work.</li>
+<li>Call recording: never, opt-in, or always with consent message? Needs legal input.</li>
+</ul>
+<p class="meta">Sources: ElevenLabs docs read 2026-10-18 (Custom LLM, SIP trunking, dynamic variables, post-call webhooks, server tools, conversation-start webhook), Photon beta voice guide, and the repo state. Latency figures marked "estimate" are not measurements.</p>
+</main>
+</div>
+</body>
+</html>

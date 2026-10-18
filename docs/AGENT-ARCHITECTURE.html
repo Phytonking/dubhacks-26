@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRD — Agent Architecture: threads, memory, concurrency (v0.1)</title>
+<style>
+  :root{--bg:#fafaf7;--fg:#1a1a17;--muted:#66655e;--line:#e3e1d8;--card:#fff;--accent:#2f5d50;--soft:#e4efe9;--warn:#9a5b00;--warnsoft:#fbf0dc;--bad:#9b2c2c;--badsoft:#f8e3e3;--mono:ui-monospace,Menlo,monospace}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 28px 96px;display:grid;grid-template-columns:200px 1fr;gap:44px}
+  nav{position:sticky;top:0;align-self:start;padding-top:48px;font-size:14px}
+  nav .t{font-weight:700;margin-bottom:8px}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:3px 0}
+  nav a:hover{color:var(--accent)}
+  main{padding-top:48px;min-width:0}
+  h1{font-size:32px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:22px;margin:54px 0 12px;padding-top:20px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 6px}
+  .meta{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:12px;padding:1px 9px;border-radius:99px;font-weight:600;margin-right:4px;background:var(--soft);color:var(--accent)}
+  .pill.warn{background:var(--warnsoft);color:var(--warn)}.pill.bad{background:var(--badsoft);color:var(--bad)}.pill.plan{background:#ecece4;color:#66655e}
+  code{font-family:var(--mono);font-size:13px;background:#efede4;padding:1px 5px;border-radius:4px}
+  pre{background:#1d2421;color:#e8efe9;padding:14px 16px;border-radius:8px;overflow:auto;font:12.5px/1.55 var(--mono)}
+  pre code{background:none;padding:0;color:inherit}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:10px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1efe6}
+  .callout{background:var(--soft);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{background:var(--warnsoft);border-color:var(--warn)}
+  .callout.bad{background:var(--badsoft);border-color:var(--bad)}
+  .qa{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+  .qa div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
+  .qa b{display:block;margin-bottom:2px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;overflow:auto}
+  ul,ol{padding-left:22px}
+  a{color:var(--accent)}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr}nav{display:none}.qa{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="t">Contents</div>
+  <a href="#answers">1. Short answers</a>
+  <a href="#today">2. What exists today</a>
+  <a href="#gaps">3. Gaps found</a>
+  <a href="#principles">4. Principles</a>
+  <a href="#memory">5. Threads &amp; memory</a>
+  <a href="#concurrency">6. Concurrency</a>
+  <a href="#turn">7. Turn lifecycle</a>
+  <a href="#context">8. Context &amp; summaries</a>
+  <a href="#harness">9. Harness</a>
+  <a href="#schema">10. Data changes</a>
+  <a href="#code">11. Code layout</a>
+  <a href="#example">12. Worked example</a>
+  <a href="#tests">13. Tests</a>
+  <a href="#phases">14. Build order</a>
+  <a href="#open">15. Open questions</a>
+</nav>
+
+<main>
+<p class="meta"><span class="pill">Draft v0.1</span> 2026-10-17 · owner: Avi Agola · extends <a href="PRD.html">PRD.html</a> and <a href="PRD-agent-runtime-photon-voice.html">PRD-agent-runtime-photon-voice.html</a></p>
+<h1>Agent Architecture: threads, memory, concurrency</h1>
+<p class="meta">How one agent per business serves many customers at the same time without mixing them up, dropping messages, or answering twice.</p>
+
+<div class="callout warn"><b>Review 2026-10-18:</b> Amendments: the conversation summary lives on <code>contacts.memory.summary</code>, not <code>conversations.summary</code> (C8); tools are named in snake_case (C7); the engine library runs on the host in v1 (C1, decision D-A1). See <a href="AGENT-MASTER.html">AGENT-MASTER.html</a>.</div>
+<div class="callout"><b>Status 2026-10-18:</b> Gaps G1 to G9 (section 3) are fixed in branch <code>agent/core-v1</code>: ingest no longer waits for the model (30 messages stored and scheduled in about 50 ms), per-conversation lanes order messages and merge bursts, crashes are recovered by lease expiry, caps and single-flight wake bound the load, contact memory and summaries reach the model, and sends are idempotent. Each has a test (see AGENT-MASTER section 9a).</div>
+<h2 id="answers">1. Short answers</h2>
+<div class="qa">
+<div><b>Does the agent have threads?</b>Yes, but the agent itself holds none. A thread is a <code>conversation</code> in Mongo (one per contact, spanning channels). The agent is stateless between turns: each turn is rebuilt from Mongo for exactly one thread.</div>
+<div><b>Does it share one memory?</b>Two tiers. <b>Shared</b>: the business's persona, rules and knowledge, identical for every customer. <b>Private</b>: each contact's history, summary and facts, visible only inside that contact's turns. One giant shared chat context would leak customers into each other and cost far more.</div>
+<div><b>Many customers at once?</b>Parallel across threads, strictly one-at-a-time within a thread. A per-thread "lane" in Mongo orders messages, merges bursts into one reply, survives crashes, and caps total load.</div>
+<div><b>Can customers see each other's data?</b>Not by construction: ids are set by our worker, never by the model, and a canary test enforces it (§13).</div>
+</div>
+<div class="callout"><b>Bottom line.</b> The pipeline you already have (provision sandbox → agent builds prompt → host calls the LLM → guardrails → send, all logged) is a good single-customer core and already stateless per turn, which is the right foundation. What's missing is the <b>scheduling layer in front of it</b> and the <b>memory layer inside it</b>. Both are small, and both fit in Mongo with no new infrastructure.</div>
+
+<div class="callout warn"><b>Update 2026-10-18:</b> the statement below that the sandbox "cannot reach the internet" is no longer true. A probe today reached Modal, npm and other hosts from inside a sandbox (<a href="VOICE-LATENCY.html">VOICE-LATENCY.html §3</a>). The host-side model call is therefore a security choice (keep the model credential out of the sandbox), not a network necessity. Section 9 (harness) reasoning that depended on blocked egress should be re-read with that in mind.</div>
+<h2 id="today">2. What exists today</h2>
+<p>Read from <code>agent/</code> on branch <code>photon-connection-prd-design</code>, plus <a href="TEST-REPORT-agent-runtime.html">TEST-REPORT</a> (19/19 checks, sequential single-customer runs).</p>
+<table>
+<tr><th>Piece</th><th>File</th><th>What it does</th></tr>
+<tr><td>Orchestrator</td><td><code>orchestrator.ts</code></td><td><code>provisionAgent(orgId)</code>: create Daytona sandbox, upload <code>agentd</code>, start, health check, assign line (2.4 s). <code>wake(orgId)</code> restarts a stopped sandbox (3.0 s). Allow-listed env; platform secrets never enter the sandbox.</td></tr>
+<tr><td>Agent in sandbox</td><td><code>sandbox/agentd.mjs</code></td><td>~60 lines, no harness. <code>POST /turn</code> builds the prompt (persona, guardrail text, channel style, keyword-matched knowledge) and returns messages; <code>POST /finalize</code> strips reasoning from the LLM answer. Stateless, so it already handles concurrent requests.</td></tr>
+<tr><td>Link to sandbox</td><td><code>sandbox-link.ts</code></td><td>Reaches agentd through Daytona's preview URL. Sequence per turn: sandbox <code>/turn</code> → <b>host</b> calls Modal → sandbox <code>/finalize</code>. The sandbox never calls the LLM (Daytona tier blocks its egress), so the model call lives host-side.</td></tr>
+<tr><td>Worker</td><td><code>recorded-io.ts</code></td><td><code>handleInbound</code>: upsert contact and conversation, persist the inbound message (dedupe key), ack, wake sandbox, load last ~6 messages, send turn, log tool calls and tokens, guardrail-check, record intent, send, mark delivery. Human-mode conversations store and stay silent.</td></tr>
+<tr><td>Photon in</td><td><code>photon.ts</code>, <code>webhook.ts</code>, <code>photon-worker.ts</code></td><td>Live socket with replay cursor in Mongo, and a signature-verified webhook receiver. Both feed <code>handleInbound</code>.</td></tr>
+<tr><td>Photon out</td><td><code>PhotonAdapter</code></td><td>Async send with idempotency key; delivery events update message status.</td></tr>
+<tr><td>Platform services</td><td><code>platform.ts</code></td><td>LLM gateway, Agent API and Hub (agent dials home). Designed for a tier with full egress; the preview-URL path is what runs today.</td></tr>
+</table>
+<p><b>Not there yet:</b> any harness (Hermes or fx), real tools beyond keyword knowledge search, contact memory, summaries, per-thread ordering, a queue, concurrency limits.</p>
+
+<h2 id="gaps">3. Gaps found (what breaks with many customers)</h2>
+<p>These are from reading the code, not guesses. Each is a concrete failure under load.</p>
+<table>
+<tr><th>#</th><th>Gap</th><th>What happens</th></tr>
+<tr><td>G1</td><td><span class="pill bad">blocking</span> Live socket processes events strictly one at a time</td><td><code>PhotonEvents</code> awaits the handler, and the handler awaits the <i>entire</i> agent turn, then saves the cursor. 20 customers texting together means the last one waits ~20 × 1.5 s = 30 s. One slow or hung turn freezes every business on that Photon project.</td></tr>
+<tr><td>G2</td><td><span class="pill bad">blocking</span> Same customer, rapid messages: no ordering</td><td>Webhook path runs every message's turn in parallel. "Do you have size 54?" then "and in blue?" start two turns that both read history before either reply is stored. Result: two replies, possibly contradictory, possibly out of order.</td></tr>
+<tr><td>G3</td><td><span class="pill bad">blocking</span> A crash loses the reply</td><td>The message is stored (<code>received</code>) and acked, then the turn runs only in process memory. If the worker restarts or <code>ensureOnline</code> throws, nothing retries it. The customer is silently ignored.</td></tr>
+<tr><td>G4</td><td><span class="pill warn">gap</span> Unbounded parallel load</td><td>Webhook path has no cap: a burst of 100 messages is 100 simultaneous Modal calls and 100 simultaneous <code>wake</code> attempts on a stopped sandbox (<code>wake</code> has no single-flight guard).</td></tr>
+<tr><td>G5</td><td><span class="pill warn">gap</span> Contact memory never reaches the agent</td><td>The turn payload carries org, agent and knowledge only. <code>contacts.facts</code>, stage and notes are not sent and nothing writes facts. The agent knows the product but not the person.</td></tr>
+<tr><td>G6</td><td><span class="pill warn">gap</span> History is a 6-message window, no summary</td><td>Conversations last forever (one per contact). Message 40 forgets what message 3 established.</td></tr>
+<tr><td>G7</td><td><span class="pill warn">gap</span> Stale replies</td><td>If the customer sends another message while the LLM is generating, the finished reply answers an outdated state.</td></tr>
+<tr><td>G8</td><td><span class="pill warn">gap</span> Whole knowledge base shipped each turn</td><td>All <code>knowledge</code> docs travel in every turn and are keyword-matched. Fine for a 10-line FAQ, wrong for a catalog.</td></tr>
+<tr><td>G9</td><td>Retry would double-send</td><td><code>clientMsgId</code> is a fresh random UUID per attempt, so Photon's idempotency key cannot protect a re-run turn.</td></tr>
+</table>
+
+<h2 id="principles">4. Design principles</h2>
+<ol>
+<li><b>The agent is stateless between turns.</b> Mongo is the memory. Sandbox disk and process state are disposable.</li>
+<li><b>A turn serves exactly one conversation.</b> Nothing from another contact is ever loaded into it.</li>
+<li><b>Context = shared business layer + private contact layer.</b> Different lifetimes, different owners (§5).</li>
+<li><b>Serial within a thread, parallel across threads.</b> Order matters per customer; throughput matters across customers.</li>
+<li><b>Persist first, schedule second, act last.</b> Acking Photon means "stored", not "answered". A stored-but-unanswered message must always be recoverable.</li>
+<li><b>At-least-once work, exactly-once effect.</b> Turns may be retried; the send is idempotent by a deterministic key.</li>
+<li><b>Host orchestrates, sandbox executes tools.</b> Keeps secrets and the model call outside the untrusted box (already true today).</li>
+</ol>
+
+<h2 id="memory">5. Threads and memory</h2>
+<p>A <b>thread</b> is a <code>conversation</code>: one per contact, shared across iMessage, WhatsApp, SMS and voice. When a turn starts, the worker assembles that thread's context from five layers:</p>
+<div class="diagram">
+<svg viewBox="0 0 900 330" width="100%" font-family="-apple-system,Segoe UI,sans-serif" font-size="13">
+  <defs><marker id="a1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#66655e"/></marker></defs>
+  <g stroke="#2f5d50" fill="#e4efe9"><rect x="20" y="20" width="360" height="52" rx="8"/><rect x="20" y="78" width="360" height="52" rx="8"/></g>
+  <g stroke="#9a5b00" fill="#fbf0dc"><rect x="20" y="148" width="360" height="52" rx="8"/><rect x="20" y="206" width="360" height="52" rx="8"/><rect x="20" y="264" width="360" height="52" rx="8"/></g>
+  <g fill="#1a1a17" font-weight="600"><text x="34" y="42">L1  Business rules</text><text x="34" y="100">L2  Knowledge (top matches)</text><text x="34" y="170">L3  Contact profile</text><text x="34" y="228">L4  Conversation summary</text><text x="34" y="286">L5  Recent messages + new batch</text></g>
+  <g fill="#66655e" font-size="12"><text x="34" y="60">persona · guardrails · hours · brand voice · channel style</text><text x="34" y="118">retrieved per question from the business's catalog / FAQ</text><text x="34" y="188">name · stage · score · learned facts (with source message)</text><text x="34" y="246">rolling summary of everything older than the window</text><text x="34" y="304">last N messages across all channels, tagged by channel</text></g>
+  <g fill="#1a1a17" font-weight="600" font-size="12"><text x="400" y="52">SHARED by all customers of this business</text><text x="400" y="178">PRIVATE to this one contact</text></g>
+  <g fill="#66655e" font-size="12"><text x="400" y="70">orgs · agents (read-only to the turn) → cacheable prompt prefix</text><text x="400" y="88">knowledge, knowledge_chunks</text><text x="400" y="196">contacts · conversations.summary · messages</text><text x="400" y="214">written only by tools bound to this contactId</text></g>
+  <path d="M650 160 H730" stroke="#66655e" fill="none" marker-end="url(#a1)" stroke-width="1.4"/>
+  <g stroke="#1a1a17" fill="#fff"><rect x="735" y="110" width="150" height="100" rx="10"/></g>
+  <g fill="#1a1a17" text-anchor="middle" font-weight="600"><text x="810" y="150">One LLM call</text></g>
+  <g fill="#66655e" text-anchor="middle" font-size="12"><text x="810" y="170">for one thread,</text><text x="810" y="186">~3–4k tokens</text></g>
+</svg>
+</div>
+
+<table>
+<tr><th>Layer</th><th>Shared or private</th><th>Stored in</th><th>Who writes it</th></tr>
+<tr><td>L1 Business rules</td><td><span class="pill">shared</span></td><td><code>orgs</code>, <code>agents</code></td><td>Owner in the console</td></tr>
+<tr><td>L2 Knowledge</td><td><span class="pill">shared</span></td><td><code>knowledge</code>, <code>knowledge_chunks</code></td><td>Owner (upload) and ingest job</td></tr>
+<tr><td>L3 Contact profile</td><td><span class="pill warn">private</span></td><td><code>contacts</code> (name, stage, score, facts[])</td><td>Agent tools <code>remember_fact</code>, <code>update_stage</code>; owner edits</td></tr>
+<tr><td>L4 Summary</td><td><span class="pill warn">private</span></td><td><code>conversations.summary</code> (new)</td><td>Background summarizer</td></tr>
+<tr><td>L5 Recent messages</td><td><span class="pill warn">private</span></td><td><code>messages</code></td><td>Worker (in and out)</td></tr>
+<tr><td>Turn scratch (tool results)</td><td>transient</td><td>discarded after the turn; audited in <code>tool_calls</code></td><td>—</td></tr>
+</table>
+
+<h3>Isolation rules (enforced in code, not by prompting)</h3>
+<ul>
+<li>The worker stamps every turn with <code>(orgId, conversationId, contactId)</code>. Tool implementations read ids from that envelope. <b>The model never supplies an id</b>, so it cannot ask for another contact.</li>
+<li>No tool lists or searches contacts. The only cross-customer reads are owner-facing, in the console.</li>
+<li>Learning across customers (e.g. "many ask about Brompton bikes") goes to an owner-reviewed <code>insights</code> queue. It is never injected automatically into another customer's context.</li>
+<li>One conversation spans channels, so a contact who iMessages and then calls gets one continuous thread, but only their own.</li>
+</ul>
+
+<h2 id="concurrency">6. Concurrency: many customers, one agent</h2>
+<p>Each conversation is a <b>lane</b>. Lanes run in parallel; messages inside a lane are handled in order, and bursts are merged. State lives on the conversation document, so it is durable and visible to every worker instance.</p>
+
+<div class="diagram">
+<svg viewBox="0 0 900 330" width="100%" font-family="-apple-system,Segoe UI,sans-serif" font-size="12.5">
+  <g stroke="#e3e1d8" stroke-width="1">
+    <path d="M150 40 V290"/><path d="M210 40 V290"/><path d="M270 40 V290"/><path d="M330 40 V290"/><path d="M390 40 V290"/><path d="M450 40 V290"/><path d="M510 40 V290"/><path d="M570 40 V290"/><path d="M630 40 V290"/><path d="M690 40 V290"/>
+  </g>
+  <g fill="#66655e" text-anchor="middle" font-size="11"><text x="150" y="32">0 s</text><text x="210" y="32">1</text><text x="270" y="32">2</text><text x="330" y="32">3</text><text x="390" y="32">4</text><text x="450" y="32">5</text><text x="510" y="32">6</text><text x="570" y="32">7</text><text x="630" y="32">8</text><text x="690" y="32">9</text></g>
+  <g fill="#1a1a17" font-weight="600"><text x="14" y="75">Maya (burst of 3)</text><text x="14" y="135">Devon (human mode)</text><text x="14" y="195">Priya</text><text x="14" y="255">Sandbox (asleep)</text></g>
+  <!-- Maya -->
+  <g fill="#2f5d50"><circle cx="150" cy="70" r="6"/><circle cx="240" cy="70" r="6"/><circle cx="330" cy="70" r="6"/></g>
+  <rect x="150" y="82" width="300" height="12" rx="3" fill="#fbf0dc" stroke="#9a5b00"/>
+  <text x="300" y="92" text-anchor="middle" font-size="10" fill="#9a5b00">wait 2 s after the last message (merge the burst)</text>
+  <rect x="450" y="58" width="90" height="26" rx="5" fill="#2f5d50"/><text x="495" y="75" text-anchor="middle" fill="#fff">one turn</text>
+  <path d="M540 71 H560" stroke="#2f5d50" marker-end="url(#a3)"/><text x="565" y="75" fill="#2f5d50">1 reply</text>
+  <!-- Devon -->
+  <circle cx="270" cy="130" r="6" fill="#9a5b00"/><text x="285" y="134" fill="#9a5b00">stored, owner notified, no agent turn</text>
+  <!-- Priya -->
+  <circle cx="390" cy="190" r="6" fill="#2f5d50"/>
+  <rect x="390" y="202" width="120" height="12" rx="3" fill="#fbf0dc" stroke="#9a5b00"/>
+  <rect x="510" y="178" width="90" height="26" rx="5" fill="#2f5d50"/><text x="555" y="195" text-anchor="middle" fill="#fff">one turn</text>
+  <path d="M600 191 H620" stroke="#2f5d50" marker-end="url(#a3)"/><text x="625" y="195" fill="#2f5d50">reply</text>
+  <!-- Sandbox -->
+  <rect x="150" y="242" width="180" height="26" rx="5" fill="#ecece4" stroke="#66655e"/><text x="240" y="259" text-anchor="middle">wake once (3 s), hidden in the wait</text>
+  <rect x="330" y="242" width="360" height="26" rx="5" fill="#e4efe9" stroke="#2f5d50"/><text x="510" y="259" text-anchor="middle">running · Maya's and Priya's turns overlap</text>
+  <defs><marker id="a3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#2f5d50"/></marker></defs>
+</svg>
+<p class="meta" style="margin:6px 0 0">Illustrative timings. The first inbound message starts the sandbox wake immediately, so the 2-second merge window hides most of the 3-second cold start. Maya gets one answer to all three messages, not three.</p>
+</div>
+
+<h3>Mechanism</h3>
+<pre><code>conversations.lane = {
+  dueAt:      Date | null,   // when the next turn may start (now + debounce, extended per new message, capped)
+  state:      "idle" | "running",
+  owner:      string | null, // worker instance id
+  leaseUntil: Date | null,   // crash recovery: expired lease = reclaimable
+  cursor:     ObjectId | null // last inbound message already answered
+}
+
+1. INBOUND (fast path, runs inside the Photon handler, ~10 ms)
+   persist message (existing dedupe key) -> set lane.dueAt = min(now + 2s, firstUnansweredAt + 8s)
+   -> ack Photon -> advance Photon cursor.        // no agent work happens here
+
+2. DISPATCH (loop in the worker, every ~250 ms)
+   claim = conversations.findOneAndUpdate(
+     { "lane.dueAt": {$lte: now}, mode: "agent",
+       $or: [{"lane.state":"idle"}, {"lane.leaseUntil": {$lt: now}}] },
+     { $set: {"lane.state":"running", "lane.owner": me, "lane.leaseUntil": now+60s} })
+   honour caps before claiming: global in-flight, per-org in-flight.
+
+3. TURN: batch = inbound messages after lane.cursor; build context (§8); run (§7)
+
+4. COMMIT: re-check mode and newer inbound (§7 step 8); send with a deterministic idempotency key;
+   set lane.cursor = last batch message, state = idle; dueAt stays null unless new messages arrived.</code></pre>
+
+<table>
+<tr><th>Concern</th><th>How it is handled</th></tr>
+<tr><td>Messages from one customer, fast</td><td>Same lane: debounced into one batch, answered once, in order.</td></tr>
+<tr><td>Many customers at once</td><td>Different lanes run in parallel, up to <b>global cap</b> (start 8 turns) and <b>per-business cap</b> (start 3). Excess waits in <code>dueAt</code> order, oldest first, round-robin across businesses so one busy business cannot starve others.</td></tr>
+<tr><td>Worker crash mid-turn</td><td>Lease expires after 60 s; another dispatcher reclaims the lane and re-runs from <code>cursor</code>. Reply send uses key <code>turn:{conversationId}:{lastInboundId}</code>, so a retry cannot double-send.</td></tr>
+<tr><td>Worker restart</td><td>Nothing is in memory that matters: any conversation with <code>dueAt</code> set or an expired lease is picked up on boot. This closes G3.</td></tr>
+<tr><td>Sandbox asleep, 50 lanes due</td><td><code>wake(orgId)</code> becomes single-flight: one in-process promise per business (and a Mongo lease if we run several workers). All 50 lanes await the same wake.</td></tr>
+<tr><td>Customer writes while the model is thinking</td><td>Step 8 of the turn compares newest inbound id to the batch. If newer messages exist and no side-effecting tool ran, <b>discard the draft and re-run with the larger batch</b> (max 2 reruns). Otherwise send, then the lane re-fires for the new messages.</td></tr>
+<tr><td>Owner takes over mid-turn</td><td>Mode is re-read just before sending; if now <code>human</code>, the draft is dropped and logged.</td></tr>
+<tr><td>Photon socket head-of-line blocking (G1)</td><td>The handler now only persists and sets <code>dueAt</code> (milliseconds), so the strictly-serial socket consumer is never blocked by an LLM call.</td></tr>
+<tr><td>Agent process in the sandbox</td><td>Stateless HTTP handlers: concurrent turns for different lanes are just concurrent requests. LLM time is host-side (not sandbox CPU). Heavy tools later get a per-sandbox concurrency cap.</td></tr>
+</table>
+
+<h3>Why Mongo for the queue (and when to switch)</h3>
+<table>
+<tr><th>Option</th><th>Durable</th><th>New infra</th><th>Verdict</th></tr>
+<tr><td>In-memory per-conversation mutex</td><td>No</td><td>None</td><td>Too fragile: this is today's G3.</td></tr>
+<tr><td><b>Mongo lane on the conversation doc</b></td><td>Yes</td><td>None</td><td><b>Recommended for MVP.</b> Atomic claim via <code>findOneAndUpdate</code>; works across several worker instances; state visible in the console.</td></tr>
+<tr><td>Redis + BullMQ with job groups</td><td>Yes</td><td>Redis</td><td>Switch if dispatcher polling or claim contention shows up (think thousands of active lanes).</td></tr>
+</table>
+
+<h2 id="turn">7. Turn lifecycle</h2>
+<div class="diagram">
+<svg viewBox="0 0 900 190" width="100%" font-family="-apple-system,Segoe UI,sans-serif" font-size="12">
+  <defs><marker id="a2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#66655e"/></marker></defs>
+  <g stroke="#2f5d50" fill="#e4efe9"><rect x="10" y="20" width="120" height="54" rx="8"/><rect x="150" y="20" width="120" height="54" rx="8"/><rect x="290" y="20" width="120" height="54" rx="8"/></g>
+  <g stroke="#9a5b00" fill="#fbf0dc"><rect x="430" y="20" width="130" height="54" rx="8"/><rect x="580" y="20" width="130" height="54" rx="8"/></g>
+  <g stroke="#2f5d50" fill="#e4efe9"><rect x="730" y="20" width="150" height="54" rx="8"/></g>
+  <g stroke="#b4b1a3" fill="#f4f2ea"><rect x="150" y="110" width="150" height="54" rx="8"/><rect x="330" y="110" width="150" height="54" rx="8"/><rect x="510" y="110" width="150" height="54" rx="8"/><rect x="690" y="110" width="190" height="54" rx="8"/></g>
+  <g fill="#1a1a17" text-anchor="middle" font-weight="600"><text x="70" y="44">Photon</text><text x="210" y="44">Worker</text><text x="350" y="44">Lane claim</text><text x="495" y="44">Context</text><text x="645" y="44">Tool loop</text><text x="805" y="44">Pre-send checks</text>
+  <text x="225" y="134">Sandbox agentd</text><text x="405" y="134">Host LLM (Modal)</text><text x="585" y="134">Guardrails</text><text x="785" y="134">Photon send + Mongo</text></g>
+  <g fill="#66655e" text-anchor="middle" font-size="11"><text x="70" y="62">message.received</text><text x="210" y="62">persist, set dueAt</text><text x="350" y="62">lease, caps</text><text x="495" y="62">L1–L5 from Mongo</text><text x="645" y="62">up to 4 rounds</text><text x="805" y="62">mode, newer msgs</text>
+  <text x="225" y="152">prompt, run tools</text><text x="405" y="152">completion</text><text x="585" y="152">discount etc.</text><text x="785" y="152">idempotent, logged</text></g>
+  <g stroke="#66655e" fill="none" marker-end="url(#a2)" stroke-width="1.3"><path d="M130 47 H150"/><path d="M270 47 H290"/><path d="M410 47 H430"/><path d="M560 47 H580"/><path d="M710 47 H730"/><path d="M805 74 V110"/><path d="M645 74 L300 125" stroke-dasharray="3 3"/><path d="M645 74 L405 110" stroke-dasharray="3 3"/></g>
+</svg>
+</div>
+<ol>
+<li><b>Persist and schedule</b> (§6 step 1). Photon is acked.</li>
+<li><b>Claim the lane</b> once <code>dueAt</code> passes and caps allow.</li>
+<li><b>Ensure sandbox online</b> (single-flight wake).</li>
+<li><b>Build context</b> (§8) for this conversation only.</li>
+<li><b>Tool loop, host-orchestrated:</b> sandbox <code>/turn</code> returns the prompt; host calls the LLM; if the completion asks for a tool, host posts it to a new sandbox <code>/tool</code> endpoint, appends the result, calls the LLM again. Maximum 4 rounds, then a safe fallback reply. This is a small extension of today's two-phase <code>/turn</code> → LLM → <code>/finalize</code>.</li>
+<li><b>Tools available (v1):</b> <code>knowledge_search</code> (exists), <code>remember_fact</code>, <code>update_stage</code>, <code>escalate_to_human</code>. Later: inventory lookup, booking, payments. Each runs with ids from the envelope and is logged to <code>tool_calls</code>.</li>
+<li><b>Guardrails</b> on the final text, outside the model (exists: discount cap). Blocked drafts are stored as <code>blocked</code>, never sent.</li>
+<li><b>Pre-send re-check:</b> conversation still <code>agent</code> mode? newer inbound than the batch? (rules in §6).</li>
+<li><b>Send and record:</b> existing queued → sending → sent path, with the deterministic idempotency key; advance <code>lane.cursor</code>; write <code>agent_turns</code> audit row and usage.</li>
+</ol>
+
+<h2 id="context">8. Context assembly and summaries</h2>
+<table>
+<tr><th>Part</th><th>Budget (tokens, starting guess)</th><th>Notes</th></tr>
+<tr><td>L1 Business rules + channel style</td><td>~600</td><td>Identical for all customers of a business → stable prefix, eligible for provider prompt caching, which makes "one agent, many customers" cheaper than N separate agents.</td></tr>
+<tr><td>L2 Knowledge (top-k)</td><td>~800</td><td>Today: keyword match over all docs. Next: chunk retrieval from <code>knowledge_chunks</code> (add embeddings + Atlas Vector Search when the catalog outgrows keyword).</td></tr>
+<tr><td>L3 Contact profile</td><td>~200</td><td>Name, stage, facts (newest first, capped).</td></tr>
+<tr><td>L4 Conversation summary</td><td>~400</td><td>Everything older than the window.</td></tr>
+<tr><td>L5 Recent messages + batch</td><td>~1,500</td><td>By token budget, not a fixed count; each tagged with channel (so voice and text read as one story).</td></tr>
+<tr><td>Reply headroom</td><td>~300</td><td>Channel style keeps iMessage replies short.</td></tr>
+</table>
+<h3>Summarizer</h3>
+<ul>
+<li>Runs in the background after a turn when unsummarized messages exceed the window (e.g. &gt; 20 or &gt; 2k tokens). Cheap model, low priority, same caps.</li>
+<li>Writes <code>conversations.summary = {text, throughMessageId, updatedAt}</code>. Idempotent: it only folds messages up to <code>throughMessageId</code>.</li>
+<li>Also proposes facts with <code>sourceMessageId</code> pointers; the owner can correct or delete any fact in the console.</li>
+<li>Summaries are plain text and are <i>regenerable</i> from <code>messages</code>, so a bad summary is never fatal.</li>
+</ul>
+
+<h2 id="harness">9. Harness decision, updated</h2>
+<p>The earlier PRDs leaned toward Hermes. What got built differs, and the multi-customer requirement adds a new constraint, so I'm revising that lean.</p>
+<table>
+<tr><th>Fact</th><th>Consequence</th></tr>
+<tr><td>Sandbox cannot reach the internet on the current Daytona tier, so the model call is made by the host.</td><td>Hermes, which runs the whole loop inside its box, cannot run there as-is. A host-driven loop with sandbox-executed tools matches reality (and matches how fx is designed).</td></tr>
+<tr><td>Hermes advertises self-improving, agent-wide memory (cross-session recall, user modeling) from its public docs.</td><td>For one agent serving many customers, memory that accumulates across sessions is a leak path unless disabled. Default-on features are a liability here. <span class="pill warn">VERIFY</span> whether Hermes can be run with those turned off.</td></tr>
+<tr><td>Our memory must live in Mongo and be scoped per contact.</td><td>Any harness we adopt must be used as a pure turn function: context in, reply plus tool calls out.</td></tr>
+</table>
+<div class="callout"><b>Recommendation:</b> keep the thin custom loop now (it already works: 1.2 s round trips). Add the tool loop and memory from §5–§8 ourselves; it's a few hundred lines. If we want a library for the host-side tool loop, use the <b>AI SDK</b> agent loop or <b>fx</b> in a stateless mode. Re-evaluate Hermes only for a different product (an owner-facing assistant), where cross-session memory is a feature. I'd keep the <code>AgentRuntime</code> interface so this stays swappable.</div>
+
+<h2 id="schema">10. Data changes (proposed, not applied)</h2>
+<table>
+<tr><th>Where</th><th>Change</th><th>Why</th></tr>
+<tr><td><code>conversations</code></td><td>Add <code>lane {dueAt, state, owner, leaseUntil, cursor}</code> and <code>summary {text, throughMessageId, updatedAt}</code>. Index <code>(lane.dueAt)</code> partial on <code>dueAt != null</code>.</td><td>Ordering, crash recovery, long-thread memory</td></tr>
+<tr><td><code>agent_turns</code> (new)</td><td><code>orgId, conversationId, turnId, batchMessageIds[], model, tokensIn/Out, ms, rounds, toolCalls, outcome (sent|blocked|discarded|failed), attempts, startedAt</code>. Index <code>(conversationId, startedAt)</code>.</td><td>Audit, debugging, cost per conversation. Worker already writes pieces of this to <code>tool_calls</code> and <code>usage</code>.</td></tr>
+<tr><td><code>insights</code> (new)</td><td><code>orgId, kind, text, evidenceMessageIds[], status (new|accepted|dismissed)</code></td><td>Owner-reviewed cross-customer learning</td></tr>
+<tr><td><code>messages</code></td><td>Make outbound <code>clientMsgId</code> deterministic (<code>turn:{conv}:{lastInboundId}</code>)</td><td>Safe retries (G9)</td></tr>
+<tr><td><code>agents</code></td><td>Add <code>limits {maxConcurrentTurns, debounceMs}</code> (defaults from plan)</td><td>Per-business caps</td></tr>
+</table>
+<p class="meta">Schema lives in <code>web/src/lib/schema.ts</code>; the Photon branch already added <code>consumer_cursors</code> and extra message statuses (<code>received</code>, <code>queued</code>, <code>blocked</code>…). Reconcile before adding mine.</p>
+
+<h2 id="code">11. Code layout in <code>agent/src/</code></h2>
+<pre><code>recorded-io.ts   Worker.handleInbound  -> split: ingest() = persist + set dueAt (fast, acks Photon)
+scheduler.ts     NEW  lane claim loop, caps, round-robin across orgs, lease reclaim, boot recovery
+turn.ts          NEW  runTurn(conversationId): context -> tool loop -> guardrails -> pre-send checks -> send
+context.ts       NEW  builds L1-L5 for ONE conversation; token budgeting; the only place that reads memory
+tools/           NEW  tool defs (host side) + sandbox executors; ids come from the envelope, never the model
+summarizer.ts    NEW  background fold of old messages into conversations.summary
+limits.ts        NEW  semaphores (global, per org), single-flight wake
+sandbox/agentd.mjs    add POST /tool; stays stateless
+orchestrator.ts       wake() made single-flight</code></pre>
+
+<h2 id="example">12. Worked example</h2>
+<p>Sunrise Bike Shop's sandbox is asleep. At 10:00:00 three things happen:</p>
+<table>
+<tr><th>Time</th><th>Event</th><th>System response</th></tr>
+<tr><td>0.0 s</td><td>Maya: "Hi, looking for a commuter bike"</td><td>Stored, lane <code>dueAt</code>=+2 s, <b>wake starts</b> (single-flight).</td></tr>
+<tr><td>1.5 s</td><td>Maya: "under $1500"</td><td>Stored, <code>dueAt</code> pushed to +2 s again.</td></tr>
+<tr><td>2.0 s</td><td>Devon (owner has taken over): "can I get a tune-up Thursday?"</td><td>Stored, mode is human: no lane, owner notified.</td></tr>
+<tr><td>3.0 s</td><td>Maya: "8 mile commute"</td><td>Stored, <code>dueAt</code> → 5.0 s. Sandbox is awake by now.</td></tr>
+<tr><td>4.0 s</td><td>Priya: "what are your hours on Sunday?"</td><td>Stored, own lane, <code>dueAt</code> → 6.0 s.</td></tr>
+<tr><td>5.0 s</td><td>Maya's lane fires</td><td>Context = business rules + knowledge hits for "commuter bike" + Maya's profile + her 3 messages. One reply to all three. Facts saved: budget $1,500, 8-mile commute.</td></tr>
+<tr><td>6.0 s</td><td>Priya's lane fires, overlapping Maya's turn</td><td>Context contains nothing about Maya. Replies "closed Sundays".</td></tr>
+<tr><td>7.0 s</td><td>Maya sends "and e-bikes?" while her second turn is generating</td><td>Pre-send check sees a newer message, no side-effecting tool ran → draft discarded, re-run with the new message, one reply.</td></tr>
+</table>
+
+<h2 id="tests">13. Test plan</h2>
+<table>
+<tr><th>Test</th><th>Pass when</th></tr>
+<tr><td>Burst merge</td><td>3 messages in 3 s from one contact → exactly 1 outbound message, 1 <code>agent_turns</code> row covering all 3</td></tr>
+<tr><td>Ordering</td><td>Two messages 100 ms apart never produce parallel turns for that conversation</td></tr>
+<tr><td>Parallelism</td><td>20 contacts message at once → total time ≈ ceil(20 / cap) × turn time, not 20 × turn time</td></tr>
+<tr><td>Crash recovery</td><td>Kill the worker between persist and send → after restart the reply is sent exactly once</td></tr>
+<tr><td>Double-send</td><td>Force a retry after a successful Photon accept → Photon sees the same idempotency key, one delivery</td></tr>
+<tr><td>Wake stampede</td><td>20 lanes due on a stopped sandbox → exactly 1 <code>daytona.start</code></td></tr>
+<tr><td><b>Isolation canary</b></td><td>Plant "secret-canary-7731" as a fact on contact A. Run 50 turns for contact B (same business, then another business). The string never appears in any payload sent to the sandbox or the LLM for B, nor in B's replies</td></tr>
+<tr><td>Stale draft</td><td>Inject a newer inbound during generation → draft discarded, single fresh reply</td></tr>
+<tr><td>Takeover race</td><td>Owner flips to human mid-turn → nothing is sent</td></tr>
+<tr><td>Starvation</td><td>One business sends 200 messages; another business's single message still answers within ~2 turn times</td></tr>
+<tr><td>Load</td><td>50 simultaneous conversations on Atlas; p95 reply latency and Modal 429 rate recorded</td></tr>
+</table>
+
+<h2 id="phases">14. Build order</h2>
+<table>
+<tr><th>Step</th><th>Scope</th><th>Why this order</th></tr>
+<tr><td>A</td><td>Split <code>handleInbound</code> into ingest + <code>runTurn</code>; add <code>lane</code> fields, scheduler, boot recovery, deterministic send key, single-flight wake</td><td>Fixes G1–G4, G9: correctness before features</td></tr>
+<tr><td>B</td><td>Pre-send re-check and discard/re-run; caps and round-robin</td><td>Fixes G7; makes load safe</td></tr>
+<tr><td>C</td><td><code>context.ts</code> with contact profile; <code>remember_fact</code>, <code>update_stage</code>, <code>escalate_to_human</code>; <code>/tool</code> endpoint; tool loop</td><td>Fixes G5; the agent starts to remember people</td></tr>
+<tr><td>D</td><td>Summarizer and token-budgeted history</td><td>Fixes G6</td></tr>
+<tr><td>E</td><td>Chunk retrieval + vector search for knowledge</td><td>Fixes G8 once catalogs get big</td></tr>
+<tr><td>F</td><td>Insights queue, console views for turns, facts and lanes</td><td>Owner visibility</td></tr>
+</table>
+<p>Tests in §13 land with each step. A and the isolation canary are the minimum before any real customer traffic.</p>
+
+<h2 id="open">15. Open questions</h2>
+<ul>
+<li><b>Debounce window.</b> 2 s with an 8 s cap is a guess; iMessage users send bursts but expect quick replies. Tune with real traffic. Voice bypasses the debounce entirely.</li>
+<li><b>Group chats.</b> One conversation per space with per-participant attribution, or one per participant? Affects the schema and who the agent replies to. Default: group chats off in MVP.</li>
+<li><b>Several worker instances.</b> Mongo leases already allow it; decide whether MVP runs one instance (simpler) or two (no downtime on deploy).</li>
+<li><b>Modal limits.</b> Unknown concurrency and rate limits; the global cap should be set from a load test, not a guess.</li>
+<li><b>Summarizer model and fact extraction policy.</b> Which model, and may it write facts without owner review?</li>
+<li><b>Caps per plan.</b> Should <code>maxConcurrentTurns</code> be a pricing lever?</li>
+<li><b>Hermes memory switches.</b> Can its cross-session memory be fully disabled? Only matters if we revisit it.</li>
+</ul>
+<p class="meta">Sources: code in <code>agent/src</code> (read 2026-10-17), <a href="TEST-REPORT-agent-runtime.html">TEST-REPORT-agent-runtime.html</a>, <a href="PRD-agent-runtime-photon-voice.html">PRD-agent-runtime-photon-voice.html</a>, Hermes public docs (memory features), Photon beta docs as summarized in the repo.</p>
+</main>
+</div>
+</body>
+</html>

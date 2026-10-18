@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRD — Voice Latency: phone → ElevenLabs → agent on Daytona → back (v0.1)</title>
+<style>
+  :root{--bg:#fafaf7;--fg:#1a1a17;--muted:#66655e;--line:#e3e1d8;--card:#fff;--accent:#2f5d50;--soft:#e4efe9;--warn:#9a5b00;--warnsoft:#fbf0dc;--bad:#9b2c2c;--badsoft:#f8e3e3;--mono:ui-monospace,Menlo,monospace}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 28px 96px;display:grid;grid-template-columns:200px 1fr;gap:44px}
+  nav{position:sticky;top:0;align-self:start;padding-top:48px;font-size:14px}
+  nav .t{font-weight:700;margin-bottom:8px}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:3px 0}
+  nav a:hover{color:var(--accent)}
+  main{padding-top:48px;min-width:0}
+  h1{font-size:32px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:22px;margin:54px 0 12px;padding-top:20px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 6px}
+  .meta{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:12px;padding:1px 9px;border-radius:99px;font-weight:600;margin-right:4px;background:var(--soft);color:var(--accent)}
+  .pill.warn{background:var(--warnsoft);color:var(--warn)}.pill.bad{background:var(--badsoft);color:var(--bad)}.pill.plan{background:#ecece4;color:#66655e}
+  code{font-family:var(--mono);font-size:13px;background:#efede4;padding:1px 5px;border-radius:4px}
+  pre{background:#1d2421;color:#e8efe9;padding:14px 16px;border-radius:8px;overflow:auto;font:12.5px/1.55 var(--mono);white-space:pre-wrap}
+  pre code{background:none;padding:0;color:inherit}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:10px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1efe6}
+  td.n{text-align:right;white-space:nowrap}
+  .callout{background:var(--soft);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{background:var(--warnsoft);border-color:var(--warn)}
+  .callout.bad{background:var(--badsoft);border-color:var(--bad)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;overflow:auto}
+  ul,ol{padding-left:22px}
+  a{color:var(--accent)}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr}nav{display:none}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="t">Contents</div>
+  <a href="#summary">1. Summary</a>
+  <a href="#route">2. The route</a>
+  <a href="#measured">3. What we measured</a>
+  <a href="#budget">4. Latency budget</a>
+  <a href="#rules">5. Ground rules</a>
+  <a href="#cold">6. Cold start</a>
+  <a href="#design">7. Agent on Daytona</a>
+  <a href="#degrade">8. Degradation</a>
+  <a href="#measure">9. Measuring</a>
+  <a href="#phases">10. Build order</a>
+  <a href="#decisions">11. Decisions</a>
+</nav>
+
+<main>
+<p class="meta"><span class="pill">Draft v0.1</span> 2026-10-18 · owner: Avi Agola · updates the latency and hosting parts of <a href="VOICE-FLOW.html">VOICE-FLOW.html</a></p>
+<h1>Voice latency: ground parameters for the whole route</h1>
+<p class="meta">Your phone → Photon → ElevenLabs → the agent on Daytona → back to your ear. How slow each piece is, how fast each must be, and the rules that keep the total under control.</p>
+
+<p class="meta">See also <a href="AGENT-CORE.html">AGENT-CORE.html</a>: call logging is now live, and customer identification and the T-Mobile prompt are defined there.</p>
+<div class="callout warn"><b>Review 2026-10-18:</b> The budget lines B and E (Daytona proxy hops) apply only if the engine moves into the sandbox. In v1 the engine runs on the host, so ElevenLabs calls the host directly; deploy it near the model and Atlas. Decision D-A1 needs your sign-off (C1, C9). See <a href="AGENT-MASTER.html">AGENT-MASTER.html</a>.</div>
+<h2 id="summary">1. Summary</h2>
+<div class="callout">
+<b>Verdict:</b> the route can hit <b>about 1.0 s median, under 2 s at the 95th percentile</b> from "caller stops talking" to "caller hears the first word", with the agent running inside the Daytona sandbox. Two measurements made this feasible, and one caveat decides whether we get there.
+<ul>
+<li><b>The model is fast if we turn reasoning off.</b> First word in <b>138 ms</b> with <code>reasoning_effort: "none"</code>, versus 318 ms at <code>low</code> (what the text agent uses today). The endpoint's default is the slowest setting.</li>
+<li><b>Daytona's proxy streams and is cheap.</b> About 100 ms round trip to a sandbox, server-sent events arrive as they are produced (not buffered), and a signed URL works with no special headers, so ElevenLabs can call the sandbox directly.</li>
+<li><b>Sandboxes can now reach the internet.</b> My earlier test said they could not. Today Modal answered from inside a sandbox in 0.2 s. That removes the need to relay model calls through our laptop-hosted platform.</li>
+<li><b>Caveat:</b> about 40 percent of the budget (listening and speaking) belongs to ElevenLabs, and I have only estimates for it. A real measured call is the first gate (§10).</li>
+</ul>
+</div>
+<p><b>The big idea in one line:</b> the "hot path" is only <code>ElevenLabs → agent in sandbox → model → back</code>. Nothing else (database writes, our servers, logging, fact extraction) is allowed to sit on it.</p>
+
+<h2 id="route">2. The route</h2>
+<div class="diagram">
+<svg viewBox="0 0 940 300" width="100%" font-family="-apple-system,Segoe UI,sans-serif" font-size="12">
+  <defs><marker id="l1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#66655e"/></marker></defs>
+  <g stroke="#b4b1a3" fill="#f1efe6"><rect x="10" y="30" width="110" height="64" rx="8"/><rect x="150" y="30" width="110" height="64" rx="8"/><rect x="290" y="30" width="150" height="64" rx="8"/></g>
+  <g stroke="#2f5d50" fill="#e4efe9"><rect x="470" y="30" width="190" height="64" rx="8"/><rect x="690" y="30" width="110" height="64" rx="8"/></g>
+  <g fill="#1a1a17" font-weight="600" text-anchor="middle"><text x="65" y="58">Caller</text><text x="205" y="58">Photon</text><text x="365" y="58">ElevenLabs</text><text x="565" y="58">Agent in Daytona</text><text x="745" y="58">Model (Modal)</text></g>
+  <g fill="#66655e" text-anchor="middle" font-size="11"><text x="65" y="76">phone</text><text x="205" y="76">phone network, SIP</text><text x="365" y="76">listen · turn · speak</text><text x="565" y="76">agentd: prompt + tools</text><text x="745" y="76">LLM</text></g>
+  <g stroke="#66655e" fill="none" marker-end="url(#l1)" stroke-width="1.3"><path d="M120 55 H150"/><path d="M260 55 H290"/><path d="M440 55 H470"/><path d="M660 55 H690"/></g>
+  <g stroke="#2f5d50" stroke-width="2" fill="none"><path d="M470 22 H800" stroke-dasharray="0"/></g>
+  <text x="635" y="16" text-anchor="middle" fill="#2f5d50" font-weight="600" font-size="11">hot path we own</text>
+  <g stroke="#9a5b00" fill="#fbf0dc"><rect x="150" y="170" width="170" height="62" rx="8"/><rect x="360" y="170" width="170" height="62" rx="8"/><rect x="570" y="170" width="170" height="62" rx="8"/></g>
+  <g fill="#1a1a17" font-weight="600" text-anchor="middle"><text x="235" y="196">Platform worker</text><text x="445" y="196">MongoDB Atlas</text><text x="655" y="196">Post-call webhook</text></g>
+  <g fill="#66655e" text-anchor="middle" font-size="11"><text x="235" y="214">call events, pre-warm, prime</text><text x="445" y="214">system of record</text><text x="655" y="214">transcript, facts (after hang-up)</text></g>
+  <g stroke="#9a5b00" fill="none" marker-end="url(#l1)" stroke-width="1.2" stroke-dasharray="4 3"><path d="M205 94 V170"/><path d="M320 201 H360"/><path d="M530 201 H570" stroke-dasharray="0" stroke="#9a5b00"/><path d="M235 232 Q235 275 565 275 Q565 250 565 96"/><path d="M365 94 L630 170"/></g>
+  <text x="470" y="292" text-anchor="middle" fill="#9a5b00" font-size="11">off the hot path: wakes and primes the sandbox while the greeting plays; stores everything after the call</text>
+</svg>
+</div>
+<ol>
+<li><b>Photon</b> carries the call to ElevenLabs over SIP (configured) and emits call events to our worker.</li>
+<li><b>ElevenLabs</b> transcribes the caller, decides when they finished, and later turns the reply into speech.</li>
+<li><b>The agent</b> (<code>agentd</code>, a small web service inside the business's Daytona sandbox) receives the conversation over HTTPS, builds the prompt from its in-memory copy of the business and caller context, and streams the model's reply back.</li>
+<li><b>The model</b> is Modal's Qwen endpoint.</li>
+<li>Everything else is off the hot path (§5 rule 1).</li>
+</ol>
+<h3>New fact that helps: Photon tells us who is calling, early</h3>
+<p>I watched your test calls arrive in the live event stream: <code>call.started → call.ringing → call.answered (0.7 s later) → call.connected → call.ended</code>. Photon's event schema includes <code>caller.handle</code> (E.164) and <code>callee</code>. So the platform learns <b>who is calling and which business</b> at <code>call.started</code>, before the caller says anything, and independently of whether ElevenLabs passes caller ID. That resolves the biggest unknown in the voice PRD and gives us time to wake and prepare the sandbox.</p>
+
+<h2 id="measured">3. What we measured (2026-10-18)</h2>
+<p class="meta">Measured from this development machine to the real services, not from ElevenLabs's servers or a production region. Script: <code>agent/scripts/latency-probe.mts</code> (creates and deletes one throwaway sandbox). Numbers will differ by location, so treat them as the right order of magnitude.</p>
+<table>
+<tr><th>Hop</th><th>Result</th><th>Notes</th></tr>
+<tr><td>MongoDB Atlas round trip</td><td class="n"><b>12 ms</b> median ping<br>14 ms for 4 parallel reads</td><td>n=12; occasional 100 ms+ outliers (first call, connection reuse). Reuse connections</td></tr>
+<tr><td>Model: first token (reasoning chunk)</td><td class="n">153 ms median</td><td>n=8, <code>reasoning_effort: low</code>. Not spoken; it is the model thinking</td></tr>
+<tr><td>Model: first <i>spoken</i> token, effort <code>low</code></td><td class="n"><b>318 ms</b> (513 ms in the first probe)</td><td>What the text agent uses now. n=6 and n=8; spread 270–590 ms</td></tr>
+<tr><td>Model: first spoken token, effort <code>none</code></td><td class="n"><b>138 ms</b></td><td>n=6. Whole short reply done in <b>216 ms</b> median. Endpoint accepts <code>none</code> and <code>enable_thinking:false</code> (144 ms); rejects <code>minimal</code></td></tr>
+<tr><td>Model: whole reply, non-streaming, <code>low</code></td><td class="n">512 ms</td><td>n=4. Short replies finish so fast that streaming gains little; it still helps for longer ones</td></tr>
+<tr><td>Daytona: create a sandbox</td><td class="n">0.67 s</td><td>Probe sandbox; earlier full provisioning with our agent took 2.4–5.5 s</td></tr>
+<tr><td>Daytona preview URL, warm round trip</td><td class="n"><b>100 ms</b> median<br>p90 135 ms</td><td>n=15 incl. response. First request 308 ms (TLS setup): keep connections warm</td></tr>
+<tr><td>Daytona preview: server-sent events</td><td class="n">streams</td><td>Eight chunks sent 150 ms apart arrived 244, 407, 543, 692, 935, 994, 1143, 1294 ms: not buffered</td></tr>
+<tr><td>Daytona signed preview URL</td><td class="n">HTTP 200, no headers</td><td>Works without the token header. Max lifetime <b>24 h</b> (from Daytona docs)</td></tr>
+<tr><td>Sandbox outbound network</td><td class="n"><b>open</b></td><td>From inside the sandbox: Modal reachable (HTTP 401 = reached the server, 0.2 s), npm, example.com, mongodb.com all OK. <b>Contradicts the earlier test report</b></td></tr>
+<tr><td>Sandbox wake from stopped</td><td class="n">~3.0 s</td><td>From the earlier test report (message → reply including model); not re-measured today</td></tr>
+<tr><td>Photon call events</td><td class="n">answered 0.7 s after start</td><td>Observed on your test calls (call lasted 9 s in the first one)</td></tr>
+</table>
+
+<h2 id="budget">4. The latency budget</h2>
+<p><b>Definition:</b> time from the caller finishing a sentence to the first audible word of the reply.</p>
+<div class="diagram">
+<svg viewBox="0 0 900 190" width="100%" font-family="-apple-system,Segoe UI,sans-serif" font-size="12">
+  <g stroke="#fff" stroke-width="2">
+    <rect x="20" y="50" width="266" height="46" fill="#cfcdc2"/>
+    <rect x="286" y="50" width="40" height="46" fill="#7fae9d"/>
+    <rect x="326" y="50" width="3" height="46" fill="#2f5d50"/>
+    <rect x="329" y="50" width="166" height="46" fill="#4f8a76"/>
+    <rect x="495" y="50" width="33" height="46" fill="#7fae9d"/>
+    <rect x="528" y="50" width="150" height="46" fill="#cfcdc2"/>
+  </g>
+  <g fill="#1a1a17" text-anchor="middle" font-size="11"><text x="153" y="77">listen + STT ~400</text><text x="306" y="77">→ ~60</text><text x="412" y="77" fill="#fff">model ~250</text><text x="511" y="77">← ~50</text><text x="603" y="77">speak start ~225</text></g>
+  <g fill="#66655e" font-size="11"><text x="20" y="40">0</text><text x="680" y="40">~990 ms median</text></g>
+  <path d="M20 120 H800" stroke="#b4b1a3"/>
+  <path d="M818 108 V132" stroke="#9b2c2c" stroke-width="2"/><text x="818" y="148" text-anchor="middle" fill="#9b2c2c" font-size="11">1,200 ms target</text>
+  <path d="M20 108 V132 M680 108 V132" stroke="#66655e"/>
+  <g font-size="11" fill="#1a1a17"><rect x="20" y="160" width="12" height="12" fill="#cfcdc2"/><text x="38" y="170">ElevenLabs-owned (estimates)</text><rect x="260" y="160" width="12" height="12" fill="#7fae9d"/><text x="278" y="170">network (measured RTT / 2)</text><rect x="470" y="160" width="12" height="12" fill="#4f8a76"/><text x="488" y="170">agent + model (measured)</text></g>
+</svg>
+</div>
+<table>
+<tr><th>#</th><th>Hop</th><th class="n">Median target</th><th class="n">p95 cap</th><th>Owner</th><th>Evidence</th></tr>
+<tr><td>A</td><td>Caller stops → ElevenLabs finalizes the turn (end-of-turn detection + speech-to-text)</td><td class="n">400 ms</td><td class="n">700 ms</td><td>ElevenLabs</td><td><span class="pill warn">estimate</span></td></tr>
+<tr><td>B</td><td>ElevenLabs → agent in sandbox (HTTPS via Daytona proxy)</td><td class="n">60 ms</td><td class="n">120 ms</td><td>Daytona / network</td><td><span class="pill">measured</span> ~100 ms round trip from here</td></tr>
+<tr><td>C</td><td>Agent builds the prompt from memory</td><td class="n">5 ms</td><td class="n">20 ms</td><td>us</td><td><span class="pill warn">estimate</span> pure CPU, no I/O</td></tr>
+<tr><td>D</td><td>Model: request → first complete sentence</td><td class="n">250 ms</td><td class="n">600 ms</td><td>us / Modal</td><td><span class="pill">measured</span> 138 ms first token, 216 ms whole short reply, from here, effort <code>none</code>; +gateway/network margin</td></tr>
+<tr><td>E</td><td>First sentence back to ElevenLabs</td><td class="n">50 ms</td><td class="n">100 ms</td><td>Daytona / network</td><td><span class="pill">measured</span> half of the ~100 ms</td></tr>
+<tr><td>F</td><td>ElevenLabs text-to-speech starts audio</td><td class="n">225 ms</td><td class="n">400 ms</td><td>ElevenLabs</td><td><span class="pill warn">estimate</span></td></tr>
+<tr><td colspan="2"><b>Total</b></td><td class="n"><b>~990 ms</b></td><td class="n"><b>~1,900 ms</b></td><td colspan="2">Hard failure threshold: 3,500 ms (play a filler line, §8)</td></tr>
+</table>
+<p><b>What we control directly (B–E): about 365 ms median.</b> That part is evidence-based. The two ElevenLabs hops (A and F, 625 ms) are the largest and least certain, so the first real test call is the gate.</p>
+<h3>For comparison: the text pipeline today</h3>
+<p>The existing text path (sandbox <code>/turn</code> → host model call → sandbox <code>/finalize</code>) was reported at <b>1.2 s</b> for a full round trip and <b>880 ms</b> for a voice-style turn, with the model at effort <code>low</code> and two extra sandbox round trips. Reusing it for voice would blow the budget before ElevenLabs's share is even counted. Hence a dedicated voice path.</p>
+
+<h2 id="rules">5. Ground rules (the parameters)</h2>
+<table>
+<tr><th>#</th><th>Rule</th><th>Why</th></tr>
+<tr><td>1</td><td><b>The hot path contains only: ElevenLabs → agentd → model → ElevenLabs.</b> No database call, no call to our own servers, no logging service, no fact extraction between the caller's sentence and the first spoken word</td><td>Every extra hop costs 50–150 ms and adds a way to fail</td></tr>
+<tr><td>2</td><td><b>Everything the agent needs is already in the sandbox's memory</b> when the first utterance arrives: business rules, knowledge, and the caller's profile, summary and recent messages. The platform worker pushes it ("prime") at <code>call.started</code></td><td>Mongo is fast (12 ms) but it lives behind our servers; the sandbox doesn't hold database credentials, and we don't want it to</td></tr>
+<tr><td>3</td><td><b>Model settings for voice:</b> <code>reasoning_effort: "none"</code>, <code>stream: true</code>, <code>max_tokens: 100</code>, temperature 0.3. The text agent keeps <code>low</code></td><td>138 ms vs 318 ms to first word. Needs a quality check on guardrail cases (§9)</td></tr>
+<tr><td>4</td><td><b>Replies are short:</b> at most 2 sentences or about 35 words, spoken style, numbers written out. The first complete sentence is flushed to ElevenLabs immediately; the rest follows</td><td>TTS can start before the reply ends; shorter replies also feel more natural on a phone</td></tr>
+<tr><td>5</td><td><b>Writes are off the hot path.</b> The agent queues turn records, facts and tool audits in memory; the platform drains them after the call (and the post-call webhook is the authoritative transcript)</td><td>No database write may delay a spoken word</td></tr>
+<tr><td>6</td><td><b>Tools on the hot path must finish in under 150 ms</b> and run in the sandbox against memory (knowledge search, remembering a fact, ending the call). Anything slower (booking, sending a text) is started asynchronously, with a spoken filler: "One moment..."</td><td>Keeps tool use from adding seconds of silence</td></tr>
+<tr><td>7</td><td><b>Guardrails run per sentence, locally</b> (pattern checks under 1 ms), before a sentence is released to ElevenLabs. A blocked sentence is replaced by a safe line</td><td>Streaming makes whole-message checks impossible; the cost is negligible</td></tr>
+<tr><td>8</td><td><b>Keep connections warm:</b> agentd holds a reusable HTTPS connection to the model endpoint (the first request costs 100+ ms more for the TLS handshake); the platform keeps its connection to the sandbox warm</td><td>First request over a new connection measured 308 ms vs about 100 ms warm</td></tr>
+<tr><td>9</td><td><b>The sandbox is running before the caller can speak</b> (§6)</td><td>A cold start (about 3 s) is the single worst latency event</td></tr>
+<tr><td>10</td><td><b>Timeouts:</b> model first token within 1.5 s; whole turn within 4 s; if exceeded, speak a fallback line and continue (§8)</td><td>A bounded worst case beats an open-ended silence</td></tr>
+<tr><td>11</td><td><b>Interruptions cancel work immediately.</b> When ElevenLabs closes the stream (caller talked over the agent), agentd aborts the model request</td><td>Saves tokens and avoids stale replies</td></tr>
+<tr><td>12</td><td><b>Co-locate.</b> Sandbox region, model endpoint and Atlas should be in the same US region as ElevenLabs's servers where we have a choice. Verify where each runs</td><td>Cross-region adds 30–80 ms per hop</td></tr>
+<tr><td>13</td><td><b>Every hop is timestamped</b> and one latency record is stored per turn (§9)</td><td>We can't improve what we don't measure</td></tr>
+</table>
+
+<h2 id="cold">6. Cold start: the worst case</h2>
+<p>Sandboxes auto-stop after 15 idle minutes to save money. A stopped sandbox takes about 3 s to wake. The caller's first question can arrive only after the greeting plays, which gives us a window to hide the wake, but a thin one:</p>
+<pre><code>t = 0.0 s  call.started       (Photon event: caller number + business known)
+t = 0.0 s  platform wakes the sandbox if stopped, then primes it   ← starts here, not at the first question
+t = 0.7 s  call.answered      (observed)
+t = 0.7 s  ElevenLabs plays the fixed greeting (about 2–3 s of speech)
+t = 3–4 s  caller's first utterance ends; ElevenLabs sends the first request
+           wake (about 3 s) + prime (about 0.2 s) just fits; no margin for a slow wake</code></pre>
+<table>
+<tr><th>Mitigation</th><th>Effect</th><th>Cost</th></tr>
+<tr><td>Pre-wake on <code>call.started</code></td><td>Hides most of the wake behind the greeting</td><td>None. The worker already receives these events</td></tr>
+<tr><td>Keep voice-enabled businesses warm during business hours (stop auto-stop, or refresh activity)</td><td>Removes the cold case for expected callers</td><td>Sandbox running cost (not priced here). Make it a per-business setting</td></tr>
+<tr><td>A greeting of 3 s or longer that states it is an AI assistant</td><td>Extra cover; also the disclosure we want</td><td>Slightly slower to the point</td></tr>
+<tr><td>If still not ready at the first request: speak "One moment please" and answer when ready</td><td>Caller hears something instead of dead air</td><td>Awkward but safe</td></tr>
+</table>
+<p class="meta">Wake time was last measured in the earlier test (3.0 s including the model call). It should be re-measured, along with the start-up time of agentd inside the sandbox, as part of step L1.</p>
+
+<h2 id="design">7. Agent on Daytona: what changes</h2>
+<p>The current agent in the sandbox (<code>agentd.mjs</code>) only builds prompts and cleans answers; the model call is made by our host because sandboxes used to have no internet. With the network open, the whole turn can happen in the sandbox. Required changes:</p>
+<table>
+<tr><th>Piece</th><th>Change</th></tr>
+<tr><td><code>agentd</code> endpoint</td><td>Add <code>POST /v1/chat/completions</code> that speaks the OpenAI streaming format ElevenLabs expects (server-sent events, ends with <code>[DONE]</code>)</td></tr>
+<tr><td>URL ElevenLabs calls</td><td>A <b>signed Daytona preview URL</b> for port 8080: no custom headers, proven to work today. Maximum lifetime is 24 h, so a rotation job re-issues it daily and updates the ElevenLabs agent's server URL through ElevenLabs's API (needs an ElevenLabs API key). Alternative to test later: mark the sandbox public and rely on a secret path segment</td></tr>
+<tr><td>Calling the model</td><td>See decision D1 (where the model credential lives). Either way: keep-alive connection, <code>stream:true</code>, effort <code>none</code></td></tr>
+<tr><td>Context</td><td>New <code>POST /prime</code> (host → sandbox): business config, knowledge, caller profile, summary, recent messages. Cached per caller number and per ElevenLabs conversation. Updates to business config push a new version</td></tr>
+<tr><td>Matching the call</td><td>The first model request carries ElevenLabs's caller ID if Photon's SIP headers provide it. If not, and exactly one primed call is active for that business, bind to it; if several are active and ambiguous, fall back to asking the caller. Photon's <code>caller.handle</code> makes the primed set exact</td></tr>
+<tr><td>Writes</td><td>agentd keeps an in-memory outbox (turn records, facts, tool audits). The platform pulls it after <code>call.ended</code> and via the ElevenLabs post-call webhook; nothing is written during the call</td></tr>
+<tr><td>Security</td><td>Request must carry a secret (path segment and, if ElevenLabs supports it, a bearer). Sandbox still holds no Mongo, Photon or Daytona credentials</td></tr>
+</table>
+<div class="callout warn"><b>D1, the open design choice: where does the model credential live?</b>
+<ul>
+<li><b>Gateway (safer):</b> the sandbox calls our own LLM gateway, which holds the Modal key and clamps tokens (already designed in <code>platform.ts</code>). Costs one extra hop (about 20–60 ms if the gateway runs near Modal, much more behind a laptop tunnel). It must be deployed on an always-on host first.</li>
+<li><b>Credential in the sandbox (faster):</b> the sandbox is untrusted (customers can try to inject prompts), so a leaked key could be abused. Only acceptable with a scoped, rate-limited, revocable token. I can't confirm Modal's proxy tokens support scoping.</li>
+</ul>
+Recommendation: build for the gateway design, measure the extra hop, and only fall back to a scoped token if the budget demands it.</div>
+
+<h2 id="degrade">8. Degradation ladder</h2>
+<table>
+<tr><th>Situation</th><th>What the caller hears</th><th>What the system does</th></tr>
+<tr><td>Normal</td><td>Reply within about 1 s</td><td>—</td></tr>
+<tr><td>Model slow: no first token within 1.5 s</td><td>"Let me check on that..."</td><td>Send filler text immediately; keep waiting up to 4 s total</td></tr>
+<tr><td>Model fails or 4 s exceeded</td><td>"I'm having trouble right now. Can I have someone call you back?"</td><td>Record a callback task for the owner; log the failure</td></tr>
+<tr><td>Sandbox not ready at the first request</td><td>"One moment please."</td><td>Answer as soon as it is up; alert if it takes over 6 s</td></tr>
+<tr><td>Sandbox crashed mid-call</td><td>Same fallback line</td><td>Restart agentd; the call may end; owner is notified</td></tr>
+<tr><td>Signed URL expired</td><td>ElevenLabs error, call ends or falls back</td><td>Prevent with rotation 2 h before expiry and an alert on 401/403 from the proxy</td></tr>
+<tr><td>Caller not identified</td><td>Agent asks for name or number</td><td>Anonymous contact keyed by the call id</td></tr>
+</table>
+
+<h2 id="measure">9. How we will measure</h2>
+<p>One latency record per turn, written after the call from the agent's outbox:</p>
+<pre><code>{ orgId, callId, turn,
+  t_request_in,        // agentd received ElevenLabs's request (ms since call start)
+  t_prompt_ready,      // after building the prompt            (target &lt; 5 ms after in)
+  t_model_request,     // sent to the model
+  t_model_first_token, // first model token
+  t_first_sentence,    // first sentence released to ElevenLabs (guardrail-checked)
+  t_done, reasoning: "none", tokens_in, tokens_out, interrupted }</code></pre>
+<ul>
+<li><b>Server-side hops</b> (B–E) come from these timestamps. The ElevenLabs share (A and F) comes from its conversation record or from timing a recorded test call. I have not verified which timing fields ElevenLabs exposes.</li>
+<li><b>Automated probe:</b> <code>latency-probe.mts</code> (exists) re-runs the measurements in §3. Add a synthetic "turn" test that posts a realistic request to the signed URL and records first-sentence time end to end.</li>
+<li><b>Quality check for effort <code>none</code>:</b> run a fixed set of 30–40 prompts (pricing, hours, out-of-knowledge questions, discount pressure, injection attempts) at <code>low</code> and <code>none</code>, compare for invented facts and guardrail slips. Only ship <code>none</code> if it holds up.</li>
+<li><b>Alerts:</b> p95 first sentence above 800 ms for the agent share; any turn above 3.5 s; wake time above 5 s.</li>
+</ul>
+
+<h2 id="phases">10. Build order and gates</h2>
+<table>
+<tr><th>Step</th><th>Scope</th><th>Gate to pass</th></tr>
+<tr><td><b>L0</b> · smoke test</td><td>Import the number into ElevenLabs, stock agent, make a call (the V0 step)</td><td>Audio works both ways. Note by ear how long the pauses are with ElevenLabs's own model: this is the baseline floor for A+F</td></tr>
+<tr><td><b>L1</b> · agent endpoint</td><td>Add the streaming <code>/v1/chat/completions</code> to agentd with a fixed reply; signed URL; point ElevenLabs at it; log timestamps. Re-measure wake and agentd startup</td><td>B+E under 200 ms combined from a real ElevenLabs request; caller-ID and auth header learned</td></tr>
+<tr><td><b>L2</b> · real turn</td><td>Prompt from memory, model call (via the chosen D1 path), sentence flush, guardrails, interruption abort, <code>/prime</code> at <code>call.started</code></td><td>Agent share (C+D) median under 300 ms in the sandbox; end-to-end felt median about 1 s</td></tr>
+<tr><td><b>L3</b> · persistence</td><td>Outbox drain, post-call webhook, latency records, URL rotation job</td><td>Calls show in the inbox with transcripts; zero writes on the hot path</td></tr>
+<tr><td><b>L4</b> · tuning &amp; load</td><td>Quality eval for effort <code>none</code>; keep-warm policy; 5 simultaneous calls; fallback ladder exercised</td><td>p95 under 2 s; no turn over 3.5 s in a 50-call soak</td></tr>
+</table>
+
+<h2 id="decisions">11. Decisions needed</h2>
+<ol>
+<li><b>Accept the targets?</b> Median 1.2 s, p95 2.0 s, hard cap 3.5 s from end of caller speech to first audio. (Budget total is about 1.0 s.)</li>
+<li><b>D1:</b> model credential via a gateway (safer, one more hop) or a scoped token in the sandbox (faster, riskier)? If gateway, where do we deploy it?</li>
+<li><b>URL type:</b> signed URL with daily rotation (proven) or public sandbox with secret path (untested). I recommend signed first.</li>
+<li><b>Keep-warm policy:</b> always warm for voice-enabled businesses during set hours? Needs a cost check on Daytona's running price.</li>
+<li><b>ElevenLabs:</b> your plan tier, an API key for URL updates (stored as a platform secret, never in the sandbox), and which voice and speed settings to start with.</li>
+<li><b>Voice model effort:</b> OK to use <code>none</code> for voice pending the quality check in §9?</li>
+</ol>
+<p class="meta">Sources: live measurements on 2026-10-18 (<code>agent/scripts/latency-probe.mts</code>), Photon event schemas and the live event stream, Daytona preview-URL docs, ElevenLabs docs read earlier (see VOICE-FLOW). Hops marked "estimate" are not measured. Measurements are from the development machine, not from production regions.</p>
+</main>
+</div>
+</body>
+</html>

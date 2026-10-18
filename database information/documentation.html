@@ -78,15 +78,23 @@
 <tr><td>Database</td><td>MongoDB Atlas, db <code>salesagent</code></td><td><span class="pill">built</span> 14 collections, validators, indexes</td></tr>
 <tr><td>Channels</td><td>Photon Spectrum (<code>spectrum-ts</code>)</td><td><span class="pill plan">next</span> iMessage first</td></tr>
 <tr><td>Agent sandbox</td><td>Daytona, one per business</td><td><span class="pill plan">next</span> waiting on connectors</td></tr>
-<tr><td>Agent harness</td><td>Hermes (recommended) or fx</td><td><span class="pill warn">undecided</span></td></tr>
+<tr><td>Agent harness</td><td>Thin custom loop in <code>agent/sandbox/agentd.mjs</code> (running). Hermes/fx not adopted</td><td><span class="pill warn">proposed: stay custom</span></td></tr>
 <tr><td>Owner auth</td><td>—</td><td><span class="pill warn">deferred</span> Clerk dropped; approach TBD</td></tr>
-<tr><td>Agent service</td><td><code>agent/</code> folder (planned)</td><td><span class="pill plan">planned</span></td></tr>
+<tr><td>Agent service</td><td><code>agent/</code>: orchestrator, agentd, LLM gateway, Photon worker + webhook</td><td><span class="pill">built</span> single-customer path tested; scheduling and memory layers are next</td></tr>
 </table>
 
 <h2 id="index">Doc index</h2>
 <table>
 <tr><th>Document</th><th>Location</th><th>What's in it</th></tr>
 <tr><td>Product plan (PRD)</td><td><a href="../docs/PRD.html"><code>docs/PRD.html</code></a></td><td>Goals, architecture, Photon/Daytona/harness comparison, phases, risks</td></tr>
+<tr><td>Agent architecture PRD</td><td><a href="../docs/AGENT-ARCHITECTURE.html"><code>docs/AGENT-ARCHITECTURE.html</code></a></td><td>Threads, layered memory, per-conversation concurrency lanes, turn lifecycle, gaps found in current code, build order</td></tr>
+<tr><td>Voice flow PRD</td><td><a href="../docs/VOICE-FLOW.html"><code>docs/VOICE-FLOW.html</code></a></td><td>Caller → Photon → ElevenLabs → Voice Bridge (our agent) → back; Custom LLM vs tools, data/memory, actions, latency, failure modes, build order V0–V6</td></tr>
+<tr><td><b>Agent PRD set: start here</b></td><td><a href="../docs/AGENT-MASTER.html"><code>docs/AGENT-MASTER.html</code></a></td><td>Index of all agent PRDs, 13 conflicts found and resolved, the reconciled architecture and contracts, scope of the <code>agent/core-v1</code> PR, build results, sign-offs needed</td></tr>
+<tr><td>Agent core PRD</td><td><a href="../docs/AGENT-CORE.html"><code>docs/AGENT-CORE.html</code></a></td><td>Conversation logs audit, caller/texter identification (cross-channel), customer loader, tool &amp; API catalog, WhatsApp finding, the T-Mobile system prompt, prompt-vs-enforcement</td></tr>
+<tr><td>Voice latency PRD</td><td><a href="../docs/VOICE-LATENCY.html"><code>docs/VOICE-LATENCY.html</code></a></td><td>Ground parameters for phone → ElevenLabs → agent on Daytona → back: measured hop latencies, budget (~1.0 s median target 1.2 s), 13 rules, cold-start handling, degradation ladder, gates L0–L4</td></tr>
+<tr><td>SMS, codes &amp; secure forms PRD</td><td><a href="../docs/SMS-OTP-FORMS.html"><code>docs/SMS-OTP-FORMS.html</code></a></td><td>Why SMS is blocked and how to unblock (10DLC registration packet), outbound messenger, one-time codes, secure form links, agent tools, data model, build order S0–S6</td></tr>
+<tr><td>Agent runtime + voice PRD</td><td><a href="../docs/PRD-agent-runtime-photon-voice.html"><code>docs/PRD-agent-runtime-photon-voice.html</code></a></td><td>Daytona sandbox lifecycle, Photon voice (SIP), onboarding</td></tr>
+<tr><td>Agent runtime test report</td><td><a href="../docs/TEST-REPORT-agent-runtime.html"><code>docs/TEST-REPORT-agent-runtime.html</code></a></td><td>19/19 checks against real Daytona + Modal</td></tr>
 <tr><td>This file</td><td><code>database information/documentation.html</code></td><td>Database design (live), setup, decisions, integration notes, changelog</td></tr>
 <tr><td>Repo README</td><td><a href="../README.md"><code>README.md</code></a></td><td>Run instructions</td></tr>
 <tr><td>Schema in code</td><td><code>web/src/lib/models.ts</code>, <code>schema.ts</code></td><td>Types, validators and indexes. <b>If this doc and the code disagree, the code wins</b>; fix the doc.</td></tr>
@@ -100,7 +108,12 @@ pnpm db:setup          # create collections, apply validators + indexes (idempot
 pnpm db:seed           # demo business "Sunrise Bike Shop" (refuses if data exists)
 pnpm db:seed -- --reset   # wipe + reseed (DESTRUCTIVE)
 pnpm db:local          # optional local MongoDB on :27017 instead of Atlas
-pnpm dev               # http://localhost:3000   ·   GET /api/health pings Mongo</code></pre>
+pnpm dev               # http://localhost:3000   ·   GET /api/health pings Mongo
+
+cd ../agent
+pnpm test              # 104 offline tests (in-memory Mongo, scripted model, no network)
+pnpm live              # live runner: Photon events + engine v2 (ENGINE=legacy for the old sandbox path)
+pnpm exec tsx --env-file=../web/.env.local scripts/engine-live-eval.ts   # evaluate the REAL model with the real prompts (nothing is sent to anyone)</code></pre>
 <div class="callout warn"><b>Secrets.</b> <code>atlas-credentials.env</code> and every <code>*.env</code> are gitignored (root <code>.gitignore</code>). Never commit them or paste the URI in chat/docs. The Atlas password was shared as a file; rotate it when convenient.</div>
 <div class="callout warn"><b>No auth yet.</b> <code>getCurrentOrg()</code> in <code>web/src/lib/queries.ts</code> serves the first org in the database. Don't deploy the console to a public URL until login exists.</div>
 
@@ -113,7 +126,17 @@ pnpm dev               # http://localhost:3000   ·   GET /api/health pings Mong
 <tr><td>10-17</td><td>Shared collections scoped by <code>orgId</code></td><td>Cheap, simple; revisit for enterprise isolation</td></tr>
 <tr><td>10-17</td><td>Clerk dropped</td><td>Owner call; auth approach to be decided (Mongo gives DB auth only, not end-user login)</td></tr>
 <tr><td>10-17</td><td>One conversation per contact, spanning channels</td><td>Continuous history; enforced by unique index</td></tr>
-<tr><td class="meta">open</td><td>Harness: Hermes vs fx</td><td>Needs Phase 0 spike (see PRD §7)</td></tr>
+<tr><td>10-17</td><td>Agent is stateless between turns; thread = conversation in Mongo; memory split into shared business layer and private per-contact layer</td><td>No cross-customer leakage; cheaper cached prefix. See AGENT-ARCHITECTURE §5</td></tr>
+<tr><td>10-17</td><td>Concurrency via a per-conversation "lane" on the conversation doc (debounce, lease, caps)</td><td>Durable, no new infra. Proposed, not built yet. See AGENT-ARCHITECTURE §6</td></tr>
+<tr><td>10-18</td><td>One engine library (tool loop, memory, verification, messenger, guardrails) runs on the platform host for text and voice; the Daytona sandbox stays one-per-business and pre-warmed but is off the hot path in v1</td><td>The sandbox has no database or messaging credentials, so a sandbox-resident engine would call back to the host for every tool. <b>Needs sign-off (D-A1)</b> because it differs from the stated route. See AGENT-MASTER §5, §9</td></tr>
+<tr><td>10-18</td><td>Tool names are snake_case; the prompt's tool list is generated from the registry; a test fails if a prompt names a missing tool</td><td>Function calling forbids dots; the model called nonexistent tools listed in the first prompt</td></tr>
+<tr><td>10-18</td><td>Secure-form answers are encrypted per business (AES-256-GCM, master key outside the database); viewing them needs a separate owner password, and reveal is off unless one is set</td><td>The console has no user accounts yet; a decrypt button must never be open</td></tr>
+<tr><td>10-18</td><td>One person = one contact across SMS, iMessage, WhatsApp and voice (unique index on business + address); account details are kept out of the prompt until the person is verified; the tool layer must also enforce verification</td><td>Prevents split identities and prompt-extraction of account data. See AGENT-CORE §3, §8</td></tr>
+<tr><td>10-18</td><td>WhatsApp: log inbound only until <code>WHATSAPP_REPLIES=1</code></td><td>First message received was a Meta system notice; templates not wired</td></tr>
+<tr><td>10-18</td><td>Voice hot path is only ElevenLabs → agentd (in Daytona sandbox, via signed preview URL) → model. Voice model uses <code>reasoning_effort: "none"</code>; no DB/host calls or writes on the hot path; sandbox pre-woken and primed at Photon <code>call.started</code></td><td>Measured: 138 ms vs 318 ms to first word; Daytona proxy ~100 ms RTT, streams, signed URL needs no headers; sandbox egress is open. See VOICE-LATENCY</td></tr>
+<tr><td>10-18</td><td>Outbound texts (codes, form links, info) go through one messenger with consent, opt-out, rate limits and redaction; codes and links never stored in plain text or shown to the model</td><td>Security; carrier compliance. See SMS-OTP-FORMS §5–7</td></tr>
+<tr><td>10-18</td><td>Voice: ElevenLabs is the voice layer (SIP, STT, TTS); our brain plugs in as an ElevenLabs Custom LLM served by a "Voice Bridge" in <code>agent/</code>. Supersedes the LiveKit voice-gateway plan</td><td>One agent across text and voice; removes the hardest part. Latency is the risk. See VOICE-FLOW</td></tr>
+<tr><td class="meta">proposed</td><td>Harness: keep thin custom loop; do not run Hermes in the sandbox for customer turns</td><td>Sandbox has no egress on current tier; Hermes' agent-wide memory risks cross-customer leakage. Supersedes the earlier Hermes lean. See AGENT-ARCHITECTURE §9</td></tr>
 </table>
 
 <h2 class="part">Database</h2>
@@ -332,6 +355,12 @@ pnpm dev               # http://localhost:3000   ·   GET /api/health pings Mong
 <li>Providers: iMessage, WhatsApp Business, Telegram, Slack, Terminal, voice (SIP), custom via <code>definePlatform</code>. iMessage supports typing indicators, reactions, threaded replies, groups.</li>
 <li>Needs a long-lived process (persistent stream) or Photon's webhook mode, so not plain Vercel serverless.</li>
 <li>Unknown: pricing, rate limits, API-driven line provisioning, multi-tenant model, voice STT/TTS owner. Ask Photon.</li>
+<li><b>Finding (live tests, 2026-10-17/18): <code>409 SPACE_NOT_SENDABLE</code> "Replies are not supported for this Space" is caused by <code>parentMessageId</code>.</b> Any send that includes it (threaded reply) is refused on <b>shared iMessage lines and on SMS</b>, even though Photon's beta quickstart shows it. The same send without it is accepted (iMessage: <code>status=dispatched</code>). Fixed in <code>PhotonAdapter</code> (<code>threads=false</code>). The spaces were always fine.</li>
+<li><b>Error order matters:</b> the parent-field check fires <i>before</i> the SMS checks and masks them. With it removed, SMS returns <code>409 SMS_CAMPAIGN_NOT_ELIGIBLE</code> ("The sender campaign is not eligible for these recipients"). Our line (<code>voip_line</code>, abilities <code>sms</code> + <code>pstn_voice</code>) has no 10DLC campaign: <code>GET /platforms/sms/lines/{id}/campaign</code> returns <code>eligibility: "blocked", reasonCode: "SMS_CAMPAIGN_NOT_ASSIGNED"</code>. So SMS still needs a registered campaign assigned to the line (<code>PUT …/campaign</code>), unless every recipient is "in-network" (undefined in docs). Inbound SMS works.</li>
+<li><b>Shared iMessage line rules (docs + observed):</b> assignment links one end-user handle to one shared agent number; that handle must text first; direct spaces only (no groups); a fresh text after the assignment is needed; assignments can be replaced in the dashboard (the runner now refreshes them every 30 s). 5,000 msgs/day and 50 new conversations/day per line.</li>
+<li><b>WhatsApp (2026-10-18):</b> WhatsApp Business account "SellDial Customer Service" is connected and approved, using the same number as the voice/SMS line (<code>+1 206 ... 3267</code>), <code>outboundCapacity</code> 250. Inbound is logged; replies are off until <code>WHATSAPP_REPLIES=1</code>. Business-initiated messages need Meta-approved templates (not in Photon's project API).</li>
+<li><b>Voice setup (2026-10-18):</b> default SIP profile <code>Default Profile</code> (media encryption auto) is on the <code>+1206…3267</code> line. Inbound destination was changed from the pre-existing <code>sip:agent@voice.photon.codes;transport=udp</code> (with Photon-issued credentials) to <code>sips:sip.rtc.elevenlabs.io:5061</code> (TLS, no credentials) by <code>agent/scripts/photon-voice-setup.mts</code>. ElevenLabs side (import number as SIP trunk, assign published agent) is done in their dashboard. Verify with a real call: Photon Voice → Recent calls and the ElevenLabs conversation log.</li>
+<li><b>Voice (earlier note):</b> project had 0 voice profiles. Photon only carries the call over SIP; a SIP endpoint must answer (ElevenLabs, Retell, LiveKit, Twilio guides in Photon beta docs). We have none yet. Shared iMessage lines cannot take calls.</li>
 <li>Avoid <code>imessage-kit</code> (Mac-bound, AppleScript, 2s polling).</li>
 <li>Links: <a href="https://github.com/photon-hq/spectrum-ts">spectrum-ts</a> · <a href="https://photon.codes/docs/">docs</a></li>
 </ul>
@@ -359,6 +388,13 @@ pnpm dev               # http://localhost:3000   ·   GET /api/health pings Mong
 <tr><td>10-17</td><td>PRD v0.1 (<code>docs/PRD.html</code>): architecture, Photon/Daytona/harness research, phases</td></tr>
 <tr><td>10-17</td><td>Next.js console in <code>web/</code>: dashboard, inbox, contacts, agent settings; Mongo wired; seed script</td></tr>
 <tr><td>10-17</td><td>Atlas connected via <code>web/.env.local</code>; credentials file gitignored</td></tr>
+<tr><td>10-18</td><td><b>PR <code>agent/core-v1</code>:</b> engine, tools, scheduler lanes, messenger, one-time codes, voice server, secure forms (web), summarizer. 104 offline tests, live-model evaluation 12/12, web smoke 13/13, legacy e2e 19/19. PRD set reconciled (AGENT-MASTER)</td></tr>
+<tr><td>10-18</td><td>Agent core PRD (<code>docs/AGENT-CORE.html</code>). Built and tested (16 tests): <code>identity.ts</code>, <code>calls.ts</code>, <code>customer.ts</code>, <code>prompt.ts</code>, T-Mobile system prompt. Voice calls and WhatsApp now logged (calls collection was empty). Unique contacts index (business + address) and unique provider call id applied to Atlas. Found: WhatsApp Business "SellDial Customer Service" approved on the same number as voice/SMS</td></tr>
+<tr><td>10-18</td><td>Latency measurements (<code>agent/scripts/latency-probe.mts</code>) and voice latency PRD (<code>docs/VOICE-LATENCY.html</code>). Found: sandbox egress now open (earlier test report said blocked); Photon <code>call.*</code> events carry the caller number; Modal <code>none</code> reasoning effort is much faster</td></tr>
+<tr><td>10-18</td><td>SMS/OTP/secure-forms PRD (<code>docs/SMS-OTP-FORMS.html</code>). SMS sending re-checked: still blocked by missing 10DLC campaign. Shared iMessage line cannot text arbitrary callers, so SMS registration is on the critical path for voice follow-ups</td></tr>
+<tr><td>10-18</td><td>Voice flow PRD (<code>docs/VOICE-FLOW.html</code>) written from ElevenLabs + Photon docs; nothing built yet</td></tr>
+<tr><td>10-18</td><td>Root-caused <code>SPACE_NOT_SENDABLE</code>: Photon rejects <code>parentMessageId</code> on shared iMessage and SMS. Adapter no longer sends it. SMS remains blocked by missing 10DLC campaign. See Integrations → Photon</td></tr>
+<tr><td>10-17</td><td>Agent architecture PRD (<code>docs/AGENT-ARCHITECTURE.html</code>) written against the code in <code>agent/</code>; found 9 gaps (e.g. live Photon socket serializes all customers)</td></tr>
 <tr><td>10-17</td><td>Database built out: 14 collections with validators and indexes (<code>schema.ts</code>, <code>pnpm db:setup</code>); contacts.facts and messages extended; this file created, replacing <code>docs/DB-DESIGN.html</code></td></tr>
 </table>
 

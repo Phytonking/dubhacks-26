@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRD — SMS, verification codes, secure forms (v0.1)</title>
+<style>
+  :root{--bg:#fafaf7;--fg:#1a1a17;--muted:#66655e;--line:#e3e1d8;--card:#fff;--accent:#2f5d50;--soft:#e4efe9;--warn:#9a5b00;--warnsoft:#fbf0dc;--bad:#9b2c2c;--badsoft:#f8e3e3;--mono:ui-monospace,Menlo,monospace}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 28px 96px;display:grid;grid-template-columns:200px 1fr;gap:44px}
+  nav{position:sticky;top:0;align-self:start;padding-top:48px;font-size:14px}
+  nav .t{font-weight:700;margin-bottom:8px}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:3px 0}
+  nav a:hover{color:var(--accent)}
+  main{padding-top:48px;min-width:0}
+  h1{font-size:32px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:22px;margin:54px 0 12px;padding-top:20px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 6px}
+  .meta{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:12px;padding:1px 9px;border-radius:99px;font-weight:600;margin-right:4px;background:var(--soft);color:var(--accent)}
+  .pill.warn{background:var(--warnsoft);color:var(--warn)}.pill.bad{background:var(--badsoft);color:var(--bad)}.pill.plan{background:#ecece4;color:#66655e}
+  code{font-family:var(--mono);font-size:13px;background:#efede4;padding:1px 5px;border-radius:4px}
+  pre{background:#1d2421;color:#e8efe9;padding:14px 16px;border-radius:8px;overflow:auto;font:12.5px/1.55 var(--mono);white-space:pre-wrap}
+  pre code{background:none;padding:0;color:inherit}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:10px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f1efe6}
+  .callout{background:var(--soft);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{background:var(--warnsoft);border-color:var(--warn)}
+  .callout.bad{background:var(--badsoft);border-color:var(--bad)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;overflow:auto}
+  ul,ol{padding-left:22px}
+  a{color:var(--accent)}
+  @media(max-width:880px){.wrap{grid-template-columns:1fr}nav{display:none}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <div class="t">Contents</div>
+  <a href="#summary">1. Summary</a>
+  <a href="#blocker">2. Why SMS is blocked</a>
+  <a href="#paths">3. Ways to unblock</a>
+  <a href="#packet">4. Registration packet</a>
+  <a href="#messenger">5. Outbound messenger</a>
+  <a href="#otp">6. Verification codes</a>
+  <a href="#forms">7. Secure forms</a>
+  <a href="#tools">8. Agent tools</a>
+  <a href="#data">9. Data model</a>
+  <a href="#security">10. Security &amp; compliance</a>
+  <a href="#phases">11. Build order</a>
+  <a href="#decisions">12. Decisions needed</a>
+</nav>
+
+<main>
+<p class="meta"><span class="pill">Draft v0.1</span> 2026-10-18 · owner: Avi Agola · builds on <a href="VOICE-FLOW.html">VOICE-FLOW.html</a> and <a href="AGENT-ARCHITECTURE.html">AGENT-ARCHITECTURE.html</a></p>
+<h1>SMS, verification codes, and secure forms</h1>
+<p class="meta">How the agent texts a caller a one-time code, an answer, or a private link, and how we do it safely. Includes what it takes to get SMS sending turned on.</p>
+
+<div class="callout warn"><b>Update 2026-10-18:</b> WhatsApp Business is now connected and approved on the same number (see <a href="AGENT-CORE.html#whatsapp">AGENT-CORE §6</a>). Business-initiated WhatsApp messages with approved templates are a route for codes and form links to non-assigned callers that does not wait for the SMS campaign. Revised order: WhatsApp templates first, SMS once the campaign is approved, iMessage for assigned handles.</div>
+<div class="callout warn"><b>Review 2026-10-18:</b> Tool names are unified with AGENT-CORE (C7, C13), and the messenger picks the first ready channel (iMessage / WhatsApp within their windows, then SMS when eligible) (C5). See <a href="AGENT-MASTER.html">AGENT-MASTER.html</a>.</div>
+<h2 id="summary">1. Summary</h2>
+<div class="callout">
+<b>Where things stand.</b> iMessage replies work. SMS receiving works. <b>SMS sending is refused by Photon</b> because our phone line has no carrier registration (10DLC campaign). I re-checked today: still <code>eligibility: blocked</code>, <code>SMS_CAMPAIGN_NOT_ASSIGNED</code>. That registration is a form a person fills in; I cannot do it through the API.
+</div>
+<p><b>The important consequence for your voice flow:</b> the caller is a stranger who called us. Our shared iMessage line can only message people who were assigned to it in advance (25 max) and who texted it first, so it cannot text an arbitrary caller. <b>SMS is the only channel that can reach whoever calls.</b> So registration is on the critical path for codes and forms-by-text, not a nice-to-have.</p>
+<p>Plan: (1) start registration now using the packet in §4, (2) in parallel build the code and form features behind one outbound-message service (§5) that can send over iMessage today and SMS the day it unlocks, (3) test end to end on iMessage with the assigned number meanwhile.</p>
+
+<h2 id="blocker">2. Why SMS is blocked (what we know)</h2>
+<table>
+<tr><th>Check</th><th>Result</th></tr>
+<tr><td>Send with <code>parentMessageId</code></td><td>Photon returns <code>SPACE_NOT_SENDABLE</code>. Cause fixed in code; it masked the real error</td></tr>
+<tr><td>Send without it</td><td><code>409 SMS_CAMPAIGN_NOT_ELIGIBLE: The sender campaign is not eligible for these recipients</code></td></tr>
+<tr><td>Line campaign status</td><td><code>campaign: null</code>, <code>eligibility: blocked</code>, <code>SMS_CAMPAIGN_NOT_ASSIGNED</code></td></tr>
+<tr><td>Photon API for registering a campaign</td><td>Not in the project API. OAuth scopes <code>ten_dlc:read/write</code> exist, so it's done in the Photon dashboard (<code>app.beta.photon.codes</code>) or via a credential we don't have. The project API can only <i>attach a ready campaign</i> to the line (<code>PUT /platforms/sms/lines/{id}/campaign</code>)</td></tr>
+<tr><td>Photon's rule</td><td>"SMS and MMS require current Platforms authorization for the sender and every recipient; campaign eligibility is required unless every recipient is in-network." "In-network" is not defined anywhere I could find</td></tr>
+</table>
+<p>10DLC is the US carriers' registration for business texting from a normal phone number. Without it, carriers block or filter the messages, so this is a real requirement, not a Photon quirk.</p>
+
+<h2 id="paths">3. Ways to unblock, ranked</h2>
+<table>
+<tr><th>#</th><th>Path</th><th>Speed</th><th>Notes</th></tr>
+<tr><td>1</td><td><b>Register a brand + campaign in Photon's dashboard</b>, then I attach it to the line</td><td><span class="pill warn">days, not minutes</span></td><td>This is the real fix. Photon's docs give no timing or price. Typical industry approval takes days to a couple of weeks; carrier and registry fees apply (the dashboard shows exact amounts). A "sole proprietor" brand is usually quicker and cheaper but has low volume limits</td></tr>
+<tr><td>2</td><td><b>Ask Photon about "in-network" and test sending</b></td><td>unknown</td><td>Ask: what is in-network, can we send to verified test numbers before approval, how long does approval take, can one campaign cover many business customers' numbers (the API has a "campaign capacity" error). Do this today in parallel; contacts on their docs: support@photon.codes, Discord</td></tr>
+<tr><td>3</td><td>Dedicated iMessage line (Business plan, $250/line/month, $250 monthly minimum per their pricing page)</td><td>fast</td><td>Can start conversations (limit 50 new per day) but only reaches iMessage users, not Android. Does <b>not</b> replace SMS for codes to arbitrary callers. Expensive for a hackathon</td></tr>
+<tr><td>4</td><td>Another SMS provider (e.g. Twilio)</td><td>trial: instant; production: also needs US registration</td><td>Not a way around registration. A trial account can text only numbers you verify, which is fine for a demo but leaves Photon for SMS. Needs your approval</td></tr>
+<tr><td>5</td><td>Demo over iMessage meanwhile</td><td>works now</td><td>Codes and form links to the assigned handle (<code>+1425…8014</code>) via the shared iMessage line</td></tr>
+</table>
+<div class="callout"><b>Recommendation:</b> do 1 and 2 today, build the features against 5, and only consider 4 if you need to demo SMS to people other than yourself before approval arrives.</div>
+
+<h2 id="packet">4. Registration packet (paste-ready drafts)</h2>
+<p class="meta">General 10DLC practice, not Photon-specific. Photon's form may ask for different fields; use this as the content. Replace the placeholders. Carriers reject vague or inconsistent submissions, so the privacy policy, terms, sample messages and opt-in description must agree with each other.</p>
+<h3>Brand</h3>
+<ul>
+<li>Legal business name, EIN (or sole-proprietor details), address, website, support email and phone. These must match each other and public records.</li>
+<li><b>Open question:</b> do we register <i>our platform</i> as one brand sending on behalf of businesses, or each business as its own brand? Carriers generally expect each end business to be identifiable. Ask Photon how they handle multi-business platforms.</li>
+</ul>
+<h3>Campaign use case</h3>
+<p>Choose <b>Mixed</b> (or <b>Low Volume Mixed</b> if available and volume is small) covering: customer care, account notifications, and one-time passcodes. Do <b>not</b> include marketing.</p>
+<h3>Campaign description</h3>
+<pre><code>[Platform name] provides AI voice and text assistants for small businesses. When a customer
+calls or texts a participating business, the assistant can send that same customer a text
+message to (a) deliver a one-time verification code they requested, (b) send a private web
+link to a secure form the customer asked for, and (c) send information the customer asked
+about (hours, prices, appointment details). Messages are sent only to people who contacted
+the business first and agreed to receive a text during that conversation. No marketing or
+promotional messages are sent.</code></pre>
+<h3>How people opt in (message flow)</h3>
+<pre><code>1. The customer calls the business's phone number or texts it first.
+2. The assistant tells the customer it is an automated assistant and, before sending any text,
+   asks: "Can I text you a link / a code at this number?" The customer says yes.
+3. The consent and its timestamp are stored with the customer's record.
+4. A text sent by the customer to the business number also counts as consent to receive
+   replies on that thread.
+Customers can reply STOP at any time to stop messages, and HELP for help.</code></pre>
+<h3>Sample messages</h3>
+<pre><code>1. [Business]: Your verification code is 482913. It expires in 5 minutes. Don't share it. Reply STOP to opt out.
+2. [Business]: Here is the secure form you asked for: https://[our-domain]/f/Xk3...  It expires in 30 minutes. Reply STOP to opt out, HELP for help.
+3. [Business]: Thanks for calling! A basic tune-up is $89 and takes 2 days. Reply here with questions. Msg &amp; data rates may apply. Reply STOP to opt out.
+4. (HELP reply) [Business]: For help call [phone] or email [email]. Reply STOP to opt out.
+5. (STOP reply) [Business]: You're unsubscribed and won't get more texts. Reply START to resubscribe.</code></pre>
+<h3>Required supporting pieces</h3>
+<ul>
+<li><b>Public privacy policy and terms pages</b> on our own domain that mention SMS, how numbers are used, and that numbers are not sold or shared for marketing. We can host these in the Next.js app, but it needs a public URL first (it's not deployed yet).</li>
+<li><b>Links in messages must be on our own domain</b>, not a public shortener (bit.ly etc.), which carriers filter. This shapes how secure-form links are built (§7).</li>
+<li>Opt-out (STOP), help (HELP) and start (START) keywords handled and answered. The code in §5 honors them and stores opt-outs.</li>
+<li>No prohibited content (lending, gambling, etc.). Do not collect highly sensitive data (SSN, card numbers) through text-linked forms in the first version.</li>
+</ul>
+
+<h2 id="messenger">5. One outbound messenger for everything</h2>
+<p>All outbound texts that are not a direct reply go through one service, so consent, opt-outs, rate limits, redaction and channel choice live in one place. Replies in an ongoing text thread keep using the existing worker.</p>
+<pre><code>sendOutbound({
+  orgId, contactId, conversationId,
+  purpose: "otp" | "form_link" | "info",      // no "marketing" in v1
+  body,                                          // may contain a secret (code/link)
+  redact?: string,                               // what to store in messages instead of body
+  channelPreference: ["sms", "imessage"],        // first allowed channel wins
+})</code></pre>
+<table>
+<tr><th>Step</th><th>Rule</th></tr>
+<tr><td>1. Consent</td><td>The contact must have recorded consent for text, with source (voice call / inbound text) and time. No consent: refuse and tell the agent to ask. The voice tool can record verbal consent when the caller says yes</td></tr>
+<tr><td>2. Opt-out</td><td>If the number replied STOP, never send, on any channel, until START</td></tr>
+<tr><td>3. Limits</td><td>Per number: cooldown between sends, hourly and daily caps; per business: daily cap. OTP has its own stricter caps (§6)</td></tr>
+<tr><td>4. Channel</td><td>Walk <code>channelPreference</code>; skip channels that are not ready (SMS campaign blocked) or not reachable (iMessage only if the number is an assigned handle with a recent inbound text)</td></tr>
+<tr><td>5. Record</td><td>Insert the message row with the <b>redacted</b> text for codes and links; send with an idempotency key derived from the request id</td></tr>
+<tr><td>6. Result</td><td>Return success/failure and the channel used. Failures are visible to the owner</td></tr>
+</table>
+<p>Inbound <b>STOP / START / HELP</b> are handled by the same worker that receives texts, before the agent sees them, and answered with a fixed message (see packet).</p>
+
+<h2 id="otp">6. One-time verification codes</h2>
+<p><b>What they're for:</b> proving the person on the call controls a phone number (for example, before the agent discusses an account, changes a booking, or sends a sensitive form). Caller ID alone can be spoofed.</p>
+<div class="diagram">
+<svg viewBox="0 0 900 220" width="100%" font-family="-apple-system,Segoe UI,sans-serif" font-size="12">
+  <defs><marker id="o1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0L8,4L0,8z" fill="#66655e"/></marker></defs>
+  <g stroke="#2f5d50" fill="#e4efe9"><rect x="10" y="20" width="130" height="50" rx="8"/><rect x="170" y="20" width="150" height="50" rx="8"/><rect x="350" y="20" width="150" height="50" rx="8"/><rect x="530" y="20" width="130" height="50" rx="8"/><rect x="690" y="20" width="200" height="50" rx="8"/></g>
+  <g stroke="#9a5b00" fill="#fbf0dc"><rect x="170" y="130" width="150" height="50" rx="8"/><rect x="350" y="130" width="150" height="50" rx="8"/><rect x="690" y="130" width="200" height="50" rx="8"/></g>
+  <g fill="#1a1a17" font-weight="600" text-anchor="middle"><text x="75" y="42">Caller</text><text x="245" y="42">Agent (voice)</text><text x="425" y="42">send_code tool</text><text x="595" y="42">Messenger</text><text x="790" y="42">Caller's phone</text><text x="245" y="152">Caller reads code</text><text x="425" y="152">check_code tool</text><text x="790" y="152">Verified flag</text></g>
+  <g fill="#66655e" text-anchor="middle" font-size="11"><text x="75" y="58">"verify me"</text><text x="245" y="58">asks consent first</text><text x="425" y="58">makes + hashes code</text><text x="595" y="58">SMS (or iMessage)</text><text x="790" y="58">gets the 6 digits</text><text x="245" y="168">speaks digits</text><text x="425" y="168">compares server-side</text><text x="790" y="168">on this contact only</text></g>
+  <g stroke="#66655e" fill="none" marker-end="url(#o1)" stroke-width="1.3"><path d="M140 45 H170"/><path d="M320 45 H350"/><path d="M500 45 H530"/><path d="M660 45 H690"/><path d="M790 70 V130" stroke-dasharray="3 3"/><path d="M690 155 H500"/><path d="M350 155 H320"/></g>
+</svg>
+</div>
+<table>
+<tr><th>Rule</th><th>Detail</th></tr>
+<tr><td>Code</td><td>6 digits from a cryptographic random source (not <code>Math.random</code>)</td></tr>
+<tr><td>Storage</td><td>Never store the code. Store a keyed hash (HMAC with a server secret, bound to contact + purpose + request id), expiry, attempt count, status</td></tr>
+<tr><td>Expiry / attempts</td><td>5 minutes; 5 wrong tries then locked; new code invalidates the old; single use</td></tr>
+<tr><td>Send limits</td><td>30 s cooldown between sends; 3 per number per hour; 10 per number per day; business daily cap. Stops abuse of our line to spam someone ("SMS pumping")</td></tr>
+<tr><td>Compare</td><td>Constant-time comparison, on the server, inside the tool. <b>The model never sees the code or the expected value</b></td></tr>
+<tr><td>Where the code must not appear</td><td>Not in <code>messages</code> (store "[verification code sent]"), not in the model's context or prompts, not in logs, not in tool-call audit rows (log "code sent" only), not in the transcript the owner sees</td></tr>
+<tr><td>Voice problems</td><td>Speech recognition mishears digits. The tool accepts a spoken string, strips spaces and words ("four eight two"), and allows re-reading; a wrong attempt still counts</td></tr>
+<tr><td>What "verified" means</td><td>Sets <code>contacts.verifiedPhone = {number, at, method}</code> for that number, plus a per-call flag with a short validity (e.g. the rest of the call). It proves possession of the number, not who the person is</td></tr>
+<tr><td>Not Photon's OTP feature</td><td>Photon has "filtered verification codes" endpoints. Those are for reading codes <i>sent to</i> our numbers by other services; they are unrelated to sending our own</td></tr>
+</table>
+
+<h2 id="forms">7. Secure forms</h2>
+<p><b>What they're for:</b> collecting details that should not be read out over a phone line or typed into a chat transcript (address, date of birth, preferences, documents). The agent texts a private link; the customer fills it in on their phone; the agent is told it's done.</p>
+<h3>Flow</h3>
+<ol>
+<li>Agent asks consent to text, then calls <code>forms_forms_send_secure_form("service-intake")</code>.</li>
+<li>Server creates a <code>form_request</code> for this contact and conversation with a random token (32 bytes, shown once in the link, stored only as a hash), expiry (30 minutes default), and optional one-time-code step-up.</li>
+<li>Messenger sends the link from <b>our own domain</b>. The stored message body is redacted to "[secure form link sent]".</li>
+<li>Customer opens <code>https://[domain]/f/&lt;token&gt;</code> in the Next.js app. If step-up is on, they first enter a code texted to the same number.</li>
+<li>They submit. The server validates every field against the template, <b>encrypts sensitive fields</b>, stores the submission, marks the link used, and adds a plain event to the conversation ("Customer completed: Service intake").</li>
+<li>The agent learns only completion plus fields the template marks safe to share with the agent (e.g. preferred day). It can say "Got it, thanks." Sensitive values stay out of the model.</li>
+<li>The owner opens the submission in the console (role-checked, access logged).</li>
+</ol>
+<h3>Design rules</h3>
+<table>
+<tr><th>Concern</th><th>Rule</th></tr>
+<tr><td>Link previews</td><td>iMessage and Messages apps fetch links automatically to build previews. The link must be safe to GET: <b>a GET never consumes or exposes anything</b>. Only the final submit marks the link used</td></tr>
+<tr><td>Token</td><td>High-entropy, single use, expires; looked up by hash; constant-time; rate-limited by IP and token</td></tr>
+<tr><td>Page security</td><td>HTTPS only, <code>Cache-Control: no-store</code>, <code>Referrer-Policy: no-referrer</code>, <code>noindex</code>, CSRF protection (Next server actions), no third-party scripts or analytics on these pages</td></tr>
+<tr><td>Encryption</td><td>Sensitive fields encrypted at the application layer with AES-256-GCM before they reach Mongo. A per-business data key, wrapped by a master key held outside the database (environment variable now, a cloud key manager later). Mongo/Atlas also encrypts at rest, but that doesn't protect against a leaked database query</td></tr>
+<tr><td>Not collected in v1</td><td>Card numbers (use a payment provider's hosted page later), SSN, government ID uploads, health data. Carriers and regulators are stricter about these, and the burden on us is much higher</td></tr>
+<tr><td>Templates</td><td>Owner picks from vetted templates in the console, each with typed fields, which are sensitive, and which the agent may see. v1 ships 2–3 templates (contact details, service intake, callback request)</td></tr>
+<tr><td>Retention</td><td>Owner-configurable (default 90 days), then field values are erased; request metadata kept. Delete-contact removes submissions too</td></tr>
+<tr><td>Short links</td><td>Own domain only. A public shortener would likely get the campaign flagged. Domain is a decision (§12); until then a placeholder host works for testing</td></tr>
+</table>
+
+<h2 id="tools">8. Agent tools</h2>
+<p>All tools run on the host (not in the sandbox), and the contact, conversation and business ids come from the call or thread, never from the model. They plug into both the text agent and the voice bridge once the tool loop exists (step C in the architecture doc).</p>
+<table>
+<tr><th>Tool</th><th>Arguments from the model</th><th>Returns to the model</th></tr>
+<tr><td><code>consent_record</code></td><td>none (the agent calls it after the caller says yes)</td><td>"consent recorded"</td></tr>
+<tr><td><code>verify_send_code</code></td><td>none</td><td>"sent" / "wait 30 s" / "limit reached" / "no consent". Never the code</td></tr>
+<tr><td><code>verify_check_code</code></td><td><code>code</code> (what the caller said)</td><td>"verified" / "wrong, N tries left" / "expired" / "locked"</td></tr>
+<tr><td><code>forms_send_secure_form</code></td><td><code>template</code> (from an allow-list)</td><td>"sent" or a refusal reason. Never the link</td></tr>
+<tr><td><code>forms_status</code></td><td><code>template</code></td><td>"pending" / "completed" plus allowed fields</td></tr>
+<tr><td><code>text_send_info</code></td><td><code>text</code> (short, from the conversation)</td><td>"sent" / refusal. Passed through guardrails first</td></tr>
+</table>
+<p>Prompt-injection stance: a caller saying "send the code to this other number" cannot work, because the destination is always the verified contact's number on file for this call, not a model argument.</p>
+
+<h2 id="data">9. Data model additions</h2>
+<table>
+<tr><th>Collection / field</th><th>Purpose</th><th>Key fields</th></tr>
+<tr><td><code>contacts.consent</code></td><td>Text consent</td><td><code>{text: {granted, at, source: "voice"|"inbound_text", callId?}}</code></td></tr>
+<tr><td><code>contacts.verifiedPhone</code></td><td>Phone possession proof</td><td><code>{number, at, method: "sms_otp"}</code></td></tr>
+<tr><td><code>opt_outs</code></td><td>STOP list (per business + number)</td><td><code>orgId, address, channelsAffected, at, source</code>; unique on <code>(orgId, address)</code></td></tr>
+<tr><td><code>verifications</code></td><td>Codes</td><td><code>orgId, contactId, purpose, codeHmac, expiresAt, attempts, maxAttempts, status, sentVia, createdAt</code>. TTL index on <code>expiresAt</code> + grace</td></tr>
+<tr><td><code>form_templates</code></td><td>What can be asked</td><td><code>orgId?, key, title, fields[{key,label,type,required,sensitive,agentVisible}], expiryMinutes, stepUp</code></td></tr>
+<tr><td><code>form_requests</code></td><td>Issued links</td><td><code>orgId, contactId, conversationId, templateKey, tokenHash (unique), expiresAt, status (pending|opened|completed|expired|revoked), createdAt</code></td></tr>
+<tr><td><code>form_submissions</code></td><td>Answers</td><td><code>orgId, requestId, contactId, fields{plain}, secrets{key: {iv, tag, ciphertext}}, submittedAt, eraseAt</code></td></tr>
+<tr><td><code>access_logs</code></td><td>Who viewed what</td><td><code>orgId, userId, action, targetId, at</code> (console reads of submissions)</td></tr>
+<tr><td><code>messages</code> (existing)</td><td>Redaction</td><td>Add <code>redacted: true</code> when the real body was withheld</td></tr>
+</table>
+
+<h2 id="security">10. Security and compliance</h2>
+<ul>
+<li><b>Consent first.</b> No text without recorded consent. For voice, the agent asks aloud and the yes is stored with the call id. Texting someone who called us is the common, low-risk case, but marketing is out of scope and unsupported in code.</li>
+<li><b>Opt-out everywhere.</b> STOP on any channel blocks all channels for that number and business. HELP and START answered automatically.</li>
+<li><b>SMS pumping and abuse.</b> Strict per-number and per-business limits on codes, plus an alert on spikes. Never send a code to a number the caller supplies without a prior verification path.</li>
+<li><b>Secrets never reach the model or logs:</b> codes, form links, and sensitive field values. The redaction rule is enforced in the messenger, not in each tool.</li>
+<li><b>Owner access is audited.</b> Revealing a sensitive field requires a logged action.</li>
+<li><b>Legal:</b> US texting rules (TCPA, carrier rules, state laws) and data-protection duties for the personal information collected need real legal review before launch. This doc is engineering design, not legal advice.</li>
+</ul>
+
+<h2 id="phases">11. Build order</h2>
+<table>
+<tr><th>Step</th><th>Scope</th><th>Needs SMS unlocked?</th></tr>
+<tr><td><b>S0</b> · today</td><td>You: start 10DLC registration (packet in §4) and email Photon the questions in §3 path 2. Me: attach the campaign to the line when it's ready</td><td>—</td></tr>
+<tr><td><b>S1</b></td><td>Outbound messenger (consent, opt-outs, limits, redaction, channel choice) + STOP/HELP/START handling; schema additions</td><td>No. Tested with the loopback adapter and iMessage</td></tr>
+<tr><td><b>S2</b></td><td>Verification codes: service, collection, tools, tests (wrong code, expiry, lockout, rate limit, code never in messages/logs)</td><td>No. Real send over iMessage to the assigned handle</td></tr>
+<tr><td><b>S3</b></td><td>Secure forms: template + request + public page in <code>web/</code>, encryption, submission storage, owner view with audit log, link-preview safe</td><td>No. Link sent over iMessage</td></tr>
+<tr><td><b>S4</b></td><td>Wire tools into the agent (needs the tool loop) and into the voice bridge</td><td>No</td></tr>
+<tr><td><b>S5</b></td><td>Turn on SMS: attach campaign, enable the SMS worker, re-run tests over SMS, send to a non-assigned number</td><td><b>Yes</b></td></tr>
+<tr><td><b>S6</b></td><td>Public deploy of the web app on our domain (also needed for the registration's privacy/terms URLs), hardening, retention jobs</td><td>—</td></tr>
+</table>
+<p>Tests for each step include the cross-customer canary from the architecture doc: a code, link or form value belonging to one caller must never appear in another caller's context.</p>
+
+<h2 id="decisions">12. Decisions needed</h2>
+<ol>
+<li><b>SMS path:</b> register with Photon (recommended) and ask about in-network. Do you want me to draft the email to Photon?</li>
+<li><b>Brand model:</b> one registration for the platform, or one per business customer? Photon's answer may decide this.</li>
+<li><b>Public domain</b> for form links and the privacy/terms pages. Do you have one, or should we pick a temporary host for testing?</li>
+<li><b>Form data:</b> which fields do the first templates need? Confirm we exclude SSN, card numbers and ID documents from v1.</li>
+<li><b>Verification purpose:</b> what should a verified phone unlock? (e.g. discussing a booking, sending a sensitive form). Defines when the agent must require it.</li>
+<li><b>Interim demo:</b> OK to run S1–S4 against iMessage with <code>+1425…8014</code> until SMS is approved?</li>
+<li>Whether to build S1 now or wait until the SMS path is decided.</li>
+</ol>
+<p class="meta">Sources: Photon API spec and beta docs, live API checks on 2026-10-17/18, and general US 10DLC practice (not Photon-specific). Fee and timing figures are intentionally not given because no Photon source states them.</p>
+</main>
+</div>
+</body>
+</html>
