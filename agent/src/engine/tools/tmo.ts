@@ -23,6 +23,7 @@ export const tmo_context: Tool = {
         financing: l.financing ? (l.financing.paid_off ? { paid_off: true } : { balance: usd(l.financing.balance_cents), months_remaining: l.financing.months_remaining }) : null,
       })),
       services: (c.services ?? []).map((s: any) => ({ name: s.name, monthly: usd(s.monthly_cents) })),
+      active_deals: (c.deals ?? []).filter((d: any) => d.status === "active").map((d: any) => ({ plan: d.plan, lines: d.lines, monthly_total: usd(d.monthlyCents), monthly_credit: d.creditCents ? usd(d.creditCents) : null, ends: d.endsAt ? new Date(d.endsAt).toISOString().slice(0, 10) : null })),
       bill: c.billing ? { latest_total: usd(c.billing.latest_total_cents), change_vs_recent_average_pct: c.billing.change_pct_vs_prior_avg != null ? Math.round(c.billing.change_pct_vs_prior_avg * 1000) / 10 : null } : null,
       support_last_90_days: c.support ? { contacts: c.support.contacts_90d, unresolved: c.support.unresolved_90d, last_contact: c.support.last_contact_date ?? null } : null,
     } };

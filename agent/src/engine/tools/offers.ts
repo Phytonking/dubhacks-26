@@ -165,8 +165,35 @@ export const negotiation_accept: Tool = {
     if (credit > 0 && neg.turnId === ctx.turnId) return { ok: false, error: "offer_not_presented_yet", data: { hint: "You only just made this offer in this same turn; the customer has not heard it. Tell them the offer and wait for their answer." } };
     const planName = neg?.plan ?? a.plan;
     if (!planName) return { ok: false, error: "needs_plan", data: { hint: "Say which plan they agreed to (plan, lines)." } };
-    const offer = { creditCents: credit, months: DEFAULT_AUTHORITY.maxMonths, plan: planName, lines: neg?.lines ?? a.lines ?? 1, gives: neg?.gives ?? [], summary: a.summary, status: "accepted", at: ctx.now };
+    const offer: Record<string, unknown> & { creditCents: number; months: number; plan: string; lines: number } = { creditCents: credit, months: DEFAULT_AUTHORITY.maxMonths, plan: planName, lines: neg?.lines ?? a.lines ?? 1, gives: neg?.gives ?? [], summary: a.summary, status: "accepted", at: ctx.now };
+
+    // Demo "apply to the account": a verified account holder who agrees to switch plans on lines they already have owes nothing today, so the change is
+    // made on their T-Mobile record now (plan on those lines, the credit, when it ends). Anything that needs money today, or more lines than they have,
+    // still goes through checkout or the team.
+    const ref = ctx.party.externalRefs.find((r) => r.system === "tmobile" && r.kind === "account");
+    const plan: any = (await ctx.db.collection("tmo_plans").find({ orgId: ctx.orgId, status: "current", name: rx(planName) }).limit(1).toArray())[0];
+    let applied: { monthlyCents: number; endsAt: Date; lines: number } | null = null;
+    if (ref && plan) {
+      const who: any = await ctx.db.collection("contacts").findOne({ _id: ctx.contactId, orgId: ctx.orgId }, { projection: { verifiedPhone: 1, handles: 1 } });
+      const acct: any = await ctx.db.collection("tmo_accounts").findOne({ orgId: ctx.orgId, accountId: ref.id }, { projection: { "context.lines": 1 } });
+      const have = (acct?.context?.lines ?? []).length;
+      if (isVerified(who, ctx.now) && have >= offer.lines && !plan.deviceConnectionCents) {
+        const monthlyCents = Math.max(0, planTotalCents(plan.linePrices ?? [], plan.extraLineCents ?? 0, offer.lines) - credit);
+        const endsAt = new Date(ctx.now.getTime() + offer.months * 30.44 * 86400_000);
+        const deal = { id: `deal_${ctx.turnId.slice(0, 8)}`, plan: plan.name, planSku: plan.sku, lines: offer.lines, listCents: monthlyCents + credit, creditCents: credit, monthlyCents, months: offer.months, startsAt: ctx.now, endsAt, status: "active", appliedBy: "agent", summary: a.summary };
+        const set: Record<string, unknown> = {};
+        for (let k = 0; k < offer.lines; k++) Object.assign(set, { [`context.lines.${k}.plan_sku`]: plan.sku, [`context.lines.${k}.plan_name`]: plan.name, [`context.lines.${k}.plan_tier`]: plan.tier, [`context.lines.${k}.plan_family`]: plan.family, [`context.lines.${k}.plan_variant`]: plan.variant, [`context.lines.${k}.plan_data_cap_gb`]: plan.dataCapGb ?? null });
+        await ctx.db.collection("tmo_accounts").updateOne({ orgId: ctx.orgId, accountId: ref.id }, { $set: { ...set, appliedAt: ctx.now }, $push: { "context.deals": deal, changeLog: { at: ctx.now, by: "agent", what: `${plan.name} on ${offer.lines} line(s)${credit ? `, ${usd(credit)}/mo credit for ${offer.months} months` : ""}`, turnId: ctx.turnId } } as never });
+        offer.status = "applied"; offer.appliedAt = ctx.now; applied = { monthlyCents, endsAt, lines: offer.lines };
+        // the sale the console counts: nothing due today, the value is the term of the plan
+        await ctx.db.collection("orders").updateOne({ orgId: ctx.orgId, conversationId: ctx.conversationId }, { $set: { contactId: ctx.contactId, amountCents: monthlyCents * offer.months, dueTodayCents: 0, monthlyCents, item: `${plan.name} on ${offer.lines} line${offer.lines === 1 ? "" : "s"}, ${usd(monthlyCents)}/mo for ${offer.months} months`, status: "paid", source: "agent_account_change", updatedAt: ctx.now }, $setOnInsert: { createdAt: ctx.now, quoteIds: [] } }, { upsert: true });
+      }
+    }
     await ctx.db.collection("contacts").updateOne({ _id: ctx.contactId, orgId: ctx.orgId }, { $push: { "memory.offers": offer } as never, $unset: { "memory.negotiation": "" } });
+    if (applied) {
+      await ctx.db.collection("notifications").insertOne({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, kind: "sale", message: `Applied to the account: ${plan.name} on ${applied.lines} line${applied.lines === 1 ? "" : "s"}, ${usd(applied.monthlyCents)}/mo${credit ? ` (${usd(credit)}/mo credit for ${offer.months} months)` : ""}.`, urgency: "normal", read: false, createdAt: ctx.now } as never);
+      return { ok: true, data: { status: "applied", plan: plan.name, lines: applied.lines, new_monthly_total: usd(applied.monthlyCents), credit_per_month: credit ? usd(credit) : null, for_months: offer.months, ends: applied.endsAt.toISOString().slice(0, 10), due_today: "$0", next: "It is done on their account. Tell them plainly that the change is applied: the plan, the monthly total, how long it lasts and that it shows on their next bill. Nothing is due today. Do not say a team member needs to confirm it." }, audit: { status: "applied", plan: plan.name, creditCents: credit, monthlyCents: applied.monthlyCents }, sideEffect: true };
+    }
     await ctx.db.collection("notifications").insertOne({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, kind: "deal", message: `Customer accepted: ${a.summary}${credit ? ` (${usd(credit)}/mo credit for ${offer.months} months on ${planName})` : ` (${planName} at list price)`}. Please finish the order.`, urgency: "high", read: false, createdAt: ctx.now } as never);
     return { ok: true, data: { status: "recorded", next: "Tell them it is noted. If something is due today (a connection charge, a phone), offer to text a secure payment link and, on a yes, call checkout_quote with use_accepted_offer, read it back, then checkout_send_payment_link. If nothing is due today, tell them a team member will confirm it. Do not say it is already applied." }, sideEffect: true };
   },

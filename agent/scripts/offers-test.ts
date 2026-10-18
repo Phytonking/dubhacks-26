@@ -88,6 +88,29 @@ await t("acceptance records the deal and tells the team; it refuses when nothing
   const after: any = await db.collection("contacts").findOne({ _id: c.contactId }); ok(after.memory.offers?.length === 1 && !after.memory.negotiation && after.memory.offers[0].status === "accepted", JSON.stringify(after.memory));
   ok((await db.collection("notifications").countDocuments({ contactId: c.contactId, kind: "deal" })) === 1, "team told");
 });
+await t("accepting on a verified account applies the plan switch and credit to the account record; unverified, or more lines than they have, only records it", async () => {
+  const mkAcct = async (phone: string, id: string, nLines: number, verified: boolean) => {
+    const c = await kit.newContact(phone, { externalRefs: [{ system: "tmobile", id, kind: "account" }], ...(verified ? { verifiedPhone: { number: phone, at: now, method: "otp" } } : {}) });
+    await db.collection("tmo_accounts").insertOne({ orgId, accountId: id, importedAt: now, segment: "single", lines: [], billing: [], support: [], context: { as_of: "2026-10-01", lines: Array.from({ length: nLines }, (_, k) => ({ line_id: `L${k}`, member_label: `Line ${k + 1}`, member_role: "primary", plan_name: "Experience More 2.0", plan_sku: "OLD", plan_data_cap_gb: null })) } } as never);
+    return c;
+  };
+  const v = await mkAcct("+14255550861", "ACC-AP1", 1, true);
+  await run(v, "negotiation_offer", { plan: "Essentials Saver 2.0", lines: 1 });
+  const ro = await run(v, "negotiation_offer", { plan: "Essentials Saver 2.0", lines: 1, customer_gives: ["autopay"] }); ok(ro.data.allowed_now.monthly_credit !== "$0", "a credit is on the table: " + ro.content.slice(0, 200));
+  await db.collection("contacts").updateOne({ _id: v.contactId }, { $set: { "memory.negotiation.turnId": "an-earlier-turn" } });
+  const r = await run(v, "negotiation_accept", { summary: "Essentials Saver 2.0 at $50 a month for a year" });
+  ok(r.result.ok && r.data.status === "applied" && r.data.due_today === "$0" && /is applied/.test(r.data.next), r.content);
+  const acct: any = await db.collection("tmo_accounts").findOne({ accountId: "ACC-AP1" });
+  ok(acct.context.lines[0].plan_name === "Essentials Saver 2.0" && acct.context.lines[0].plan_sku !== "OLD" && acct.context.deals?.length === 1 && acct.context.deals[0].status === "active" && acct.context.deals[0].creditCents > 0 && acct.changeLog?.length === 1, JSON.stringify(acct.context));
+  const order: any = await db.collection("orders").findOne({ conversationId: v.conversationId }); ok(order && order.status === "paid" && order.amountCents > 0 && order.dueTodayCents === 0, "the sale is counted: " + JSON.stringify(order));
+  ok((await db.collection("notifications").countDocuments({ conversationId: v.conversationId, kind: "sale" })) === 1 && (await db.collection("notifications").countDocuments({ conversationId: v.conversationId, kind: "deal" })) === 0, "a sale notice, not a 'please finish the order' deal");
+  const off: any = ((await db.collection("contacts").findOne({ _id: v.contactId })) as any).memory.offers; ok(off[0].status === "applied", "offer marked applied so checkout never charges it again");
+  const tools = await run(v, "tmo_context", {}); ok(tools.data.lines?.[0]?.plan === "Essentials Saver 2.0" && tools.data.active_deals?.[0]?.plan === "Essentials Saver 2.0", "the agent sees the change on the account: " + tools.content.slice(0, 300));
+  const u = await mkAcct("+14255550862", "ACC-AP2", 1, false);
+  const ru = await run(u, "negotiation_accept", { summary: "x", plan: "Essentials Saver 2.0", lines: 1 }); ok(ru.data.status === "recorded" && !(await db.collection("tmo_accounts").findOne({ accountId: "ACC-AP2", "context.deals": { $exists: true } })), "unverified: recorded only");
+  const m = await mkAcct("+14255550863", "ACC-AP3", 1, true);
+  const rm = await run(m, "negotiation_accept", { summary: "x", plan: "Essentials Saver 2.0", lines: 2 }); ok(rm.data.status === "recorded", "wants more lines than the account has: recorded for checkout or the team");
+});
 await t("backstop: 'I've noted that' after a clear yes, with no negotiation_accept, records the deal; a maybe or an unrelated note does not", async () => {
   const c = await kit.newContact("+14255550890");
   const say = (body: string, sender = "agent") => db.collection("messages").insertOne({ orgId, conversationId: c.conversationId, channel: "imessage", direction: sender === "agent" ? "out" : "in", sender, body, channelMsgId: "bk" + Math.random(), deliveryStatus: "delivered", handling: "agent", attempts: 0, ts: new Date(kit.now.t.getTime() - 60_000) } as never);
