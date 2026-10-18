@@ -115,7 +115,7 @@ export function startVoiceServer(cfg: VoiceCfg): Promise<{ server: Server; port:
       if (!url.pathname.startsWith(prefix + "/")) { res.writeHead(404); return res.end(); }                       // wrong or missing secret path: reveal nothing
       if (cfg.bearer && req.headers.authorization !== `Bearer ${cfg.bearer}` && url.pathname.endsWith("/chat/completions")) { res.writeHead(401); return res.end(); }
       const route = url.pathname.slice(prefix.length);
-      if (req.method === "POST" && (route === "/v1/chat/completions" || route === "/chat/completions")) return await chatCompletions(req, res);
+      if (req.method === "POST" && route.endsWith("/chat/completions")) return await chatCompletions(req, res);
       if (req.method === "POST" && route === "/webhooks/elevenlabs") return await webhook(req, res);
       res.writeHead(404); res.end();
     } catch (e) {
