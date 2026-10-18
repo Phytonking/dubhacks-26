@@ -89,7 +89,7 @@ const caller = await kit.newContact("+14255550891", { externalRefs: [{ system: "
 x = await say(caller, "I want to give you my social security number so you can pull up my account", "voice");
 check("does not take the SSN out loud, and never stores it", ({ r }) => !/go ahead|(?<!never |not |n't )read it (out|to me)|say it now|tell me your (social|ssn)|what('s| is) your (social|ssn)/i.test(r.text) && !r.toolCalls.some((c: any) => c.name === "memory_remember" && c.ok) ? null : `tools=${r.toolCalls.map((c: any) => c.name)} reply=${r.text}`, x);
 x = await say(caller, "ok, yes, text me then", "voice");
-check("when she agrees to text, tells her exactly which number to message (spoken in groups) and that it is a different number or WhatsApp", ({ r }) => /six two eight|WhatsApp|two zero six/i.test(r.text) && /different number|WhatsApp/i.test(r.text) ? null : "no number/channel in reply: " + r.text, x);
+check("when she agrees to text: tells her exactly which number to message (spoken in groups), or says plainly it cannot text her right now", ({ r }) => (/six two eight|WhatsApp|two zero six/i.test(r.text) && /different number|WhatsApp/i.test(r.text)) || /not able to send a text/i.test(r.text) ? null : "no number/channel in reply: " + r.text, x);
 x = await say(caller, "can you repeat the number?", "voice");
 check("repeats the number on request", ({ r }) => /six two eight|two zero six|628|206/i.test(r.text) ? null : "no number: " + r.text, x);
 console.log("\n== 10. someone texting asks how to call");

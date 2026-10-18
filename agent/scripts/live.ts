@@ -145,6 +145,10 @@ if (v2) {
   // cannot start a chat), WhatsApp only inside its 24-hour window (otherwise an approved template is required), SMS only once the campaign is approved.
   const ready: Readiness = async (channel, c) => {
     if (channel === "sms") return smsReady ? { ok: true } : { ok: false, reason: "SMS campaign not eligible" };
+    if (channel === "imessage") {   // a person assigned to the iMessage line has opened that chat before (assignment requires it): try the send, the messenger falls back if the provider refuses
+      const phone = (c.contact.handles ?? []).map((h: any) => h.address).find((x: string) => /^\+\d{8,15}$/.test(x));
+      if (phone && await db.collection("channel_lines").countDocuments({ orgId: c.orgId, channel: "imessage", status: "active", handles: phone }, { limit: 1 })) return { ok: true };
+    }
     const hours = channel === "whatsapp" ? 24 : 24 * 30;
     const n = await db.collection("messages").countDocuments({ orgId: c.orgId, conversationId: c.conversationId, channel, direction: "in", ref: { $ne: null }, ts: { $gte: new Date(Date.now() - hours * 3600_000) } }, { limit: 1 });
     return n ? { ok: true } : { ok: false, reason: channel === "whatsapp" ? "WhatsApp 24-hour window closed (needs an approved template)" : "no recent message from this person on iMessage" };

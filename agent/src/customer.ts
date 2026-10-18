@@ -67,7 +67,7 @@ export function buildCustomerBlock(c: Customer, ctx: { channel: string }): strin
   const who = c.status === "linked_account" ? `RECOGNIZED CUSTOMER (account ${c.refs.find((r) => r.kind === "account")!.id})`
     : c.status === "prospect" ? "PROSPECT (not a customer yet; no account on file)" : "UNKNOWN NUMBER (no record; treat as a prospect, never guess an account)";
   L.push(`Who: ${who}`);
-  L.push(`Verified: ${c.verified ? `yes, by one-time code at ${c.verifiedAt!.toISOString()}` : "NO. Account details are withheld until verified."}`);
+  L.push(`Verified: ${c.verified ? `yes, by one-time code at ${c.verifiedAt!.toISOString()}` : "NO. Account details are withheld until verified." + (c.status === "linked_account" ? " When they ask about their account, call verify_send_code immediately; do not ask permission and do not ask them to text first." : "")}`);
   L.push(`Reaching us on: ${ctx.channel}${c.channels.filter((x) => x !== ctx.channel).length ? ` (also used: ${c.channels.filter((x) => x !== ctx.channel).join(", ")})` : ""}`);
   if (c.firstName) L.push(`Name: ${c.firstName}`);
   const p = c.profile;
