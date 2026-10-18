@@ -94,9 +94,10 @@ await t("unknown called number or empty speech: a polite spoken apology, and the
   const r = await sseCall(JSON.stringify({ stream: true, messages: [{ role: "system", content: sys("conv_x", CALLER, "+19995550000") }, { role: "user", content: "hello" }] }));
   ok(/can't take your call/.test(r.content) && r.last === "[DONE]" && llm.requests.length === before, r.content);
 });
-await t("owner has the conversation: the caller hears a handoff line, the model is not called", async () => {
-  await db.collection("conversations").updateOne({ _id: kit.conversationId }, { $set: { mode: "human" } }); const before = llm.requests.length;
-  const r = await sseCall(body("conv_3", "Hi")); ok(/connect you with someone/.test(r.content) && llm.requests.length === before, r.content);
+await t("a conversation locked to a person does NOT block a phone call: nobody can take over a live call through this system, so the agent keeps answering", async () => {
+  await db.collection("conversations").updateOne({ _id: kit.conversationId }, { $set: { mode: "human" } }); await db.collection("notifications").insertOne({ orgId: kit.orgId, conversationId: kit.conversationId, kind: "handoff", cause: "customer_request", message: "taken over", urgency: "high", read: false, createdAt: new Date() } as never);
+  const before = llm.requests.length; llm.i = 0; llm.script = [{ content: "Sure, I can help with that." }];
+  const r = await sseCall(body("conv_3", "Hi")); ok(/can help/.test(r.content) && llm.requests.length > before, r.content);
   await db.collection("conversations").updateOne({ _id: kit.conversationId }, { $set: { mode: "agent" } });
 });
 await t("ElevenLabs system tools: end_call is passed back as a tool call for ElevenLabs to execute, never run here", async () => {

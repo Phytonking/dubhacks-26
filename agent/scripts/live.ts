@@ -190,6 +190,8 @@ const events = new PhotonEvents(photon, mongoCursorStore(db, `live:${process.env
   await handler(e);
 }, log);
 events.start();
+// Health watch: hand back any chat a system fault locked to a person, and alarm if too many turns end in an escalation, block or failure.
+{ const { healthCheck } = await import("../src/handoff"); const beat = () => healthCheck(db, orgId, new Date(), log).catch((e) => log(`health check failed: ${(e as Error).message}`)); void beat(); setInterval(beat, 60_000); }
 setInterval(() => registerLines().catch((e) => log(`line refresh failed: ${e.message}`)), 30_000);   // pick up replaced iMessage assignments
 // Optional HTTP webhook receiver (same pipeline, signature-verified). Needs a public HTTPS URL registered as a Photon webhook destination.
 const whSecret = process.env.PHOTON_WEBHOOK_SIGNING_SECRET?.trim();

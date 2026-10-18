@@ -46,7 +46,8 @@ export const tmo_catalog: Tool = {
       const rows: any[] = await col("tmo_plans").find({ orgId: ctx.orgId, status: "current", ...(q ? { name: q } : {}) }).toArray();
       const n = Number(a.lines ?? 1);
       const fits = rows.filter((p) => n >= (p.minLines ?? 1) && (p.maxLines == null || n <= p.maxLines));
-      const shown = (fits.length ? fits : rows).sort(q ? byMatch(String(a.query)) : () => 0).slice(0, limit);
+      const priced = (p: any) => planTotalCents(p.linePrices ?? [], p.extraLineCents ?? 0, n);
+      const shown = (fits.length ? fits : rows).sort(q ? byMatch(String(a.query)) : (x: any, y: any) => priced(x) - priced(y)).slice(0, limit);   // no search words: cheapest first, so "what is your cheapest plan" is answered right
       const cheapest = Math.min(...shown.map((p) => planTotalCents(p.linePrices ?? [], p.extraLineCents ?? 0, n)));
       const out = shown.map((p) => ({
         plan: p.name, lines_priced: n, fits_that_many_lines: n >= (p.minLines ?? 1) && (p.maxLines == null || n <= p.maxLines),
@@ -56,7 +57,7 @@ export const tmo_catalog: Tool = {
         hotspot_high_speed_gb: p.hotspotHighSpeedGb ?? null, canada_mexico_gb: p.canadaMexicoGb, intl_data_gb: p.intlDataGb, video: p.videoQuality,
         price_guarantee_years: p.priceGuaranteeYears, connection_charge_per_line: usd(p.deviceConnectionCents), perks: p.perks ?? [], limits: p.maxLines != null ? `${p.minLines ?? 1}-${p.maxLines} lines` : "any number of lines",
       }));
-      return { ok: true, data: { results: out, note: "monthly_total is exact (sum of per-line prices); say whether it assumes AutoPay" } };
+      return { ok: true, data: { results: out, note: `monthly_total is exact (sum of per-line prices); say whether it assumes AutoPay${q ? "" : ". These are sorted cheapest first, so the first one is the cheapest option for that many lines"}` } };
     }
     if (a.kind === "devices") {
       const rows: any[] = (await col("tmo_devices").find({ orgId: ctx.orgId, ...(q ? { name: q } : { status: "current" }) }).limit(60).toArray()).sort(q ? byMatch(String(a.query)) : () => 0);

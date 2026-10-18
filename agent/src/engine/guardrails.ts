@@ -48,7 +48,9 @@ export function checkText(text: string, cfg: GuardCfg, evidence: string[]): Verd
     // a percentage that a tool returned this turn ("25% off" on accessories) is a catalog fact, not an invented discount; the customer's own "50% off" never counts
     const pct = /discount (\d+(?:\.\d+)?)%/.exec((d as { reason?: string }).reason ?? "")?.[1];
     const fromTool = pct && evidence.some((e) => !e.startsWith("USER:") && new RegExp(`(?<![\\d.])${pct}\\s?%\\s*off`, "i").test(e));
-    if (!fromTool) return d;
+    // restating the customer's own number ("AT&T's 40% off") is not offering it; offering it ("I can do 40% off") is
+    const fromUser = pct && evidence.some((e) => e.startsWith("USER:") && new RegExp(`(?<![\\d.])${pct}\\s?%`).test(e)) && !/\b(i('ll| will| can(?!'t|not)| could(?!n't)| am able| would)|we('ll| will| can(?!'t|not)| could(?!n't)| would)|i'm (able|happy|glad)|happy to (give|offer|do|take)|let me (give|offer|take|knock))\b/i.test(text);
+    if (!fromTool && !fromUser) return d;
   }
   if (cfg.requireGroundedMoney) return checkGroundedMoney(text, evidence);
   return { verdict: "ok" };

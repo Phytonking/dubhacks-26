@@ -13,7 +13,7 @@ export const forms_send_secure_form: Tool = {
     const sent = await ctx.messenger.send({
       orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, purpose: "form_link", agentTurnId: ctx.turnId,
       body: `${ctx.env.brandFallback}: Here is your private form: ${link} It expires in ${req.template.expiryMinutes} minutes. Reply STOP to opt out.`,
-      redact: "[secure form link sent]", idempotencyKey: `form:${req.id}`,
+      redact: "[secure form link sent]", idempotencyKey: `form:${req.id}`, implicitConsent: true,
       channels: ctx.channel === "voice" ? undefined : [ctx.channel, "imessage", "whatsapp", "sms"],
     });
     if (!sent.ok) {

@@ -4,7 +4,7 @@ import { buildContext, toolsBlock } from "../src/engine/context";
 import { readdirSync, readFileSync } from "node:fs";
 import { checkGroundedMoney, takeSentences } from "../src/engine/guardrails";
 import { ALL_TOOLS, validateRegistry } from "../src/engine/tools/index";
-import { limitQuestions, MAX_ROUNDS, runTurn, streamTurn, SAFE_FALLBACK, cleanReply } from "../src/engine/turn";
+import { dedupeSentences, dropMeta, empathyLead, limitQuestions, MAX_ROUNDS, runTurn, streamTurn, SAFE_FALLBACK, cleanReply } from "../src/engine/turn";
 import { stripThinking } from "../src/engine/llm";
 import { FORM_TEMPLATES } from "../../web/src/lib/form-templates";
 import { ScriptedLlm, ok, t, finish, makeKit } from "./_testkit";
@@ -63,13 +63,13 @@ await t("the model cannot choose whose data a tool touches: ids come from the th
   ok(!r.toolCalls[0].ok, "must be rejected");
   const o: any = await db.collection("contacts").findOne({ _id: other.contactId }); ok(o.facts.length === 0, "other contact was touched");
 });
-await t("round limit: a model that never stops calling tools gets a safe fallback and a person", async () => {
+await t("round limit: a model that never stops calling tools gets a safe fallback, the team is told, and the customer is NOT locked out", async () => {
   const k2 = await kit.newContact("+14255550777");
   const llm = new ScriptedLlm([{ tools: [{ name: "knowledge_search", args: { query: "loop" } }] }]);
   const r = await runTurn(kit.deps(llm), await input("loop forever", { conversationId: k2.conversationId }));
   ok(r.outcome === "escalated" && r.text === SAFE_FALLBACK && r.rounds === MAX_ROUNDS && /max rounds/.test(r.note ?? ""), JSON.stringify({ o: r.outcome, rounds: r.rounds, n: r.note }));
-  ok(((await db.collection("conversations").findOne({ _id: k2.conversationId })) as any).mode === "human", "should be handed to a person");
-  ok((await db.collection("notifications").countDocuments({ conversationId: k2.conversationId, kind: "handoff" })) === 1, "owner notified");
+  ok(((await db.collection("conversations").findOne({ _id: k2.conversationId })) as any).mode === "agent", "a system fault never locks the chat to a person");
+  ok((await db.collection("notifications").countDocuments({ conversationId: k2.conversationId, kind: "handoff", cause: "system" })) === 1, "team told");
 });
 await t("model outage: fallback text, handoff, no crash", async () => {
   const k2 = await kit.newContact("+14255550778");
@@ -78,10 +78,23 @@ await t("model outage: fallback text, handoff, no crash", async () => {
 });
 await t("handoff tool: conversation goes to a person, owner notified, outcome is escalated", async () => {
   const k2 = await kit.newContact("+14255550779");
-  const llm = new ScriptedLlm([{ tools: [{ name: "handoff_escalate", args: { reason: "wants to cancel" } }] }, { content: "I will connect you with a person now." }]);
+  const llm = new ScriptedLlm([{ tools: [{ name: "handoff_escalate", args: { reason_type: "cancel_or_port_out", reason: "wants to cancel" } }] }, { content: "I will connect you with a person now." }]);
   const r = await runTurn(kit.deps(llm), await input("I want to cancel", { conversationId: k2.conversationId }));
   ok(r.outcome === "escalated" && r.escalated && r.sideEffects, "flags");
-  const n: any = await db.collection("notifications").findOne({ conversationId: k2.conversationId }); ok(n.urgency === "high" && /cancel/.test(n.message), "notification");
+  const n: any = await db.collection("notifications").findOne({ conversationId: k2.conversationId }); ok(n.urgency === "high" && /cancel/.test(n.message) && n.cause === "policy", "notification");
+  ok(((await db.collection("conversations").findOne({ _id: k2.conversationId })) as any).mode === "human", "a real reason does lock the chat to a person");
+});
+await t("handoff is evidence-gated: the model cannot hand off because it is unsure, a tool failed, or the customer never said it", async () => {
+  const k = await kit.newContact("+14255550741");
+  const llm = new ScriptedLlm([{ tools: [{ name: "handoff_escalate", args: { reason_type: "asked_for_person", reason: "not sure how to answer" } }] }, { content: "Let me look at that for you. A basic tune-up is $89." }]);
+  const r = await runTurn(kit.deps(llm), await input("how much is a tune-up?", { conversationId: k.conversationId }));
+  ok(!r.toolCalls[0].ok && r.toolCalls[0].error === "not_what_the_customer_said" && r.outcome === "reply" && /\$89/.test(r.text), JSON.stringify({ t: r.toolCalls, o: r.outcome, x: r.text }));
+  ok(((await db.collection("conversations").findOne({ _id: k.conversationId })) as any).mode === "agent", "still with the agent");
+  for (const [rt, said] of [["asked_for_person", "can I talk to a real person"], ["cancel_or_port_out", "I want to port my number to Verizon"], ["fraud_or_theft", "my phone was stolen"], ["legal", "I'll call my lawyer"], ["accessibility", "I'm deaf, I need a relay service"], ["unresolved_complaint", "I've called three times and nobody fixed it"]] as const) {
+    const k2 = await kit.newContact("+1425555" + String(7000 + Math.floor(Math.random() * 999)));
+    const r2 = await runTurn(kit.deps(new ScriptedLlm([{ tools: [{ name: "handoff_escalate", args: { reason_type: rt, reason: "customer said so" } }] }, { content: "A person will follow up." }])), await input(said, { conversationId: k2.conversationId }));
+    ok(r2.toolCalls[0].ok, `${rt} is valid when they say "${said}": ${JSON.stringify(r2.toolCalls)}`);
+  }
 });
 await t("guardrail (money): an amount that is not in this turn's evidence is rewritten once, then accepted if grounded", async () => {
   const llm = new ScriptedLlm([{ content: "A tune-up is only $59 today." }, { content: "A basic tune-up is $89." }]);
@@ -318,6 +331,61 @@ await t("money: a whole-dollar rounding of an exact amount is fine ($107 for $10
   ok(checkGroundedMoney("Your bill is $107.50.", ["latest_total: $106.98"]).verdict === "blocked", "not a whole-dollar rounding");
   ok(checkGroundedMoney("That plan is $50.", ['{"plan":"Saver","monthly_total":"$55","lines":50}']).verdict === "blocked", "a bare 50 inside a tool result does not make $50 a quoted price");
   ok(checkGroundedMoney("So about $100 a month.", ["USER:I pay like 100 bucks for one line"]).verdict === "ok", "the customer's own bare number does");
+});
+await t("someone who says money is tight hears something human first; markdown emphasis is stripped", async () => {
+  ok(empathyLead("I lost my job and need the cheapest plan", "The cheapest is $55 a month.", "a")?.length! > 10, "lead added");
+  ok(empathyLead("I lost my job", "I'm sorry to hear that. The cheapest is $55.", "a") === null, "already empathetic: untouched");
+  ok(empathyLead("how much is the iPhone", "It is $929.99.", "a") === null, "no hardship, no lead");
+  ok(cleanReply("What I *can* do is **really** help.") === "What I can do is really help.", cleanReply("What I *can* do is **really** help."));
+});
+await t("a legal threat goes straight to a person (text and voice) without asking the model; word-for-word repeats are dropped", async () => {
+  const k = await kit.newContact("+14255550721"); const llm = new ScriptedLlm([{ content: "should never be asked" }]);
+  const r = await runTurn(kit.deps(llm), await input("I'm going to call my lawyer about this", { conversationId: k.conversationId }));
+  ok(r.outcome === "escalated" && /bringing in a person/.test(r.text) && llm.requests.length === 0 && ((await db.collection("conversations").findOne({ _id: k.conversationId })) as any).mode === "human", JSON.stringify({ o: r.outcome, t: r.text, calls: llm.requests.length }));
+  const k2 = await kit.newContact("+14255550722"); const id = await kit.addInbound(k2.conversationId, "I will sue you people", { channel: "voice" }); let spoken = "";
+  for await (const ev of streamTurn(kit.deps(new ScriptedLlm([{ content: "nope" }])), { orgId: kit.orgId, conversationId: k2.conversationId, channel: "voice", mode: "voice", batch: [{ _id: id, body: "I will sue you people", ts: kit.now.t }] })) if (ev.type === "sentence") spoken += ev.text + " ";
+  ok(/bringing in a person/.test(spoken) && ((await db.collection("conversations").findOne({ _id: k2.conversationId })) as any).mode === "human", spoken);
+  ok(dedupeSentences("I can look into that. I can look into that. Sending it now.") === "I can look into that. Sending it now.", "dedupe");
+});
+await t("saying 'I'm texting you a code' without sending one is backed up with a real send (and a plain message if it cannot be sent)", async () => {
+  const k = await kit.newContact("+14255550723", { externalRefs: [{ system: "tmobile", id: "ACC-Q", kind: "account" }] });
+  kit.adapters.imessage.sent.length = 0; kit.ready.imessage = { ok: true };
+  const llm = new ScriptedLlm([{ content: "To keep your account safe, I'm texting a 6-digit code to the number on file now." }]);
+  const r = await runTurn(kit.deps(llm), await input("why is my bill high?", { conversationId: k.conversationId }));
+  ok(r.toolCalls.some((t) => t.name === "verify_send_code" && t.ok) && kit.adapters.imessage.sent.some((m) => m.address === "+14255550723" && /verification code/.test(m.text)), JSON.stringify(r.toolCalls));
+  const k3 = await kit.newContact("+14255550725", { externalRefs: [{ system: "tmobile", id: "ACC-Q3", kind: "account" }] }); kit.adapters.imessage.sent.length = 0;
+  const r3 = await runTurn(kit.deps(new ScriptedLlm([{ content: "Here is what I can see. Want me to text a code to the number on file so I can check more?" }])), await input("any deals on my plan?", { conversationId: k3.conversationId }));
+  ok(/just sent a 6-digit code/.test(r3.text) && !/Want me to text/.test(r3.text) && kit.adapters.imessage.sent.some((m) => m.address === "+14255550725"), "asking permission is replaced by sending: " + r3.text);
+  const k2 = await kit.newContact("+14255550724", { externalRefs: [{ system: "tmobile", id: "ACC-Q2", kind: "account" }] }); kit.ready.imessage = { ok: false }; kit.ready.whatsapp = { ok: false };
+  const r2 = await runTurn(kit.deps(new ScriptedLlm([{ content: "I'm texting a code to your number now." }])), await input("check my bill", { conversationId: k2.conversationId }));
+  ok(/not able to send a text/.test(r2.text), r2.text); kit.ready.imessage = { ok: true }; kit.ready.whatsapp = { ok: true };
+});
+await t("a reply that says 'someone from the team' (even a goodbye) tells the team but NEVER locks the customer out of the agent; a handoff nobody picked up expires", async () => {
+  const k = await kit.newContact("+14255550731");
+  const r = await runTurn(kit.deps(new ScriptedLlm([{ content: "No problem at all. Let me connect you with someone from the team." }])), await input("that's all, thanks", { conversationId: k.conversationId }));
+  ok(r.outcome === "reply" && ((await db.collection("conversations").findOne({ _id: k.conversationId })) as any).mode === "agent", "chat stays with the agent");
+  ok((await db.collection("notifications").countDocuments({ conversationId: k.conversationId, kind: "handoff" })) === 1, "team still told");
+  // a conversation left in human mode with no recent handoff and no message from a person returns to the agent
+  const { resumeIfStale } = await import("../src/identity");
+  const k2 = await kit.newContact("+14255550732"); await db.collection("conversations").updateOne({ _id: k2.conversationId }, { $set: { mode: "human" } });
+  await db.collection("notifications").insertOne({ orgId: kit.orgId, conversationId: k2.conversationId, kind: "handoff", cause: "customer_request", message: "x", urgency: "high", read: false, createdAt: new Date(kit.now.t.getTime() - 3 * 3600_000) } as never);
+  const c2: any = await db.collection("conversations").findOne({ _id: k2.conversationId });
+  ok((await resumeIfStale(db, c2, kit.now.t)).mode === "agent" && ((await db.collection("conversations").findOne({ _id: k2.conversationId })) as any).mode === "agent", "stale handoff: agent resumes");
+  const k3 = await kit.newContact("+14255550733"); await db.collection("conversations").updateOne({ _id: k3.conversationId }, { $set: { mode: "human" } });
+  await db.collection("notifications").insertOne({ orgId: kit.orgId, conversationId: k3.conversationId, kind: "handoff", cause: "customer_request", message: "x", urgency: "high", read: false, createdAt: new Date(kit.now.t.getTime() - 30 * 60_000) } as never);
+  const c3: any = await db.collection("conversations").findOne({ _id: k3.conversationId });
+  ok((await resumeIfStale(db, c3, kit.now.t)).mode === "human", "a fresh handoff stays with the person");
+});
+await t("the model's narrated reasoning never reaches the customer", async () => {
+  const leaked = "Let me pull up the exact total first. The customer is on a voice call and wants it texted. They're a new/unknown number, so I need consent before texting. The total is $140 a month.";
+  ok(dropMeta(leaked) === "Let me pull up the exact total first. The total is $140 a month.", dropMeta(leaked));
+  ok(dropMeta("Our customer service team is open 24/7. The customer service line is free.") === "Our customer service team is open 24/7. The customer service line is free.", "normal sentences about customer service untouched");
+});
+await t("a fraud or stolen-phone report goes straight to a person (the model is not asked), and a parenthetical question mark is not a second question", async () => {
+  const k = await kit.newContact("+14255550751"); const llm = new ScriptedLlm([{ content: "never asked" }]);
+  const r = await runTurn(kit.deps(llm), await input("someone is using my account, I think it's fraud", { conversationId: k.conversationId }));
+  ok(r.outcome === "escalated" && /secure your account/.test(r.text) && llm.requests.length === 0 && ((await db.collection("conversations").findOne({ _id: k.conversationId })) as any).mode === "human", r.text);
+  ok(limitQuestions("What does the other offer include? (Lines, data, taxes/fees?) That helps me compare.") === "What does the other offer include? (Lines, data, taxes/fees) That helps me compare.", limitQuestions("What does the other offer include? (Lines, data, taxes/fees?) That helps me compare."));
 });
 await t("one question per reply: statements stay, later questions go", async () => {
   ok(limitQuestions("Got it, Priya. Who are you with now? And how many lines?") === "Got it, Priya. Who are you with now?", limitQuestions("Got it, Priya. Who are you with now? And how many lines?"));

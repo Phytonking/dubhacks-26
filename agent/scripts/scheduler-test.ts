@@ -116,7 +116,7 @@ await t("crash after sending but before committing: the retry does not send a se
 });
 await t("owner takes over while the model is thinking: nothing is sent and the message is not left to be answered later", async () => {
   await clean(); const w = workers();
-  const llm = new SlowLlm(50, [{ content: "Auto reply that must not be sent." }], async () => { await db.collection("conversations").updateOne({ _id: kit.conversationId }, { $set: { mode: "human" } }); });
+  const llm = new SlowLlm(50, [{ content: "Auto reply that must not be sent." }], async () => { await db.collection("conversations").updateOne({ _id: kit.conversationId }, { $set: { mode: "human" } }); await db.collection("notifications").insertOne({ orgId, conversationId: kit.conversationId, kind: "handoff", cause: "customer_request", message: "taken over", urgency: "high", read: false, createdAt: new Date() } as never); });
   const s = mkSched(llm, w); await inbound(w.imessage, {}, "hello?"); await sleep(80); await s.drain();
   ok((await outbound()).length === 0, "must send nothing");
   const turns = await db.collection("agent_turns").find({}).toArray(); ok(turns[0]?.outcome === "silent", JSON.stringify(turns.map((x) => x.outcome)));
@@ -129,13 +129,13 @@ await t("lease lost mid-turn (another worker took the conversation): the slow wo
   ok((await outbound()).length === 0, "old owner must not send");
   const turns = await db.collection("agent_turns").find({}).toArray(); ok(turns.some((x) => x.outcome === "discarded" && /lease lost/.test(x.note ?? "")), JSON.stringify(turns.map((x) => x.note)));
 });
-await t("a lane that keeps failing retries with backoff, then hands the conversation to a person instead of looping", async () => {
+await t("a lane that keeps failing retries with backoff and tells the team, but NEVER locks the customer out of the agent", async () => {
   await clean(); const w = workers(); const broken = { imessage: { sendReply: async () => { throw new Error("db write failed"); } } } as never;
   const s = mkSched(new SlowLlm(5), broken, { pollMs: 10 }); await inbound(w.imessage, {}, "hello"); await sleep(80);
   for (let i = 0; i < 3; i++) { await s.tick(); await sleep(60); await db.collection("conversations").updateOne({ _id: kit.conversationId, "lane.dueAt": { $ne: null } }, { $set: { "lane.dueAt": new Date(Date.now() - 1) } }); }
   await s.drain().catch(() => {});
-  const c: any = await db.collection("conversations").findOne({ _id: kit.conversationId }); ok(c.mode === "human", "mode " + c.mode);
-  ok((await db.collection("notifications").countDocuments({ conversationId: kit.conversationId, kind: "handoff" })) === 1, "owner told");
+  const c: any = await db.collection("conversations").findOne({ _id: kit.conversationId }); ok(c.mode === "agent", "mode " + c.mode);
+  ok((await db.collection("notifications").countDocuments({ conversationId: kit.conversationId, kind: "handoff", cause: "system" })) === 1, "team told");
 });
 
 // ---------------- STOP / START / HELP, human mode, duplicates ----------------
@@ -153,7 +153,7 @@ await t("STOP: opts out, confirms with fixed text, schedules nothing; later mess
   await sleep(80); await s.drain(); ok(llm.nCalls === 1, "model called once, for the real question");
 });
 await t("messages while a person has the conversation are stored but never scheduled; duplicates of the same provider message are ignored", async () => {
-  await clean(); const w = workers(); await db.collection("conversations").updateOne({ _id: kit.conversationId }, { $set: { mode: "human" } });
+  await clean(); const w = workers(); await db.collection("conversations").updateOne({ _id: kit.conversationId }, { $set: { mode: "human" } }); await db.collection("notifications").insertOne({ orgId, conversationId: kit.conversationId, kind: "handoff", cause: "customer_request", message: "taken over", urgency: "high", read: false, createdAt: new Date() } as never);
   const r: any = await inbound(w.imessage, {}, "anyone there?", "dup1"); ok(r.handling === "human", "handling " + r.handling);
   ok(!(await db.collection("conversations").findOne({ _id: kit.conversationId, "lane.dueAt": { $type: "date" } })), "must not be scheduled");
   await db.collection("conversations").updateOne({ _id: kit.conversationId }, { $set: { mode: "agent" } });

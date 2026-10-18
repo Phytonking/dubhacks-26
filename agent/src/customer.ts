@@ -14,6 +14,9 @@ export type Customer = {
   openLoops: string[];
   verified: boolean;
   verifiedAt: Date | null;
+  negotiation: { round: number; plan: string; lines: number; lastCreditCents: number; gives: string[]; at: Date } | null;   // open negotiation (last 24h)
+  offers: { summary: string; at: Date }[];                                                                                      // concessions already agreed
+  canText: boolean;                       // they have agreed to texts (said so, or texted us)
   intake: Record<string, any> | null;   // what they have told us about themselves (contacts.intake)
   channels: string[];                 // channels this person has used (from their handles)
   account: { asOf: string | null; segment: string | null; tenureMonths: number | null; lineCount: number; lineRoles: string[]; supportContacts90d: number | null; billChangePct: number | null; internal: string[] } | null;
@@ -57,7 +60,7 @@ export async function loadCustomer(db: Db, party: Party, opts: { now?: Date; org
   const profile = c.profile ?? null;
   return {
     status, refs: party.externalRefs, firstName: profile?.displayName ?? (c.name && !String(c.name).startsWith("+") && !c.name.includes("@") ? String(c.name).split(" ")[0] : null),
-    profile, facts, openLoops: loops, verified, verifiedAt: vAt, intake: c.intake ?? null, channels: [...new Set<string>((c.handles ?? []).map((h: any) => h.channel))], account: acct,
+    profile, facts, openLoops: loops, verified, verifiedAt: vAt, canText: Boolean(c.consent?.text?.granted), negotiation: c.memory?.negotiation && now.getTime() - new Date(c.memory.negotiation.at).getTime() < 24 * 3600_000 ? c.memory.negotiation : null, offers: (c.memory?.offers ?? []).slice(-3), intake: c.intake ?? null, channels: [...new Set<string>((c.handles ?? []).map((h: any) => h.channel))], account: acct,
   };
 }
 
@@ -67,7 +70,7 @@ export function buildCustomerBlock(c: Customer, ctx: { channel: string }): strin
   const who = c.status === "linked_account" ? `RECOGNIZED CUSTOMER (account ${c.refs.find((r) => r.kind === "account")!.id})`
     : c.status === "prospect" ? "PROSPECT (not a customer yet; no account on file)" : "UNKNOWN NUMBER (no record; treat as a prospect, never guess an account)";
   L.push(`Who: ${who}`);
-  L.push(`Verified: ${c.verified ? `yes, by one-time code at ${c.verifiedAt!.toISOString()}` : "NO. Account details are withheld until verified." + (c.status === "linked_account" ? " When they ask about their account, call verify_send_code immediately; do not ask permission and do not ask them to text first." : "")}`);
+  L.push(`Verified: ${c.verified ? `yes, by one-time code at ${c.verifiedAt!.toISOString()}. Do NOT send or ask for another code; answer what they ask` : "NO. Account details are withheld until verified." + (c.status === "linked_account" ? " When they ask about their account, call verify_send_code immediately; do not ask permission and do not ask them to text first." : "")}`);
   L.push(`Reaching us on: ${ctx.channel}${c.channels.filter((x) => x !== ctx.channel).length ? ` (also used: ${c.channels.filter((x) => x !== ctx.channel).join(", ")})` : ""}`);
   if (c.firstName) L.push(`Name: ${c.firstName}`);
   const p = c.profile;
@@ -83,7 +86,10 @@ export function buildCustomerBlock(c: Customer, ctx: { channel: string }): strin
       k.line_count && `${k.line_count} line(s)`, k.devices?.length && `phones: ${k.devices.join("; ")}`, k.budget_usd != null && `budget about $${k.budget_usd}/mo`, k.needs && `needs: ${k.needs}`, k.interests?.length && `interested in ${k.interests.join(", ")}`].filter(Boolean);
     if (known.length) L.push(`What they have told us (their words, not verified): ${known.join("; ")}`);
   }
+  if (c.negotiation) { const n = c.negotiation; L.push(`Negotiation in progress: round ${n.round} on ${n.plan} (${n.lines} line${n.lines === 1 ? "" : "s"}); last credit you offered: ${n.lastCreditCents ? `$${(n.lastCreditCents / 100).toFixed(0)}/month` : "none yet"}${n.gives?.length ? `; they agreed to give: ${n.gives.join(", ").replace(/_/g, " ")}` : ""}. Do not offer more than negotiation_offer returns.`); }
+  if (c.offers.length) L.push(`Already agreed with this customer: ${c.offers.map((o) => o.summary).join(" | ")}`);
   if (c.status !== "linked_account") { const m = missingIntake(k); if (m.length) L.push(`Not known yet (learn naturally, one at a time, only when it helps them): ${m.join(", ")}`); }
+  if (c.canText) L.push("Texting: they have agreed to be texted, so send what they ask for without asking again.");
   if (c.openLoops.length) L.push(`Open commitments (bring up first): ${c.openLoops.join(" | ")}`);
   if (c.facts.length) L.push(`Remembered from earlier: ${c.facts.join(" | ")}`);
   if (c.account) {

@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 import { amountsIn, checkText } from "../guardrails";
 import { looksSensitive } from "../../sensitive";
+import { acceptedOfferOfPerson, causeFor, recordHandoff, REASON_TYPES, supportedBy } from "../../handoff";
 import type { Tool } from "../types";
 import { reachHint } from "./reach";
 
@@ -99,11 +100,13 @@ export const owner_notify: Tool = {
 
 export const handoff_escalate: Tool = {
   name: "handoff_escalate", risk: "write_low", timeoutMs: 3000,
-  description: "Hand this conversation to a person. Use when they ask for one, want to cancel or port out, report fraud or a lost device, have an unresolved complaint, or you are unsure. After calling it, tell the customer a person will follow up.",
-  parameters: { type: "object", properties: { reason: { type: "string", minLength: 3, maxLength: 300 } }, required: ["reason"] },
-  async run(ctx, { reason }) {
-    await ctx.db.collection("conversations").updateOne({ _id: ctx.conversationId, orgId: ctx.orgId }, { $set: { mode: "human" } });
-    await ctx.db.collection("notifications").insertOne({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, kind: "handoff", message: reason.trim(), urgency: "high", read: false, createdAt: ctx.now } as never);
+  description: "Hand this conversation to a person. ONLY when the customer's own words show one of the reasons: they asked for a person; they want to cancel or port their number out; they report fraud, a stolen or lost phone; they mention legal action; they need an accessibility accommodation; or they have a complaint that has not been fixed. Give the reason_type. Do NOT use it because you are unsure, a tool failed, or the question is hard: keep helping instead.",
+  parameters: { type: "object", properties: { reason_type: { type: "string", enum: [...REASON_TYPES] }, reason: { type: "string", minLength: 3, maxLength: 300, description: "one sentence for the team" } }, required: ["reason_type", "reason"] },
+  async run(ctx, { reason_type, reason }) {
+    const said = ctx.guard.evidence.filter((e) => e.startsWith("USER:")).join("\n");
+    if (!supportedBy(reason_type, said) && !(reason_type === "asked_for_person" && acceptedOfferOfPerson(ctx.guard.evidence)))
+      return { ok: false, error: "not_what_the_customer_said", data: { hint: "They have not said that. Do not hand off. Keep helping: use a tool, or ask one clarifying question. A person is for the specific reasons in this tool's description." } };
+    await recordHandoff(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, cause: causeFor(reason_type), reason: reason.trim(), now: ctx.now });
     return { ok: true, data: { status: "handed_off", next: "tell the customer a person will follow up; say nothing else about the account" }, sideEffect: true, escalate: true };
   },
 };
@@ -117,7 +120,8 @@ export const text_send_info: Tool = {
     if (/\b\d{6}\b/.test(text)) return { ok: false, error: "codes_not_allowed", data: { hint: "Use verify_send_code for codes." } };
     const g = checkText(text, ctx.guard.cfg, ctx.guard.evidence);
     if (g.verdict === "blocked") return { ok: false, error: "blocked_by_guardrail", data: { reason: g.reason } };
-    const r = await ctx.messenger.send({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, purpose: "info", body: text.trim(), agentTurnId: ctx.turnId,
+    const r = await ctx.messenger.send({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, purpose: "info", body: text.trim(), agentTurnId: ctx.turnId, implicitConsent: true,   // they asked to have it in writing
+     
       idempotencyKey: `info:${ctx.turnId}:${amountsIn(text).length}:${text.length}`, channels: ctx.channel === "voice" ? undefined : [ctx.channel, "imessage", "whatsapp", "sms"] });
     if (!r.ok && r.error === "no_channel") return { ok: false, error: "no_channel", ...(await (async () => { const h = await reachHint(ctx, "private_details"); return { data: { hint: "We cannot text them yet. Tell them which number to message, then stop.", ...h.data }, reply: h.reply }; })()), sideEffect: true };
     if (!r.ok) return { ok: false, error: r.error, data: r.error === "no_consent" ? { hint: "Ask whether you may text them, then call consent_record." } : undefined };

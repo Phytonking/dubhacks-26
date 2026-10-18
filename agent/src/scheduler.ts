@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db, ObjectId } from "mongodb";
+import { recordHandoff } from "./handoff";
 import { learnFromTurn } from "./intake-extract";
 import { runTurn, type EngineDeps, type TurnResult } from "./engine/turn";
 import type { ChannelId } from "./identity";
@@ -127,14 +128,17 @@ export class Scheduler {
     } catch (e) {
       this.log(`lane ${claimed._id} error: ${(e as Error).message}`);
       const tries = (claimed.lane?.attempts ?? 0) + 1;
-      if (tries >= 3) {   // give up on this batch: a person looks at it, the customer is not left in silence loops
-        await db.collection("conversations").updateOne({ _id: claimed._id }, { $set: { mode: "human", "lane.attempts": 0 } });
-        await db.collection("notifications").insertOne({ orgId: claimed.orgId, contactId: claimed.contactId, conversationId: claimed._id, kind: "handoff", message: `Automatic handoff: the agent failed 3 times in a row (${(e as Error).message.slice(0, 100)})`, urgency: "high", read: false, createdAt: this.now() } as never);
-        await this.commit(claimed);
-      } else {
-        await db.collection("conversations").updateOne({ _id: claimed._id }, { $set: { "lane.attempts": tries } });
-        await this.commit(claimed, 5_000 * tries);
+      // A run that keeps failing is OUR fault (model outage, a bug): the team is told, the customer is NOT locked out of the agent, and the lane
+      // retries later with a growing delay. It never flips the conversation to a person.
+      if (tries >= 12) {   // a message that cannot be processed after a dozen tries is set aside so it stops costing model calls; the team has been told
+        await recordHandoff(db, { orgId: claimed.orgId, contactId: claimed.contactId, conversationId: claimed._id, cause: "system", reason: "set aside a message the agent could not process after 12 tries", now: this.now(), log: this.log });
+        await db.collection("messages").updateMany({ conversationId: claimed._id, direction: "in", handling: "agent", handledByTurn: { $exists: false } }, { $set: { handledByTurn: "gave_up" } });
+        await db.collection("conversations").updateOne({ _id: claimed._id }, { $set: { "lane.attempts": 0 } });
+        await this.commit(claimed); return;
       }
+      if (tries === 3 || tries === 8) await recordHandoff(db, { orgId: claimed.orgId, contactId: claimed.contactId, conversationId: claimed._id, cause: "system", reason: `the agent failed ${tries} times in a row on this conversation (${(e as Error).message.slice(0, 100)})`, now: this.now(), log: this.log });
+      await db.collection("conversations").updateOne({ _id: claimed._id }, { $set: { "lane.attempts": tries } });
+      await this.commit(claimed, Math.min(5_000 * 2 ** Math.min(tries, 6), 10 * 60_000));
     } finally { clearInterval(hb); }
   }
 }

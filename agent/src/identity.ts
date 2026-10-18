@@ -72,5 +72,22 @@ export async function resolveParty(db: Db, a: { orgId: ObjectId; channel: Channe
     }
   }
   if (!conversation) throw new Error("resolveParty: conversation vanished");
+  conversation = (await resumeIfStale(db, conversation)) as typeof conversation;
   return { contact, conversation, address, created, matchedBy, externalRefs: (contact.externalRefs as Party["externalRefs"]) ?? [] };
+}
+
+/** How long a conversation may sit with a person before the agent takes it back if nobody has actually written to the customer. */
+export const HUMAN_STALE_HOURS = 2;
+/**
+ * "Human" mode means a person is handling this customer. If no person has written to them since the handoff and it was a while ago,
+ * the customer is not being served by anyone: the agent resumes instead of leaving every later call and text to a dead-end line.
+ */
+export async function resumeIfStale(db: Db, conversation: any, now = new Date()): Promise<any> {
+  if (conversation?.mode !== "human") return conversation;
+  const since = new Date(now.getTime() - HUMAN_STALE_HOURS * 3600_000);
+  const recent = await db.collection("notifications").countDocuments({ conversationId: conversation._id, kind: "handoff", cause: { $in: ["customer_request", "policy"] }, createdAt: { $gte: since } }, { limit: 1 });
+  const owner = await db.collection("messages").countDocuments({ conversationId: conversation._id, sender: "owner", ts: { $gte: since } }, { limit: 1 });
+  if (recent || owner) return conversation;
+  await db.collection("conversations").updateOne({ _id: conversation._id }, { $set: { mode: "agent" } });
+  return { ...conversation, mode: "agent" };
 }

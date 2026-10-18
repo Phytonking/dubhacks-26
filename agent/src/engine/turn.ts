@@ -7,7 +7,7 @@ import { checkText, takeSentences, type GuardCfg } from "./guardrails";
 import { stripThinking } from "./llm";
 import { asksForSecrets, looksSensitive, TEXT_REDIRECT } from "../sensitive";
 import { reachHint } from "./tools/reach";
-import { handoff_escalate } from "./tools/core";
+import { recordHandoff } from "../handoff";
 import { toolByName } from "./tools/index";
 import type { ChatMessage, EngineEnv, LlmPort, Tool, ToolCallReq, ToolCtx, ToolResult, ToolSpec, Usage } from "./types";
 import { validateArgs } from "./validate";
@@ -22,7 +22,7 @@ export type TurnResult = {
   sideEffects: boolean; escalated: boolean; passthrough: { id: string; name: string; arguments: string }[]; note?: string; ms: number; model: string; effort: string;
 };
 
-export const SAFE_FALLBACK = "I'm having trouble with that right now. I'll get a person to follow up with you.";
+export const SAFE_FALLBACK = "Sorry, I hit a snag on my end. I've let the team know, and you're welcome to ask me again.";
 const SAFE_LINE = "Let me double-check that and have someone confirm.";
 
 const spec = (t: Tool): ToolSpec => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } });
@@ -47,16 +47,60 @@ const OFFER = /\b(would you like|want me to|do you want|shall i|should i|if you'
 /** The reply PROMISES a person (not just offers one): then a person must actually be told. */
 export const promisesPerson = (text: string) => takeSentences(text, true)[0].some((s) => PERSON.test(s) && !OFFER.test(s) && !/\?\s*$/.test(s));
 
+/** The team was already told this turn (handoff, an accepted deal, an owner notice): a promise that a person will follow up needs nothing more. */
+const teamTold = (trace: { name: string; ok: boolean }[]) => trace.some((t) => t.ok && ["handoff_escalate", "negotiation_accept", "owner_notify"].includes(t.name));
+
+const HARDSHIP = /\b(lost (my|his|her) job|laid off|got fired|can'?t afford|cannot afford|money is (really )?tight|tight on money|on a (really )?(tight )?budget|struggling|broke\b|hardship|behind on (bills|rent)|out of work|unemployed)/i;
+const EMPATHY = /\b(sorry|i understand|i hear you|that'?s (a )?(tough|rough|hard|difficult)|tough spot|that must be|appreciate you (telling|sharing))\b/i;
+const LEADS = ["I'm sorry, that's a tough spot.", "I'm sorry you're dealing with that.", "That sounds really hard, and I'm glad you told me."];
+/** Someone who says money is tight hears something human first, whatever the model wrote. */
+export function empathyLead(customerText: string, reply: string, seed: string): string | null {
+  if (!HARDSHIP.test(customerText) || EMPATHY.test(reply)) return null;
+  return LEADS[[...seed].reduce((a, c) => a + c.charCodeAt(0), 0) % LEADS.length];
+}
+
+const LEGAL = /\b(my|a|the) (lawyer|attorney)\b|\bsue (you|t-?mobile|them)\b|\blawsuit\b|\blegal action\b|\btake (you|this|t-?mobile) to court\b|\bfile a (suit|lawsuit)\b|\b(fcc|attorney general) complaint\b/i;
+const FRAUD = /\b(fraud(ulent)?|scam(med)?|identity theft|sim ?swap|hacked|stolen (phone|device|sim)|phone (was|got|is) stolen|someone (is )?(using|got into|has (got )?access to) my (account|phone|number|line))\b/i;
+const FRAUD_REPLY = "I'm so sorry, that sounds stressful. I'm bringing in a person on our team right now to help secure your account, and they'll follow up with you directly.";
+const LEGAL_REPLY = "I understand, and I'm taking this seriously. I'm bringing in a person on our team right now who can help, and they'll follow up with you directly.";
+const CLAIMS_CODE = /\b(i('m| am|'ve| have|'ll| will)?|we('re| are|'ve| have)?) (just )?(texting|sending|sent)\b[^.?!]{0,40}\bcode\b|\bcode (is|was) (on its way|sent)|\bsent (you )?(a|the) (6|six)[- ]digit code/i;
+const ASKS_CODE = /\b(want|would you like|shall|should|ok(ay)? if|may|can) (me |i )?(to )?(text|send)\b[^.?!]{0,40}\bcode\b|\bcode\b[^.?!]{0,40}\b(ok(ay)?|alright|sound good)\s?\?/i;
+/** Repeating a sentence word for word is a model glitch, never intent. */
+export function dedupeSentences(text: string): string {
+  const [sents] = takeSentences(text, true); const seen = new Set<string>();
+  const out = sents.filter((s) => { const k = s.toLowerCase().replace(/\s+/g, " "); if (seen.has(k)) return false; seen.add(k); return true; });
+  return out.length === sents.length ? text : out.join(" ").trim();
+}
+/** A reply that says "I'm texting you a code" without having sent one is a lie to the customer: send it for real (or say plainly that it could not be sent). */
+async function backUpCodeClaim(deps: EngineDeps, ctx: ToolCtx, text: string, trace: TraceCall[], suppressedAsk = false): Promise<{ failure: string | null; asked: boolean } | null> {
+  const asked = suppressedAsk || takeSentences(text, true)[0].some((x) => ASKS_CODE.test(x)); const claimed = CLAIMS_CODE.test(text);
+  if (!claimed && !asked) return null;
+  if (trace.some((t) => t.name === "verify_send_code" && t.ok)) return null;
+  if (!ctx.party.externalRefs.some((r) => r.system === "tmobile" && r.kind === "account") || ctx.customer.verified) return null;
+  const r = await executeTool(deps, ctx, { id: `auto_${ctx.turnId.slice(0, 8)}`, type: "function", function: { name: "verify_send_code", arguments: "{}" } });
+  trace.push(r.trace);
+  return { failure: r.result.ok ? null : (r.result.reply ?? null), asked };
+}
+const CODE_SENT = "I've just sent a 6-digit code to the number on file. What's the code?";
+
 /** At most ONE question per reply: statements are kept, questions after the first are dropped (a questionnaire is both annoying and, on a call, hard to answer). */
 export function limitQuestions(text: string): string {
+  text = text.replace(/\?(?=[^()]*\))/g, "");   // a question mark inside parentheses is not a second question
   const [sents] = takeSentences(text, true); let asked = false;
   const out = sents.filter((s) => { if (!/\?["')]*$/.test(s)) return true; if (asked) return false; asked = true; return true; });
   return out.length === sents.length ? text : out.join(" ").trim();
 }
 
+/** The model sometimes narrates its own reasoning in the reply ("The customer is on a voice call and wants it texted. They're a new number, so I need consent."). Customers never see that. */
+const META = /\b(the|this) (customer|caller|user|person)( is| was| wants| asked| said| has| needs| will| hasn'?t| doesn'?t| did| seems| sounds)\b|\b(they'?re|they are) (a )?(new|unknown|existing|returning)\b[^.?!]{0,30}\b(number|customer|caller|prospect)\b|\bunknown number\b|\bi (need|should|must|have) to (check|verify|confirm|ask)[^.?!]{0,40}\b(consent|tool|system)\b|\blet me (think|reason|figure out)\b/i;
+export function dropMeta(text: string): string {
+  const [sents] = takeSentences(text, true); const keep = sents.filter((x) => !META.test(x));
+  return keep.length === sents.length ? text : keep.join(" ").trim();
+}
+
 /** Plain text only: no markdown emphasis, no bullets, no stray whitespace. */
 export function cleanReply(text: string): string {
-  return stripThinking(text).replace(/^[ \t]*#{1,6}[ \t]+.*$/gm, "").replace(/\*\*|__|`/g, "").replace(/^\s*[-*•]\s+/gm, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return dropMeta(stripThinking(text)).replace(/^[ \t]*#{1,6}[ \t]+.*$/gm, "").replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "$1").replace(/\*\*|__|`/g, "").replace(/^\s*[-*•]\s+/gm, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function makeCtx(deps: EngineDeps, input: TurnInput, b: BuiltContext, turnId: string): ToolCtx {
@@ -108,14 +152,13 @@ export async function executeTool(deps: EngineDeps, ctx: ToolCtx, call: ToolCall
   return { content, result, trace: { name: call.function.name, ok: result.ok, ms, ...(result.error ? { error: result.error } : {}) } };
 }
 
+/** A fault in OUR system (or a heuristic) tells the team and nothing else: the customer is never locked out of the agent for it. */
+async function notifyTeam(ctx: ToolCtx, why: string) {
+  try { await recordHandoff(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, cause: "system", reason: why, now: ctx.now }); } catch { /* best effort */ }
+}
 async function escalateFallback(deps: EngineDeps, ctx: ToolCtx, why: string) {
-  try {
-    if (ctx.mode === "voice") {   // one failed turn on a live call must not lock the customer's future calls and texts out of the agent: tell the team, keep the agent on
-      await ctx.db.collection("notifications").insertOne({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, kind: "handoff", message: `Automatic: the agent could not finish a turn on a call (${why}). The caller was told a person will follow up.`, urgency: "high", read: false, createdAt: ctx.now } as never);
-      return;
-    }
-    await handoff_escalate.run(ctx, { reason: `Automatic handoff: ${why}` });
-  } catch (e) { deps.log?.(`fallback handoff failed: ${(e as Error).message}`); }
+  try { await recordHandoff(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, cause: "system", reason: why, now: ctx.now, log: deps.log }); }
+  catch (e) { deps.log?.(`fallback note failed: ${(e as Error).message}`); }
 }
 
 const add = (u: Usage, v?: Usage) => { if (v) { u.prompt_tokens += v.prompt_tokens; u.completion_tokens += v.completion_tokens; } };
@@ -132,14 +175,23 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
   const trace: TraceCall[] = []; let sideEffects = false, escalated = false; const effort = effortFor(input.mode);
   /** The assistant must never ask for a password, PIN, SSN or card number in the conversation. Replace such a reply with the move-to-text message. */
   const noSecretRequests = async (text: string) => {
-    if (!takeSentences(text, true)[0].some(asksForSecrets)) return limitQuestions(text);
+    if (!takeSentences(text, true)[0].some(asksForSecrets)) return limitQuestions(dedupeSentences(text));
     sideEffects = true;
     if (input.mode === "voice") return (await reachHint(ctx, "private_details")).reply;
     return TEXT_REDIRECT;
   };
-  const done = (r: Partial<TurnResult> & Pick<TurnResult, "outcome" | "text" | "rounds">): TurnResult => ({
-    turnId, toolCalls: trace, usage, sideEffects, escalated, passthrough: [], ms: Date.now() - t0, model: deps.llm.model, effort, ...r });
+  const userSaid = input.batch.map((m) => m.body).join(" ");
+  const done = (r: Partial<TurnResult> & Pick<TurnResult, "outcome" | "text" | "rounds">): TurnResult => {
+    if (r.text) r = { ...r, text: stripToolMarkup(r.text) };
+    const lead = r.outcome === "reply" && r.text ? empathyLead(userSaid, r.text, turnId) : null;
+    return { turnId, toolCalls: trace, usage, sideEffects, escalated, passthrough: [], ms: Date.now() - t0, model: deps.llm.model, effort, ...r, ...(lead ? { text: `${lead} ${r.text}` } : {}) };
+  };
 
+  if (LEGAL.test(userSaid) || FRAUD.test(userSaid)) {   // legal threats and fraud reports go to a person at once; the model is not asked
+    const legal = LEGAL.test(userSaid);
+    await recordHandoff(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, cause: "policy", reason: legal ? "The customer mentioned legal action" : "The customer reported fraud or a stolen phone", now: ctx.now, log: deps.log }); trace.push({ name: "handoff_escalate", ok: true, ms: 0 });
+    return done({ outcome: "escalated", text: legal ? LEGAL_REPLY : FRAUD_REPLY, rounds: 0, escalated: true, sideEffects: true, note: "keyword handoff" });
+  }
   let final: string | null = null; let rounds = 0; let lastFinish = "";
   let effortNow = effort, maxNow = maxTokensFor(input.mode), recovered = false;
   try {
@@ -197,13 +249,15 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
       if (kept) return done({ outcome: escalated ? "escalated" : "reply", text: await noSecretRequests(kept), rounds: rounds + 1, note: `sanitized (dropped unsupported sentence): ${reason}` });
     } catch { /* fall through to the safe fallback */ }
     if (verdict.verdict === "blocked" && verdict.kind === "ungrounded_amount") {   // a number we could not back up: do not hand the whole conversation to a person for that; tell the team and stay on
-      await ctx.db.collection("notifications").insertOne({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, kind: "handoff", message: `The agent held back an answer it could not back up (${reason}). The customer was told someone will confirm.`, urgency: "normal", read: false, createdAt: ctx.now } as never);
+      await notifyTeam(ctx, `held back an answer it could not back up (${reason})`);
       return done({ outcome: "blocked", text: "I want to be sure I give you the right number, so I'll have someone confirm that for you. Is there anything else I can help with in the meantime?", rounds, sideEffects: true, note: `blocked: ${reason}` });
     }
     await escalateFallback(deps, ctx, `guardrail: ${reason}`);
     return done({ outcome: "blocked", text: SAFE_FALLBACK, rounds, escalated: true, sideEffects: true, note: `blocked: ${reason}` });
   }
-  if (!escalated && promisesPerson(final)) { await escalateFallback(deps, { ...ctx, mode: "text" }, "the reply promised that a person would follow up"); escalated = true; sideEffects = true; }   // never promise a person without telling one
+  if (!escalated && !teamTold(trace) && promisesPerson(final)) { await notifyTeam(ctx, "the reply told the customer a person would follow up"); sideEffects = true; }   // never promise a person without telling the team (the chat stays with the agent)
+  const gap = await backUpCodeClaim(deps, ctx, final, trace);
+  if (gap) { sideEffects = true; if (gap.failure) final = gap.failure; else if (gap.asked) final = `${takeSentences(final, true)[0].filter((x) => !ASKS_CODE.test(x) && !(/\?["')]*$/.test(x) && x.split(/\s+/).length <= 8)).join(" ")} ${CODE_SENT}`.trim(); }
   return done({ outcome: escalated ? "escalated" : "reply", text: await noSecretRequests(final), rounds });
 }
 
@@ -227,7 +281,7 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
   const finish = (outcome: TurnResult["outcome"], extra: Partial<TurnResult> = {}): StreamEvent => ({ type: "done", spoken, result: {
     turnId, outcome, text: spoken, rounds, toolCalls: trace, usage, sideEffects, escalated, passthrough: [], note, ms: Date.now() - t0, model: deps.llm.model, effort, ...extra } });
 
-  let askedOne = false;
+  let askedOne = false; let leadDone = false; let askedCode = false; const spokenKeys = new Set<string>();
   let muted = false;   // set once the assistant tries to ask for a secret: the redirect is spoken instead and nothing more from the model is
   const say = async function* (sentences: string[], forced = false): AsyncGenerator<StreamEvent> {
     for (const raw of sentences) {
@@ -239,6 +293,10 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
         for (const part of takeSentences(msg, true)[0]) { spoken += (spoken ? " " : "") + part; yield { type: "sentence", text: part, replaced: true }; }
         return;
       }
+      if (!forced && ASKS_CODE.test(s) && ctx.party.externalRefs.some((r) => r.system === "tmobile" && r.kind === "account") && !ctx.customer.verified && !trace.some((t) => t.name === "verify_send_code" && t.ok)) { askedCode = true; continue; }
+      if (askedCode && !forced && /\?["')]*$/.test(s) && s.split(/\s+/).length <= 8) continue;   // never ask permission to send a code: it is sent instead (below)
+      { const k = s.toLowerCase().replace(/\s+/g, " "); if (!forced && spokenKeys.has(k)) continue; spokenKeys.add(k); }
+      if (!forced && !spoken && !leadDone) { leadDone = true; const lead = empathyLead(input.batch.map((m) => m.body).join(" "), s, turnId); if (lead) { spoken += lead; yield { type: "sentence", text: lead, replaced: true }; } }
       if (!forced && /\?["')]*$/.test(s)) { if (askedOne) continue; askedOne = true; }   // one question per reply
       if (!forced && input.mode === "voice" && spoken && (spoken + " " + s).split(/\s+/).length > VOICE_MAX_WORDS) continue;   // a call is not a lecture: stop at a sentence boundary
       const v = checkText(s, b.guard, ctx.guard.evidence);
@@ -247,6 +305,11 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
     }
   };
 
+  if (LEGAL.test(input.batch.map((m) => m.body).join(" ")) || FRAUD.test(input.batch.map((m) => m.body).join(" "))) {
+    const legal = LEGAL.test(input.batch.map((m) => m.body).join(" "));
+    await recordHandoff(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, cause: "policy", reason: legal ? "The customer mentioned legal action" : "The customer reported fraud or a stolen phone", now: ctx.now, log: deps.log }); trace.push({ name: "handoff_escalate", ok: true, ms: 0 });
+    escalated = true; sideEffects = true; note = "keyword handoff"; yield* say(takeSentences(legal ? LEGAL_REPLY : FRAUD_REPLY, true)[0], true); yield finish("escalated"); return;
+  }
   try {
     while (rounds < MAX_ROUNDS) {
       rounds++;
@@ -276,7 +339,8 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
       if (rounds === MAX_ROUNDS) throw new Error("tool loop did not finish");   // only if the model ignored the no-tools round
     }
     if (!spoken) throw new Error("empty reply");
-    if (!escalated && promisesPerson(spoken)) { await escalateFallback(deps, { ...ctx, mode: "text" }, "the reply promised that a person would follow up"); escalated = true; sideEffects = true; }
+    { const gap = await backUpCodeClaim(deps, ctx, spoken, trace, askedCode); if (gap) { sideEffects = true; yield* say(takeSentences(gap.failure ?? (gap.asked ? CODE_SENT : ""), true)[0], true); } }
+    if (!escalated && !teamTold(trace) && promisesPerson(spoken)) { await notifyTeam(ctx, "the reply told the customer a person would follow up"); sideEffects = true; }
     yield finish(flagged ? "blocked" : escalated ? "escalated" : "reply");
   } catch (e) {
     if (input.signal?.aborted) { note = "interrupted"; yield finish("failed"); return; }

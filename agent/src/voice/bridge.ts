@@ -15,7 +15,6 @@ export type VoiceCfg = {
   db: Db; engine: EngineDeps; port: number; pathSecret: string; bearer?: string; webhookSecret: string;
   log?: (m: string) => void; now?: () => Date; host?: string;
 };
-const HANDOFF_LINE = "Let me connect you with someone from the team.";
 const SORRY_LINE = "I'm sorry, I can't take your call right now. Please try again in a moment.";
 
 const readRaw = (req: IncomingMessage, max = 2_000_000) => new Promise<string>((resolve, reject) => {
@@ -56,7 +55,7 @@ export function startVoiceServer(cfg: VoiceCfg): Promise<{ server: Server; port:
     const convId = conv ?? `anon-${randomUUID().slice(0, 8)}`;
     const peer = caller && /^\+?\d[\d\s().-]{6,}$/.test(caller) ? normalizeAddress(caller) : `anon:${convId}`;
     const party = await resolveParty(db, { orgId, channel: "voice", address: peer });
-    if ((party.conversation as any).mode === "human") { out.say(HANDOFF_LINE); return out.end("stop"); }
+    // A person who has the conversation can answer texts, but nobody can take over a live phone call through this system: the agent keeps answering the caller.
 
     const idx = userMsgs.length;                                   // 1-based number of this caller turn within the call
     const turnId = `el:${convId}`;
