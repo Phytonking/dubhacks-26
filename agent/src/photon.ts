@@ -28,6 +28,7 @@ export class Photon {
 
   getProject() { return this.req("GET", ""); }
   getImessagePlatform() { return this.req<{ mode: "shared" | "dedicated"; maxUserAssignments?: number; dedicatedLineAvailableNow?: boolean }>("GET", "/platforms/imessage"); }
+  listSharedAssignments() { return this.req<{ assignments: Array<{ assignedPhoneNumber: string; assignmentId: string; handle: string }> }>("GET", "/platforms/imessage/assignments"); }
   listMessages(query: Record<string, string | number | undefined>) { return this.req<{ items: any[]; nextPageToken?: string }>("GET", "/messages", { query }); }
 
   /** Async: 202 = accepted, not delivered. Final status arrives as message.delivered / message.failed events. */

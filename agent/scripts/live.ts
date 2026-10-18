@@ -54,6 +54,14 @@ async function registerLines() {
       { upsert: true });   // errors must surface: a silent failure here means inbound texts have no business to go to
     log(`line: SMS ${mask(smsLine.detail.phoneNumber)} -> this business`);
   }
+  // Shared iMessage: each assigned handle texts a pool number; route those numbers here too.
+  const { assignments } = await photon.listSharedAssignments();
+  for (const num of new Set(assignments.map((a) => a.assignedPhoneNumber))) {
+    await db.collection("channel_lines").updateOne({ channel: "imessage", address: num },
+      { $set: { orgId, provider: "photon", status: "active", capabilities: ["imessage"] }, $setOnInsert: { createdAt: new Date() } },
+      { upsert: true });
+    log(`line: iMessage ${mask(num)} -> this business`);
+  }
 }
 
 const orch = new Orchestrator({ daytonaApiKey: need("DAYTONA_API_KEY"), llmModel: MODEL, snapshot: undefined,
