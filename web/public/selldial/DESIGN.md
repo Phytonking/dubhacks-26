@@ -1,121 +1,115 @@
-# Design — Selldial
+# Design: Selldial
 
-A locked design system for the Selldial dashboard. Every screen reads this file before emitting code. Extend or amend it when the system needs to grow; do not regenerate it per page. Built with Hallmark (redesign, designed-as-app) and UI/UX Pro Max (product reasoning: dense, trustworthy, positive-indicator green).
+The design system for the Selldial operator console. Read this before any UI work. Extend it when needed; do not regenerate it per screen.
 
-Two surfaces: the conversation (voice and text through Photon) and the reasoning dashboard (a second screen judges watch beside the call). Both follow the same idea: show the math, never pressure.
+Selldial is an AI phone and text line that helps customers buy easily. The console is where the operator sees how those calls went. It is a calm, dark, magenta-accented product that feels as polished as a carrier's own app, with its own character.
+
+Reference taste files: taste-tmobile.md (brand feel, dark and magenta) and taste-linear.md (tables, filters, navigation).
+Follow them for feel, and follow this file where they differ.
 
 ## Brand
 
-- Name: Selldial
-- Logo: `dashboard/logo.svg`. A D-shaped speech bubble (flat left edge, round right side, tail at bottom left) in `#4C5BD4` with a white rounded-stroke S. The logo keeps its colour in both themes. The wordmark "Selldial" is set in Google Sans 700.
-- Tagline: "The phone line that tells you when not to buy."
+- Name: Selldial. Wordmark in Google Sans 700.
+- Logo: a phone outline with a handset and signal marks, plus the "Selldial" wordmark. Files: `selldial-logo-full.png` (icon plus wordmark, landing page) and `selldial-logo-icon.png` (icon only: side rail, About, favicon). It looks the same everywhere. The logo is a pink-to-violet gradient and is the one allowed exception to "no gradients".
+- Tagline: "The sell line that helps customers buy."
 - Voice: calm, plain, numerate. A good store employee who is on your side.
-- T-Mobile's magenta and T mark appear only on the "Log in with T-Mobile" sign-in control (`--color-tmobile`). Nowhere else: we are a project for their track, not their product.
-- "Synthetic demo data" appears in every dashboard header.
+- Tenant name ("T-Mobile demo") appears only as plain text where needed. The "Log in with T-Mobile" button may show T-Mobile's T mark, and only that one button (the original is in git history: `git show main:web/public/selldial/index.html`). Everywhere else: no T-Mobile logo, marks, wordmark or exact magenta (#E20074). Our magenta is our own (token below).
+- All data is synthetic. Say so once, in the About page and the landing footer. Do not repeat it as a badge on every screen.
 
 ## Principles
 
-- **Numbers first.** Every claim on screen has a figure next to it.
-- **Show the math.** The recommendation is an itemized sum, not a verdict.
-- **Show the runner-up.** The best option never appears alone.
-- **The guard is visible.** Verification, limit checks, and approvals are states with an icon and a label.
-- **One screen, no scrolling during the demo.** The live screen fits 1440x900.
-- **Honest labels.** MOCK, SYNTHETIC, and SANDBOX badges wherever they apply.
+1. **Simple first.** Each screen answers one question. Cut anything that does not help the operator decide or act.
+2. **Recent first.** Lists show the most recent items on top, with few columns.
+3. **Summaries, not streams.** No live-call screen. Anything live is a short summary line inside Home.
+4. **Show why.** Every outcome has a one-line reason the operator can read.
+5. **Honest labels.** Payment status is plain: Paid by agent or Not paid. Mock checkout is labelled "Mock".
 
-## Genre
+## Theme (dark only)
 
-modern-minimal, Cobalt theme: an instrument panel, not a marketing page. Cool engineered paper, hairlines instead of boxes, exactly one cobalt signal, mono for every machine readout.
+One theme. No light mode, no toggle, no Appearance setting.
 
-## Macrostructure family
+| Token | Value | Use |
+|---|---|---|
+| `--color-bg` | `oklch(13% 0.02 340)` | Page background |
+| `--color-surface` | `oklch(17% 0.025 340)` | Panels, side rail, table container |
+| `--color-raised` | `oklch(21% 0.03 340)` | Inputs, selected rows, chips, hovered rows |
+| `--color-rule` | `oklch(28% 0.03 340)` | Hairlines and rings |
+| `--color-ink` | `oklch(96% 0.01 340)` | Headings, key figures |
+| `--color-ink-2` | `oklch(88% 0.012 340)` | Body text |
+| `--color-muted` | `oklch(72% 0.02 340)` | Labels, timestamps, placeholders |
+| `--color-accent` | `oklch(62% 0.25 352)` | The one signal: primary button, active nav, focus, links. A deeper true magenta that sits beside the logo's pink |
+| `--color-accent-ink` | `oklch(15% 0.02 340)` | Text on the accent |
+| `--color-accent-wash` | `oklch(26% 0.1 352)` | Selected row, active nav fill |
+| `--color-save` | `oklch(79% 0.14 155)` | Paid, money saved, success |
+| `--color-guard` | `oklch(85% 0.12 90)` | Pending approval, needs a look |
+| `--color-block` | `oklch(72% 0.17 25)` | Not paid, failed, needs review |
 
-- **Live screen** (`index.html`): instrument panel. A flush top bar, three regions divided by vertical hairlines (transcript · the math · guards), a signals strip, and a full-bleed graphite audit band. No boxed cards.
-- **Sign-in** (`index.html`): the live screen plays behind a graphite scrim with two diagonal brand shards; a centred panel holds a one-liner and two sign-in tiles (Log in with T-Mobile, Log in via another provider). Demo only: no credentials collected.
-- **Live screen** moved to `live.html`.
-- **Console** (`console.html`): side-rail app with Home, Overview, Conversations, Customers, Sales, Settings and About. Left rail navigation (Hallmark N3), hairline-bordered tables and lists, a drawer for conversation detail.
-- No marketing pages yet. If one is added, use Workbench or Marquee and keep this theme.
-
-## Signature move
-
-**The math.** The live recommendation is set as an itemized sum in tabular mono figures, with a ruled total and the saving as the largest number on screen:
-
-```
-Upgrade today, after $380 trade-in      $931.00
-Promo starting in 3 weeks              −$254.00
-Trade-in value lost by waiting          +$40.00
-──────────────────────────────────────────────
-Wait 3 weeks, then upgrade              $717.00
-Saved by waiting                           $214
-```
-
-Each line comes from a tool result (agent rule 7). The best option and the runner-up are both visible beside it.
-
-## Theme
-
-Tokens live in `dashboard/tokens.css`. Light is the default; the dark set is a toggle (Ctrl/Cmd+K → Switch theme).
-
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--color-paper` | `oklch(98.5% 0.004 256)` | `oklch(17% 0.014 260)` | page |
-| `--color-paper-2` | `oklch(96.2% 0.007 256)` | `oklch(21% 0.016 260)` | sunken fills, caller bubbles |
-| `--color-rule` | `oklch(90.5% 0.008 256)` | `oklch(29% 0.014 260)` | hairlines |
-| `--color-ink` | `oklch(24% 0.02 258)` | `oklch(95% 0.006 256)` | headings, figures |
-| `--color-ink-2` | `oklch(33% 0.018 257)` | `oklch(87% 0.008 256)` | body |
-| `--color-muted` | `oklch(47% 0.014 257)` | `oklch(71% 0.012 256)` | labels, timestamps |
-| `--color-accent` | `oklch(52% 0.19 266)` | `oklch(73% 0.13 266)` | the one signal: primary button, focus, active nav, links |
-| `--color-save` | `oklch(48% 0.12 155)` | `oklch(79% 0.14 155)` | money saved, wait, pass |
-| `--color-spend` | `oklch(50% 0.13 48)` | `oklch(79% 0.12 55)` | money spent, purchase path |
-| `--color-guard` | `oklch(48% 0.1 80)` | `oklch(85% 0.12 90)` | verification, approval pending |
-| `--color-block` | `oklch(50% 0.18 25)` | `oklch(75% 0.15 25)` | blocked, denied |
-| `--color-graphite` | `oklch(21% 0.016 260)` | `oklch(12.5% 0.012 260)` | the audit band |
-
-Each state colour has a `-wash` tint for backgrounds. The accent covers under 5% of any viewport. State colours appear only where they carry meaning and always with an icon plus a label. No pure black or white, no gradients, no glass.
+Rules:
+- The landing page background may carry one very subtle dark magenta glow behind the centre (a soft radial wash, never busy). The console background is flat `--color-bg`.
+- Accent covers under 8% of any screen. Never use it for large fills.
+- State colours always come with an icon and a text label, never colour alone.
+- The logo is the only gradient (pink to violet). Nothing else uses one except the landing background wash above.
+- Do not use T-Mobile's exact magenta. No pure black or pure white.
+- No glass blur, no glowing elements, no heavy shadows. Depth comes from surface tone and hairlines.
 
 ## Typography
 
-- Display: Space Grotesk 500/600, tracking −0.02em. Headings, the recommendation title, the saving figure.
-- Body: Google Sans 400/500. All UI and running text; the wordmark at 700.
-- Mono: JetBrains Mono 400/500. Every figure in the math, the audit log, tool names, IDs, tokens, region labels (UPPERCASE, 0.06em).
-- Scale: 12 / 14 / 16 / 20 / 28 / 40 (`--text-xs` … `--text-2xl`). The saving uses 40.
-- `font-variant-numeric: tabular-nums` on every figure. Headings are always roman.
+- Display: Space Grotesk 500/600, tracking -0.02em. Page titles and big figures.
+- Body: Google Sans 400/500. All UI text.
+- Mono: JetBrains Mono 400/500. Figures, IDs, phone numbers, timestamps. Tabular numerals.
+- Scale: 12 / 14 / 16 / 20 / 28 / 40. Rank by weight and lightness, not size alone.
 
-## Spacing
+## Spacing, radius, motion
 
-4-point named scale in `tokens.css`: `--space-3xs` 4 · `2xs` 8 · `xs` 12 · `sm` 16 · `md` 24 · `lg` 32 · `xl` 48. Use names, never raw values. Radii: controls 6px, cards 10px, pills for chips only.
+- 4px grid, named tokens (`--space-3xs` to `--space-xl`). Use names, not raw values.
+- Radii: controls 8px, cards 12px, chips pill. 
+- Motion: 160ms colour transitions, 280ms for panels, `--ease-out`. CSS only. Respect `prefers-reduced-motion`.
 
-## Motion
+## Layout
 
-- Easings: `--ease-out` cubic-bezier(0.16, 1, 0.3, 1), `--ease-in`, `--ease-in-out`. Never `ease`, never bounce.
-- One authored moment: the saving counts up when a result lands. Signals light with a 280ms colour change. New audit rows flash once.
-- Reduced motion: no count-up, no pulse, no flash. Final states render immediately.
+**App shell:** side rail at left with the logo, then six items: Home, Conversations, Customers, Sales, Settings, About. A slim top bar holds the page title and, at the right, the tenant name (plain text) and an avatar. Nothing else: no badges, no Refresh, no Live button.
 
-## Microinteractions stance
+**Home (one screen, replaces Home and Overview):**
+1. A short greeting line and today's date.
+2. Four summary numbers in one row: Calls handled, Sales paid, Not paid, Saved for customers.
+3. **Needs review:** only calls that went badly (not paid after a purchase attempt, handoff, failed verification). Each row: customer, one-line reason, time, and an "Open" action.
+4. **Recent conversations:** the last 5 with a link to all.
+5. A small "Active now" line only if a call is in progress, as a summary ("Maya R. is on a call about an upgrade"). It does not open a live screen.
 
-- Silent success. No celebratory toasts.
-- Optimistic updates. Reversible actions don't get confirmation dialogs; cancelling a Visa hold does.
-- Focus rings show instantly and are never animated.
-- Every control has hover, focus-visible, active and disabled states. Controls are at least 44px tall on touch widths.
-- Ctrl/Cmd+K opens a working command palette (Reset demo, Switch theme, Open console, Jump to audit log). R resets the demo.
+**Conversations:** a list of recent conversations, one per customer interaction: customer name, channel (voice or text), what it was about, outcome chip (Paid, Not paid, Handed off, Advised to wait), time. Click a row to open the report.
 
-## CTA voice
+**Conversation report (drawer or detail view):** a short summary for the operator, in reading order:
+1. Headline: outcome plus one sentence ("Maya bought an iPhone 17. Paid by agent.").
+2. What the customer wanted.
+3. What the agent recommended and why (up to 3 reasons), including the runner-up.
+4. Payment: Paid by agent or Not paid, amount, and Mock label.
+5. Owner approval status if one was needed.
+6. Transcript, collapsed by default.
 
-- Primary: solid cobalt, 6px radius, short verb label ("Reset demo", "Claim"). One per view.
-- Secondary: 1px hairline border on paper, same radius and padding.
-- Links: cobalt text, underline on hover.
+**Customers:** most recent customers first. Columns: name, phone, region, status, last conversation. Filters: region, name, number, status. Nothing else. Clicking a row opens a small drawer with name, number, region, status and their conversations. No churn risk, no financing.
 
-## States
+**Sales:** most recent sales first. Columns: customer, item, amount, region, date, payment (Paid by agent or Not paid). Filters: region, time, customer, payment status. One simple row layout, no charts, no dense math tables.
 
-- Empty: "Waiting for a call or text to (206) 555-0142."
-- Loading: skeleton rows, never spinners in the main regions.
-- Error: inline banner in the region that failed; other regions keep working.
-- Handoff: the top bar turns guard-wash with "Handed to a human" and the written summary.
+**Settings:** a simple page or slide-over with only what is real: Offers and discounts, Spend and approvals, Verification and handoff, and Channels (Voice and SMS and iMessage only; no RCS, no Web chat). No Appearance. Editable controls change local state only and say "Not saved in demo."
 
-## What screens MUST share
+**About:** a short, well-set page: what Selldial is, how a purchase goes, the trust rules (owner approval, spend limits, audit log). Clean typography, generous space.
 
-The logo and wordmark, the token set, the three fonts, the CTA voice, hairline structure, mono region labels, the "Synthetic demo data" badge.
+**Landing (`index.html`):** one centred column, nothing else: the full logo, large; one line, "The sell line that helps customers buy."; two compact side-by-side buttons, "Log in with T-Mobile" (with the T mark) and "Log in via another provider"; and a small note at the bottom: "Demo sign-in: no credentials are collected. All customer data is synthetic." No heading, no masthead, no diagonal shapes.
 
-## What screens MAY differ on
+## Components
 
-Layout shape (instrument panel vs. side rail) and density.
+- **Primary button:** accent fill, accent-ink text, 8px radius, 36px high. One per view.
+- **Secondary button:** hairline ring on surface, ink-2 text.
+- **Chip / outcome tag:** pill, 12px, hairline ring. Outcome chips use text plus the state colour for the dot only.
+- **Table:** 48px rows, sticky header, hover on raised, selected on accent-wash. No zebra, no heavy borders.
+- **Filter bar:** a row of dropdowns or chips plus search, above the table. Only the filters listed for that screen.
+- **Drawer:** 420px from the right on desktop, full width on phones.
+- **Empty state:** one sentence and one action. **Loading:** skeleton rows.
+- **Focus:** a 2px accent outline with 2px offset on every interactive element.
+
+## Responsive
+
+Desktop first, but nothing breaks below 900px. The side rail becomes a top row or a menu. Tables drop secondary columns. Drawers become full width. No horizontal page scroll at 320 to 768px.
 
 ## Conversation design
 
@@ -161,55 +155,13 @@ Selldial: I'm bringing in a teammate so you get the right answer. They'll have o
 
 ## Accessibility
 
-- Text contrast 4.5:1 minimum in both themes, including state colours on their washes.
-- Status always has an icon plus text.
-- `prefers-reduced-motion` respected for the saving count-up, the live pulse and row flashes.
-- Everything is keyboard reachable: rows open with Enter, the drawer and palette trap focus and return it on close.
-- No horizontal scroll at 320, 375, 414 or 768px.
+- Text contrast 4.5:1 minimum, including state colours on dark surfaces.
+- Status is always icon plus text.
+- Respect `prefers-reduced-motion`.
+- Everything is keyboard reachable. Rows open with Enter. Drawers trap focus and return it on close.
 
 ## Implementation notes
 
-- Plain HTML, CSS and JS in `dashboard/`, served by FastAPI. No build step.
-- Poll `GET /sessions/{phone}` every second once the agent exists. Until then the live screen plays `dashboard/session-demo.js`.
-- Format money at the edge only; the API returns cents.
-- Live-screen components: TopBar, Transcript, TheMath (with OptionsTable and TradeinChart), Guards, CheckoutCard, SignalStrip, AuditBand, CommandPalette.
-
-## Exports
-
-### tokens.css
-
-See `dashboard/tokens.css` (the source of truth).
-
-### Tailwind v4 `@theme`
-
-```css
-@theme {
-  --color-paper:  oklch(98.5% 0.004 256);
-  --color-ink:    oklch(24% 0.02 258);
-  --color-accent: oklch(52% 0.19 266);
-  --color-save:   oklch(48% 0.12 155);
-  --font-display: "Space Grotesk", sans-serif;
-  --font-body:    "Google Sans", sans-serif;
-  --font-mono:    "JetBrains Mono", monospace;
-  --spacing-sm:   1rem;
-  --ease-out:     cubic-bezier(0.16, 1, 0.3, 1);
-}
-```
-
-### DTCG `tokens.json`
-
-```json
-{
-  "color": {
-    "paper":  { "$value": "oklch(98.5% 0.004 256)", "$type": "color" },
-    "ink":    { "$value": "oklch(24% 0.02 258)", "$type": "color" },
-    "accent": { "$value": "oklch(52% 0.19 266)", "$type": "color" },
-    "save":   { "$value": "oklch(48% 0.12 155)", "$type": "color" }
-  },
-  "font": {
-    "display": { "$value": "Space Grotesk", "$type": "fontFamily" },
-    "body":    { "$value": "Google Sans", "$type": "fontFamily" },
-    "mono":    { "$value": "JetBrains Mono", "$type": "fontFamily" }
-  }
-}
-```
+- Plain HTML, CSS and JS in `web/public/selldial/`, served by Next.js as static files. No build step.
+- `api.js` is the only place that fetches data. When the MongoDB backend is ready, change that file. Money is integer cents; format at the edge.
+- Tokens live in `tokens.css`. It is the source of truth for the values above.

@@ -66,13 +66,13 @@
 
   // ---------- views ----------
   const VIEWS = {
-    home: { label: "Home", sub: () => new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }), render: renderHome, title: () => `Welcome back, ${profile().name}` },
-    overview: { label: "Overview", sub: "What your Selldial line did today", render: renderOverview },
-    conversations: { label: "Conversations", sub: "Every call and text, with the agent's reasoning", render: renderConversations },
-    customers: { label: "Customers", sub: "Household accounts from the sandbox dataset", render: renderCustomers },
-    sales: { label: "Sales", sub: "Conversions, revenue and the plans behind them", render: renderSales },
-    settings: { label: "Settings", sub: "Profile, appearance, promo codes and channels", render: renderSettings },
-    about: { label: "About", sub: "Who we are and how Selldial works", render: renderAbout },
+    home: { label: "Home", render: renderHome, title: () => `Welcome back, ${profile().name}` },
+    overview: { label: "Overview", render: renderOverview },
+    conversations: { label: "Conversations", render: renderConversations },
+    customers: { label: "Customers", render: renderCustomers },
+    sales: { label: "Sales", render: renderSales },
+    settings: { label: "Settings", render: renderSettings },
+    about: { label: "About", render: renderAbout },
   };
   const ui = { convFilter: "all", convQuery: "", convRegion: "all", convTime: "all", convCustomer: "all", custQuery: "", custSegment: "all", custRegion: "all", custRisk: "all", promoEdit: null };
 
@@ -110,7 +110,7 @@
               ${live ? `<div class="row"><div><span class="chip ok"><span class="dot pulse"></span>Live now</span>
                 <div class="hero-line">${esc(live.customer)} is on a ${esc(CHANNEL[live.channel]).toLowerCase()} call: ${esc(live.intent)}</div>
                 <div class="small muted">Selldial's pick so far: ${esc(live.recommendation?.pick || "still listening")}</div></div>
-                <a class="btn primary" href="live.html">${icon("phone")} Watch live</a></div>`
+</div>`
               : `<div class="hero-line">No calls right now.</div>`}
             </div>
           </div>
@@ -312,7 +312,7 @@
   }
 
   function renderSettings(s) {
-    const p = profile(), theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light", ch = channelState();
+    const p = profile(), ch = channelState();
     const e = ui.promoEdit || { code: "", applies_to: "Devices", kind: "cents", amount: "", requires: "" };
     return `
       <div class="settings">
@@ -324,13 +324,6 @@
             <label class="field"><span>Role</span><input name="role" value="${esc(p.role)}"></label>
             <div><button class="btn primary" type="submit">Save profile</button></div>
           </form>
-        </section>
-        <section class="card">
-          <div class="card-head"><h2>Appearance</h2></div>
-          <div class="card-body">
-            <div class="seg" role="group" aria-label="Theme">${[["light", "Light"], ["dark", "Dark"]].map(([v, l]) => `<button data-theme-set="${v}" aria-pressed="${theme === v}">${l}</button>`).join("")}</div>
-            <p class="small muted" style="margin:12px 0 0">Applies to the console, the live screen and sign-in on this browser.</p>
-          </div>
         </section>
         <section class="card span-2">
           <div class="card-head"><h2>Promo codes</h2><span class="small muted">the agent can offer only these (guard rule 1)</span></div>
@@ -366,7 +359,7 @@
       <div class="about">
         <section class="card about-lead">
           <div class="card-body">
-            <img src="logo.svg" alt="" width="44" height="60">
+            <img src="selldial-logo-icon.png" alt="" width="51" height="60">
             <h2 class="about-title">The phone line that tells you when not to buy.</h2>
             <p>Selldial is a sales line for carriers that answers calls and texts, recommends what a customer should actually do, and argues against its own sale when waiting is the better deal. Every recommendation comes from deterministic code that shows its math; the language model only handles the conversation.</p>
           </div>
@@ -468,12 +461,6 @@
     toast.timer = setTimeout(() => (t.hidden = true), 2400);
   }
 
-  function setTheme(theme) {
-    if (theme === "dark") document.documentElement.dataset.theme = "dark";
-    else delete document.documentElement.dataset.theme;
-    try { localStorage.setItem("selldial:theme", theme); } catch {}
-  }
-
   // ---------- shell ----------
   const current = () => { const v = location.hash.replace("#/", ""); return VIEWS[v] ? v : "home"; };
 
@@ -484,18 +471,14 @@
       <button class="nav-link" data-go="${key}" ${key === v ? 'aria-current="page"' : ""}>
         <span>${x.label}</span>${counts[key] ? `<span class="badge">${counts[key]}</span>` : ""}
       </button>`).join("");
-    $("#line-card").innerHTML = `<span class="muted">Selldial line</span><strong class="num">${esc(s.line.number)}</strong>
-      <span><span class="dot pulse"></span>${esc(s.line.carrier)} · ${k.live} live now</span>`;
     $("#view-title").textContent = view.title ? view.title() : view.label;
-    $("#view-sub").textContent = typeof view.sub === "function" ? view.sub() : view.sub;
-    $("#mode-pill").textContent = api.mode === "live" ? "Live backend" : "Demo data";
-    $("#mode-pill").className = `mode-pill ${api.mode}`;
+    $("#avatar").textContent = profile().name.trim().charAt(0).toUpperCase();
     $("#view").innerHTML = view.render(s);
     document.title = `${view.label} · Selldial`;
   }
 
   document.addEventListener("click", async (e) => {
-    const el = e.target.closest("[data-go],[data-conv],[data-cust],[data-claim],[data-resend],[data-cancel],[data-conv-filter],[data-theme-set],[data-promo-edit],[data-promo-cancel]");
+    const el = e.target.closest("[data-go],[data-conv],[data-cust],[data-claim],[data-resend],[data-cancel],[data-conv-filter],[data-promo-edit],[data-promo-cancel]");
     if (!el) return;
     const d = el.dataset;
     try {
@@ -507,7 +490,6 @@
         await api.cancelApproval(d.cancel); toast("Order cancelled, hold released"); render();
       }
       else if (d.convFilter) { ui.convFilter = d.convFilter; render(); }
-      else if (d.themeSet) { setTheme(d.themeSet); render(); }
       else if (d.promoEdit) {
         const p = api.state.policy.discounts.find((x) => x.code === d.promoEdit);
         ui.promoEdit = { code: p.code, applies_to: p.applies_to, kind: p.max_pct != null ? "pct" : "cents", amount: p.max_pct != null ? p.max_pct : p.max_cents / 100, requires: p.requires || "" };
@@ -575,6 +557,5 @@
   window.addEventListener("hashchange", () => { closeDrawer(); render(); });
 
   const byRecent = (s) => s.conversations.sort((a, b) => a.started - b.started);
-  $("#refresh").addEventListener("click", async () => { await api.load(); byRecent(api.state); render(); toast(api.mode === "live" ? "Refreshed" : "Backend not reachable, showing demo data"); });
   api.load().then(() => { byRecent(api.state); render(); });
 })();

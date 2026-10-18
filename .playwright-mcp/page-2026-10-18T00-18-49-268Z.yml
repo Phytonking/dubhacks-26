@@ -1,0 +1,40 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - img "Selldial" [ref=e3]
+    - heading "Buy a phone or plan with one call." [level=1] [ref=e4]
+    - paragraph [ref=e5]: The sell line that helps customers buy.
+    - generic [ref=e6]:
+      - link "Log in with T‑Mobile" [ref=e7] [cursor=pointer]:
+        - /url: console.html#/home
+      - link "Log in via another provider" [ref=e8] [cursor=pointer]:
+        - /url: console.html#/home
+    - region "Sample call" [ref=e9]:
+      - paragraph [ref=e10]: Sample call
+      - paragraph [ref=e11]:
+        - generic [ref=e12]: Customer
+        - text: Should I upgrade my phone today?
+      - paragraph [ref=e13]:
+        - generic [ref=e14]: Selldial
+        - text: A promo starts in 3 weeks and saves you $254. I'd wait.
+      - paragraph [ref=e15]:
+        - generic [ref=e16]: Customer
+        - text: Okay, remind me then.
+    - list [ref=e17]:
+      - listitem [ref=e18]:
+        - generic [ref=e19]: 1. Call or text.
+        - text: The customer asks what to buy.
+      - listitem [ref=e20]:
+        - generic [ref=e21]: 2. Get one clear answer.
+        - text: The agent recommends and says why.
+      - listitem [ref=e22]:
+        - generic [ref=e23]: 3. Pay or wait.
+        - text: Big purchases go to the owner for approval.
+    - list [ref=e24]:
+      - listitem [ref=e25]: Owner approval
+      - listitem [ref=e26]: Spend limits
+      - listitem [ref=e27]: Audit log
+  - contentinfo [ref=e28]:
+    - paragraph [ref=e29]:
+      - text: Demo data only. All customer data is synthetic.
+      - link "About Selldial" [ref=e30] [cursor=pointer]:
+        - /url: console.html#/about

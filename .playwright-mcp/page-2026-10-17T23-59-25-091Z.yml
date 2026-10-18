@@ -1,0 +1,17 @@
+- generic [active] [ref=f1e1]:
+  - banner [ref=f1e2]:
+    - link "Selldial" [ref=f1e3] [cursor=pointer]:
+      - /url: index.html
+    - generic [ref=f1e6]: Sales console
+  - main [ref=f1e7]:
+    - heading "Welcome" [level=1] [ref=f1e8]
+    - paragraph [ref=f1e9]: The phone line that sells honestly, tells customers when to wait, and shows its math.
+    - generic [ref=f1e10]:
+      - link "Log in with T‑Mobile" [ref=f1e11] [cursor=pointer]:
+        - /url: console.html#/home
+      - link "Log in via another provider" [ref=f1e13] [cursor=pointer]:
+        - /url: console.html#/home
+    - paragraph [ref=f1e18]:
+      - text: "Demo sign-in: no credentials are collected. All customer data is synthetic."
+      - link "About Selldial" [ref=f1e19] [cursor=pointer]:
+        - /url: console.html#/about

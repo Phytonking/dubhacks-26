@@ -1,11 +1,10 @@
-/* Hallmark · genre: modern-minimal · macrostructure: Side-rail app (N3) · theme: Cobalt · design-system: DESIGN.md · designed-as-app
- * Console styles. Every colour and font maps to tokens.css through the aliases below. */
+/* Console styles. Every colour and font maps to tokens.css through the aliases below. */
 :root {
-  --panel: var(--color-paper);
-  --panel-2: var(--color-paper-2);
+  --panel: var(--color-surface);
+  --panel-2: var(--color-raised);
   --line: var(--color-rule);
   --faint: var(--color-muted);
-  --bg: var(--color-paper);
+  --bg: var(--color-bg);
   --text: var(--color-ink);
   --muted: var(--color-muted);
   --brand: var(--color-accent);
@@ -14,15 +13,13 @@
   --brand-soft: var(--color-accent-wash);
   --on-accent: var(--color-accent-ink);
   --ok: var(--color-save);
-  --ok-soft: var(--color-save-wash);
+  --ok-soft: color-mix(in oklch, var(--color-save) 16%, var(--color-surface));
   --warn: var(--color-guard);
-  --warn-soft: var(--color-guard-wash);
+  --warn-soft: color-mix(in oklch, var(--color-guard) 16%, var(--color-surface));
   --bad: var(--color-block);
-  --bad-soft: var(--color-block-wash);
+  --bad-soft: color-mix(in oklch, var(--color-block) 16%, var(--color-surface));
   --info: var(--color-accent);
   --info-soft: var(--color-accent-wash);
-  --guard-soft: var(--color-guard-wash);
-  --guard-ink: var(--color-guard);
   --font: var(--font-body);
   --mono: var(--font-mono);
   --radius: var(--radius-card);
@@ -67,23 +64,16 @@ table { font-variant-numeric: tabular-nums; }
   min-width: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
   background: var(--brand-fill); color: var(--on-accent); text-align: center; line-height: 19px;
 }
-.line-card {
-  margin-top: auto; padding: 12px; border: 1px solid var(--line); border-radius: 10px;
-  background: var(--panel-2); font-size: 12.5px;
-}
-.line-card strong { display: block; font-size: 13.5px; margin: 4px 0; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 8px; }
 .dot.pulse { box-shadow: 0 0 0 0 var(--ok); animation: pulse 1.8s infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent); } 70%, 100% { box-shadow: 0 0 0 7px transparent; } }
 
 .main { min-width: 0; padding: 24px 32px 48px; }
-.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
 .top h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
-.sub { margin: 4px 0 0; color: var(--muted); }
-.top-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.mode-pill { font-size: 12px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
-.mode-pill.live { color: var(--ok); border-color: currentColor; }
-.honest { font-size: 12px; font-weight: 500; padding: 4px 12px; border-radius: 999px; background: var(--guard-soft); color: var(--guard-ink); white-space: nowrap; }
+.tenant { color: var(--muted); font-size: 13px; }
+.avatar { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-weight: 600; font-size: 13px; }
+.top-right { display: flex; align-items: center; gap: 12px; }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 
 /* Building blocks */
@@ -219,11 +209,10 @@ td.right, th.right { text-align: right; }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   .nav { position: static; height: auto; flex-direction: row; align-items: center; gap: 12px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
-  .brand-name, .line-card { display: none; }
+  .brand-name { display: none; }
   .nav-links { flex-direction: row; }
   .nav-link { white-space: nowrap; gap: 8px; }
   .main { padding: 16px; }
-  .top { flex-direction: column; }
   .kpi .value { font-size: 22px; }
   .meta { grid-template-columns: 1fr 1fr; }
   .search { min-width: 0; flex: 1; }
@@ -244,7 +233,6 @@ td.right, th.right { text-align: right; }
 .card-head h2 { font-weight: 600; }
 .brand-name { font-family: var(--font-body); font-weight: 700; }
 .nav { background: var(--panel); }
-.main { background: var(--color-paper-2); }
 .card { background: var(--panel); }
 
 /* States and wrap guards (Hallmark gates 26, 51) */
@@ -289,7 +277,7 @@ td.right, th.right { text-align: right; }
 .funnel .node { fill: var(--text); }
 .funnel .node.buy { fill: var(--brand); }
 .funnel .node.save { fill: var(--ok); }
-.funnel .node.muted { fill: var(--color-rule-2); }
+.funnel .node.muted { fill: var(--color-rule); }
 .funnel .band { fill: var(--brand-soft); }
 .funnel .band.save { fill: var(--ok-soft); }
 .funnel .band.muted { fill: var(--panel-2); }
@@ -308,7 +296,7 @@ td.right, th.right { text-align: right; }
 /* ---------- Filters ---------- */
 .select { display: inline-flex; align-items: center; gap: var(--space-2xs); font-size: 12px; color: var(--muted); }
 .select select, .field select { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: var(--radius-control); padding: var(--space-3xs) var(--space-2xs); font: inherit; font-size: 13px; min-height: 32px; }
-.select select:hover, .field select:hover { border-color: var(--color-rule-2); }
+.select select:hover, .field select:hover { border-color: var(--color-muted); }
 
 /* ---------- Settings ---------- */
 .settings { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: var(--space-sm); align-items: start; }
@@ -318,14 +306,14 @@ td.right, th.right { text-align: right; }
 .promo-form .wide { grid-column: span 3; }
 .field { display: flex; flex-direction: column; gap: var(--space-3xs); font-size: 12px; color: var(--muted); font-weight: 500; }
 .field input { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: var(--radius-control); padding: var(--space-2xs) var(--space-xs); font: inherit; font-size: 14px; font-weight: 400; min-height: 36px; }
-.field input:hover { border-color: var(--color-rule-2); }
+.field input:hover { border-color: var(--color-muted); }
 .field input:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
 .field input[readonly] { background: var(--panel-2); color: var(--muted); }
 .field input:invalid:not(:placeholder-shown):not(:focus) { border-color: var(--bad); }
 .toggle { display: inline-flex; align-items: center; gap: var(--space-2xs); cursor: pointer; font-size: 13px; color: var(--muted); }
 .toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.toggle .track { width: 36px; height: 20px; border-radius: var(--radius-pill); background: var(--color-rule-2); position: relative; transition: background-color var(--dur-short) var(--ease-out); }
-.toggle .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--color-paper); transition: transform var(--dur-short) var(--ease-out); }
+.toggle .track { width: 36px; height: 20px; border-radius: var(--radius-pill); background: var(--color-rule); position: relative; transition: background-color var(--dur-short) var(--ease-out); }
+.toggle .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--color-ink); transition: transform var(--dur-short) var(--ease-out); }
 .toggle input:checked + .track { background: var(--brand); }
 .toggle input:checked + .track::after { transform: translateX(16px); }
 .toggle input:focus-visible + .track { outline: 2px solid var(--brand); outline-offset: 2px; }
@@ -333,11 +321,11 @@ td.right, th.right { text-align: right; }
 
 /* ---------- About ---------- */
 .about { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-sm); align-items: start; }
-.about-lead { grid-column: 1 / -1; background: var(--color-graphite); border-color: var(--color-graphite-rule); color: var(--color-graphite-ink); }
+.about-lead { grid-column: 1 / -1; background: var(--color-surface); }
 .about-lead .card-body { padding: var(--space-lg); max-width: 72ch; }
 .about-lead img { display: block; height: 52px; width: auto; }
-.about-title { margin: var(--space-sm) 0 var(--space-2xs); font: 600 var(--text-xl)/1.15 var(--font-display); letter-spacing: -0.02em; color: var(--color-graphite-ink); }
-.about-lead p { margin: 0; color: var(--color-graphite-muted); font-size: var(--text-md); }
+.about-title { margin: var(--space-sm) 0 var(--space-2xs); font: 600 var(--text-xl)/1.15 var(--font-display); letter-spacing: -0.02em; color: var(--color-ink); }
+.about-lead p { margin: 0; color: var(--color-muted); font-size: var(--text-md); }
 .steps { margin: 0; padding-left: var(--space-lg); display: flex; flex-direction: column; gap: var(--space-xs); }
 .steps b { color: var(--text); font-weight: 600; }
 
