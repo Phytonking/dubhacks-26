@@ -1,6 +1,7 @@
 import type { ObjectId, Document } from "mongodb";
 import { getDb } from "./db";
 import { getCurrentOrg } from "./queries";
+import { hasTmoData, listTmoConsoleCustomers } from "./tmo-queries";
 
 // Builds the snapshot the static console (public/selldial) renders: the shape of window.SELLDIAL_DEMO,
 // read live from MongoDB. Times are minutes-ago, money is integer cents. Collections the agent has not
@@ -155,7 +156,9 @@ export async function buildSnapshot() {
   const nameById = new Map(convs.map((c) => [idStr(c._id), conversations.find((x) => x.id === idStr(c._id))!.customer]));
   const activeContactIds = new Set(convs.map((c) => idStr(c.contactId)));
 
-  const customers = allContacts.map((c) => {
+  // A business with synced T-Mobile data lists its households (plan, lines, bill, persona profile) instead of bare contacts.
+  const tmoCustomers = (await hasTmoData(orgId)) ? await listTmoConsoleCustomers(orgId) : null;
+  const customers = tmoCustomers ?? allContacts.map((c) => {
     const addr = c.handles?.[0]?.address ?? "";
     return { name: shortName(c.name ?? ""), phone: prettyPhone(addr), region: c.region ?? "Unknown", status: activeContactIds.has(idStr(c._id)) ? "Active" : "Inactive" };
   });

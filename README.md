@@ -31,3 +31,16 @@ pnpm report    # writes docs/TEST-REPORT-agent-runtime.html
 ```
 
 Platform secrets (Spectrum, Daytona, Modal, Mongo) stay on the host; only an allow-listed env goes into a sandbox.
+
+## T-Mobile sandbox data in Atlas
+
+The T-Mobile hackathon dataset (`github.com/mageshkumarj/dubhacks`, synthetic) is migrated into Atlas under its own org ("T-Mobile"): `tmo_*` collections (devices, plans, add-ons, promotions, households with lines/usage/billing/support embedded, personas), 54 knowledge rows, and 50 persona contacts with character sheets and memory. Design: `docs/PRD-tmobile-data-integration.html`.
+
+```bash
+cd web
+pnpm db:seed:tmobile -- --db /path/to/dubhacks/data/sandbox.db   # idempotent; skips if the dataset checksum is unchanged (--force, --reset-personas)
+pnpm db:profile:tmobile                                          # name, household, tone, voice notes and backstory on every account (about 10% LLM-written, rest rule-based; needs MODAL_* for the LLM part)
+pnpm tsx --env-file=.env.local scripts/verify-tmobile.mts --api http://localhost:8000   # Atlas copy vs the source API (needs the sandbox server running)
+```
+
+The Selldial console (`web/public/selldial`, served by `/api/console`) shows the T-Mobile business by default: the Customers screen lists the 50 personas, 8 prospects and 450 more households with plan, lines, bill, support and the agent's persona profile. The seed only touches the T-Mobile org; Sunrise Bike Shop data is left alone.
