@@ -23,6 +23,7 @@
     back: '<path d="M19 12H5M11 18l-6-6 6-6"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 2"/>',
     phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
   };
   const icon = (n) => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
@@ -139,12 +140,16 @@
       </section>`;
   }
 
-  function renderConversations(s) {
+  const filterConvs = (s) => {
     const q = ui.convQuery.trim().toLowerCase();
-    const rows = s.conversations
+    return s.conversations
       .filter((c) => c.status !== "live")
       .filter((c) => ui.convOutcome === "all" || outcomeOf(c) === ui.convOutcome)
       .filter((c) => !q || [c.customer, c.intent].join(" ").toLowerCase().includes(q));
+  };
+
+  function renderConversations(s) {
+    const rows = filterConvs(s);
     const opt = (v, label) => `<option value="${v}"${v === ui.convOutcome ? " selected" : ""}>${label}</option>`;
     return `
       <div class="filters" style="margin-bottom:12px">
@@ -235,7 +240,7 @@
   }
 
   // ---------- settings (local state only: nothing here is saved) ----------
-  const SET_DEFAULTS = { limit: 1000, askOwner: true, handoffAsk: true, fails: "3", voice: true, sms: true, imessage: true, whatsapp: true };
+  const SET_DEFAULTS = { limit: 1500, askOwner: true, handoffAsk: true, fails: "3", voice: true, sms: true, imessage: true, whatsapp: true };
   const setting = (k) => (k in ui.set ? ui.set[k] : k.startsWith("offer:") ? true : SET_DEFAULTS[k]);
   const NOT_SAVED = `<span class="hint">Not saved in demo</span>`, READ_ONLY = `<span class="hint">Read-only in demo</span>`;
   const toggle = (key, label) => `<label class="toggle"><input type="checkbox" data-set="${esc(key)}"${setting(key) ? " checked" : ""}><span class="track" aria-hidden="true"></span><span class="sr-only">${esc(label)}</span><span class="toggle-text">${setting(key) ? "On" : "Off"}</span></label>`;
@@ -348,37 +353,72 @@
     <div class="grow"><h2 class="title" id="drawer-title" style="font-size:17px;margin:0">${esc(title)}</h2><div class="small muted">${sub}</div></div>
     <button class="btn ghost icon-btn" id="drawer-close" type="button" data-close aria-label="Close">${icon("close")}</button></div></div>`;
 
-  function openConversation(id, opener, from) {
-    const s = api.state, c = s.conversations.find((x) => x.id === id);
-    if (!c || c.status === "live") return toast("That conversation isn't in this snapshot.");
+  // The decision timeline: one step each for Verified, Recommended, Owner approval (only when one was needed) and Payment.
+  // `tone` picks the marker colour and icon: done (violet), ok, warn, bad. Colour always comes with an icon and a word.
+  function reportSteps(s, c) {
     const r = c.recommendation, o = outcomeOf(c);
     const ap = s.approvals.find((a) => a.conversation === c.id);
     const h = s.handoffs.find((x) => x.conversation === c.id);
+    const verifyEv = c.events.find((e) => e.name === "account.verify");
+    const reasons = r ? (r.reasons || [r.reason]).filter(Boolean).slice(0, 3) : [];
+    const steps = [c.verified
+      ? { tone: "done", label: "Verified", title: "Caller verified", note: verifyEv ? verifyEv.text : "The caller passed the PIN check." }
+      : { tone: "bad", label: "Not verified", title: "Caller not verified", note: h ? h.reason : "The caller did not pass the PIN check." }];
+    steps.push(r
+      ? { tone: "done", label: "Recommended", title: r.pick, list: reasons, runner: r.runner_up }
+      : { tone: "done", label: "Recommended", title: "No recommendation", note: h && c.verified ? `${h.reason}. ${h.claimed_by ? `Claimed by ${h.claimed_by}.` : "Waiting for a person."}` : "The agent made no changes." });
+    if (ap) {
+      const verdict = { texted: ["warn", "Waiting"], approved: ["ok", "Approved"], declined: ["bad", "Declined"], cancelled: ["bad", "Cancelled"] }[ap.status];
+      steps.push({ tone: verdict[0], label: "Owner approval", title: verdict[1],
+        note: `Asked ${ap.owner} ${ago(ap.sent)} to approve ${money(ap.amount_cents)}. The limit is ${money(ap.limit_cents)}.${ap.resolved != null ? ` ${verdict[1]} ${ago(ap.resolved)}.` : ""}` });
+    }
+    const pay = o === "paid"
+      ? { tone: "ok", title: "Paid by agent", note: "The agent completed checkout." }
+      : { tone: o === "pending" ? "warn" : "bad", title: "Not paid", note: ap ? { texted: "Waiting for the owner to reply YES.", declined: "The owner declined, so the agent did not charge.", cancelled: "Cancelled before the owner replied." }[ap.status] : c.amount_cents != null ? "The purchase did not go through." : "No purchase was attempted." };
+    steps.push({ ...pay, label: "Payment", amount: c.amount_cents });
+    return steps;
+  }
+
+  const TONE_ICON = { done: "check", ok: "check", warn: "clock", bad: "alert" };
+  const stepHtml = (st) => `<li class="step ${st.tone}">
+    <span class="step-mark">${icon(TONE_ICON[st.tone])}</span>
+    <div class="step-body">
+      <p class="section-label">${st.label}</p>
+      <div class="row-head"><span class="title">${esc(st.title)}</span>${st.amount != null ? `<span class="num">${money(st.amount)}</span><span class="chip">Mock</span>` : ""}</div>
+      ${st.list?.length ? `<ul class="why">${st.list.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      ${st.runner ? `<div class="small muted"><b>Runner-up:</b> ${esc(st.runner)}</div>` : ""}
+      ${st.note ? `<div class="small muted">${esc(st.note)}</div>` : ""}
+    </div></li>`;
+
+  // The conversations an operator can step through: the customer's own when opened from a customer, otherwise the Conversations list as filtered.
+  function reportList(s, id, from) {
+    if (from) return custConvs(s, from);
+    const list = filterConvs(s);
+    return list.some((c) => c.id === id) ? list : s.conversations.filter((c) => c.status !== "live");
+  }
+
+  function openConversation(id, opener, from, step) {
+    const s = api.state, c = s.conversations.find((x) => x.id === id);
+    if (!c || c.status === "live") return toast("That conversation isn't in this snapshot.");
     const ask = c.events.find((e) => e.kind === "customer");
     const talk = c.events.filter((e) => e.kind === "customer" || e.kind === "agent");
-    const apText = ap && {
-      texted: `Waiting for the owner, ${ap.owner}, to reply YES. Texted ${ago(ap.sent)}.`,
-      approved: `The owner, ${ap.owner}, approved it.`,
-      declined: `The owner, ${ap.owner}, declined it.`,
-      cancelled: "Cancelled before the owner replied.",
-    }[ap.status];
-    const advice = r
-      ? `<div class="pick">${esc(r.pick)}</div>
-         <ul class="why">${(r.reasons || [r.reason]).slice(0, 3).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
-         <div class="small muted"><b>Runner-up:</b> ${esc(r.runner_up)}</div>`
-      : `<div>The agent made no recommendation.</div>${h ? `<div class="small muted">${esc(h.reason)}. ${h.claimed_by ? `Claimed by ${esc(h.claimed_by)}.` : "Waiting for a person."}</div>` : ""}`;
-    const sec = (label, body) => `<section class="report-sec"><p class="section-label">${label}</p>${body}</section>`;
+    const list = reportList(s, c.id, from), at = list.findIndex((x) => x.id === c.id);
+    const go = (dir, label, ic) => {
+      const t = list[at + dir];
+      return `<button class="btn ghost" type="button" ${t ? `data-conv="${esc(t.id)}" ${from ? `data-from="${esc(from)}"` : ""} data-step="${dir > 0 ? "next" : "prev"}"` : "disabled"}>${dir < 0 ? icon("back") : ""}${label}${dir > 0 ? icon("arrow") : ""}</button>`;
+    };
     showDrawer(`${drawerHead(c.customer, `${channelKind(c)} · ${ago(c.started)}`, from)}
       <div class="drawer-body">
         <section class="report-head">${outcomeChip(c)}<p>${esc(c.summary || c.intent)}</p></section>
-        ${sec("What the customer wanted", `<div class="title">${esc(c.intent)}</div>${ask ? `<div class="small muted">“${esc(ask.text)}”</div>` : ""}`)}
-        ${sec("What the agent recommended", advice)}
-        ${sec("Payment", `<div class="row-head"><span class="title">${o === "paid" ? "Paid by agent" : "Not paid"}</span>${c.amount_cents != null ? `<span class="num">${money(c.amount_cents)}</span><span class="chip">Mock</span>` : `<span class="muted">No purchase attempted</span>`}</div>`)}
-        ${ap ? sec("Owner approval", `<div>${esc(apText)}</div><div class="small muted">${money(ap.amount_cents)} is over the ${money(ap.limit_cents)} limit.</div>`) : ""}
+        <section class="report-sec"><p class="section-label">What the customer wanted</p><div class="title">${esc(c.intent)}</div>${ask ? `<div class="small muted">“${esc(ask.text)}”</div>` : ""}</section>
+        <ol class="timeline" aria-label="Decision timeline">${reportSteps(s, c).map(stepHtml).join("")}</ol>
         <details class="transcript-box"><summary>Transcript <span class="muted">${plural(talk.length, "message")}</span></summary>
           <div class="transcript">${talk.map((e) => `<div class="ev ${e.kind}"><div class="time">${ago(e.t)}</div><div class="bubble">${esc(e.text)}</div></div>`).join("")}</div>
         </details>
-      </div>`, opener);
+      </div>
+      <nav class="pager" aria-label="Conversations">${go(-1, "Previous")}<span class="small muted num">${at + 1} of ${list.length}</span>${go(1, "Next")}</nav>`, opener);
+    $("#drawer").scrollTop = 0;
+    if (step) $(`#drawer [data-step="${step}"]`)?.focus();
     markSelected(from || c.id);
   }
 
@@ -464,7 +504,7 @@
         render(); toast(`Removed ${d.promoRemove}`); $("[data-promo-open]").focus();
       }
       else if (d.cust) openCustomer(d.cust, opener);
-      else if (d.conv) openConversation(d.conv, opener, d.from);
+      else if (d.conv) openConversation(d.conv, opener, d.from, d.step);
     } catch (err) {
       toast(err.message);
     }

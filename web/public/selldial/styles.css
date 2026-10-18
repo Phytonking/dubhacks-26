@@ -436,3 +436,22 @@ a.brand { color: inherit; text-decoration: none; border-radius: var(--radius-con
   .link-btn { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) { .nav-link, .line-btn, .link-btn { transition: none; } }
+
+/* ---------- Report timeline and pager ---------- */
+.timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.step { display: flex; gap: var(--space-xs); position: relative; padding-bottom: var(--space-md); }
+.step:last-child { padding-bottom: 0; }
+.step::before { content: ""; position: absolute; left: 11px; top: 26px; bottom: 2px; width: 1px; background: var(--color-violet); opacity: .5; }
+.step:last-child::before { display: none; }
+.step-mark { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--panel); border: 1px solid currentColor; color: var(--color-violet); }
+.step-mark .icon { width: 12px; height: 12px; }
+.step.ok .step-mark { color: var(--ok); }
+.step.warn .step-mark { color: var(--warn); }
+.step.bad .step-mark { color: var(--bad); }
+.step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-3xs); }
+.step-body .section-label { margin: 0; }
+.step-body .why { margin-top: var(--space-3xs); }
+.step-body .small b { color: var(--text); font-weight: 500; }
+.pager { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); padding: var(--space-xs) 20px; background: var(--panel); border-top: 1px solid var(--line); }
+.pager .btn { min-height: 36px; }
+.pager .btn:disabled { opacity: .4; cursor: default; }

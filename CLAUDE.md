@@ -11,7 +11,8 @@ Right now we are only changing the static console in `web/public/selldial/`. Do 
 
 ## Rules
 
-- Work on the branch `ui/polish`. Do not commit to `main`. Do not push; I will open the pull request myself.
+- Work on the branch `ui/redesign`. Do not commit to `main`. Do not push; I will open the pull request myself.
+- Never commit anything from `.playwright-mcp/`. Save test screenshots outside the repo (the session scratchpad or a temp folder).
 - Do one pass at a time, then stop and show me what changed. Do not expand scope.
 - Dark theme only, with a magenta accent. No light mode, no toggle.
 - T-Mobile's T mark may appear only on the "Log in with T-Mobile" button (the original is in git history: `git show main:web/public/selldial/index.html`). Everywhere else: no T-Mobile logo, marks, wordmark or exact magenta.

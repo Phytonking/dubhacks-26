@@ -217,7 +217,7 @@ window.SELLDIAL_DEMO = {
           "kind": "guard",
           "rule": 3,
           "ok": false,
-          "text": "Held: $1,849.97 is above the owner's $1,000.00 limit. Texted the owner"
+          "text": "Held: $1,849.97 is above the owner's $1,500.00 limit. Texted the owner"
         },
         {
           "t": 6,
@@ -952,7 +952,7 @@ window.SELLDIAL_DEMO = {
     },
     {
       "id": "c_1020",
-      "summary": "Chris bought a iPad Pro 13\". Paid by agent.",
+      "summary": "Chris bought an iPad Pro 13\" with a cellular line. The owner approved it. Paid by agent.",
       "customer": "Chris B.",
       "phone": "•••• 2271",
       "channel": "sms",
@@ -960,9 +960,9 @@ window.SELLDIAL_DEMO = {
       "verified": true,
       "started": 41500,
       "intent": "iPad for design work",
-      "item": "iPad Pro 13\"",
+      "item": "iPad Pro 13\" + cellular line",
       "outcome": "purchased",
-      "amount_cents": 134900,
+      "amount_cents": 154900,
       "saved_cents": 0,
       "recommendation": {
         "pick": "iPad Pro 13\"",
@@ -978,7 +978,7 @@ window.SELLDIAL_DEMO = {
         {
           "t": 41500,
           "kind": "agent",
-          "text": "Good pick. The iPad Pro 13\" comes to $1,349.00. Want me to place the order?"
+          "text": "Good pick. The iPad Pro 13\" comes to $1,549.00. Want me to place the order?"
         },
         {
           "t": 41499,
@@ -987,6 +987,20 @@ window.SELLDIAL_DEMO = {
         },
         {
           "t": 41499,
+          "kind": "guard",
+          "rule": 3,
+          "ok": false,
+          "text": "Held: $1,549.00 is above the owner's $1,500.00 limit. Texted the owner"
+        },
+        {
+          "t": 41495,
+          "kind": "guard",
+          "rule": 3,
+          "ok": true,
+          "text": "Owner replied YES. Checkout released"
+        },
+        {
+          "t": 41495,
           "kind": "agent",
           "text": "Done. Your receipt is on its way by text."
         }
@@ -1017,7 +1031,7 @@ window.SELLDIAL_DEMO = {
       "customer": "Jordan T.",
       "items": "3× iPhone 17 + Go5G family plan",
       "amount_cents": 184997,
-      "limit_cents": 100000,
+      "limit_cents": 150000,
       "owner": "Alex T.",
       "owner_phone": "•••• 0193",
       "status": "texted",
@@ -1026,16 +1040,16 @@ window.SELLDIAL_DEMO = {
     },
     {
       "id": "ap_310",
-      "conversation": "c_1031",
+      "conversation": "c_1020",
       "customer": "Chris B.",
       "items": "iPad Pro 13\" + cellular line",
-      "amount_cents": 134900,
-      "limit_cents": 120000,
+      "amount_cents": 154900,
+      "limit_cents": 150000,
       "owner": "Morgan B.",
       "owner_phone": "•••• 6620",
       "status": "approved",
-      "sent": 96,
-      "resolved": 90,
+      "sent": 41499,
+      "resolved": 41495,
       "checkout": "Visa captured"
     },
     {
@@ -1118,7 +1132,7 @@ window.SELLDIAL_DEMO = {
     }
   ],
   "policy": {
-    "default_owner_limit_cents": 100000,
+    "default_owner_limit_cents": 150000,
     "discounts": [
       {
         "code": "TRADEIN_BOOST",
@@ -1205,7 +1219,7 @@ window.SELLDIAL_DEMO = {
       "actor": "guard",
       "action": "approval.required",
       "conversation": "c_1040",
-      "detail": "184997 > limit 100000"
+      "detail": "184997 > limit 150000"
     },
     {
       "t": 7,
@@ -1278,18 +1292,18 @@ window.SELLDIAL_DEMO = {
       "detail": "battery_replace over iphone_17"
     },
     {
-      "t": 90,
+      "t": 41495,
       "actor": "owner",
       "action": "approval.approved",
-      "conversation": "c_1031",
+      "conversation": "c_1020",
       "detail": "Owner replied YES"
     },
     {
-      "t": 90,
+      "t": 41495,
       "actor": "payments",
       "action": "checkout.capture",
-      "conversation": "c_1031",
-      "detail": "Visa 134900 cents"
+      "conversation": "c_1020",
+      "detail": "Visa 154900 cents"
     },
     {
       "t": 110,
