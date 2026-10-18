@@ -82,20 +82,35 @@
       default: return w(today, tomorrow, "Today", "today");
     }
   }
-  const startedAt = (s, c) => new Date(s.generatedAt || Date.now()).getTime() - c.started * 60000;
+  // One customer is one conversation however often they call, text or buy, so every figure counts the events inside it,
+  // each with its own time (minutes ago). Snapshots without event lists (the demo data) fall back to one event per conversation.
+  const eventsOf = (c) => ({
+    calls: c.calls ?? (c.channel === "voice" ? [c.started] : []),
+    texts: c.inbound ?? (c.channel === "voice" ? [] : [c.started]),
+    sales: c.sales ?? (c.outcome === "purchased" ? [{ t: c.started, kind: "paid", cents: c.amount_cents || 0 }] : c.outcome === "not_paid" ? [{ t: c.started, kind: "not_paid", cents: 0 }] : []),
+    saves: c.saves ?? (c.saved_cents ? [{ t: c.started, cents: c.saved_cents }] : []),
+  });
   function stats(s) {
     const win = homeWindow();
-    const inWin = (c) => { const t = startedAt(s, c); return t >= win.from && t < win.to; };
-    const done = s.conversations.filter((c) => c.status !== "live" && inWin(c));
-    const paid = done.filter((c) => c.outcome === "purchased");
+    const base = new Date(s.generatedAt || Date.now()).getTime();
+    const within = (t) => { const ms = base - t * 60000; return ms >= win.from && ms < win.to; };
+    let calls = 0, texts = 0, paid = 0, paidCents = 0, notPaid = 0, saved = 0;
+    const active = [];
+    for (const c of s.conversations) {
+      const e = eventsOf(c);
+      const callsIn = e.calls.filter(within).length, textsIn = e.texts.filter(within).length;
+      const salesIn = e.sales.filter((x) => within(x.t)), savesIn = e.saves.filter((x) => within(x.t));
+      calls += callsIn; texts += textsIn;
+      for (const x of salesIn) x.kind === "paid" ? (paid++, paidCents += x.cents) : notPaid++;
+      saved += savesIn.reduce((n, x) => n + x.cents, 0);
+      if (callsIn || textsIn || salesIn.length || savesIn.length) active.push(c);
+    }
+    const done = active.filter((c) => c.status !== "live");
     // Open items need the owner whatever day they started on; finished ones follow the range.
     const open = s.conversations.filter((c) => c.status === "awaiting_approval" || c.status === "handoff");
     return {
-      win, done,
-      handled: done.length,
-      paid: paid.length, paidCents: paid.reduce((n, c) => n + c.amount_cents, 0),
-      notPaid: done.filter((c) => outcomeOf(c) === "notpaid").length,
-      saved: done.reduce((n, c) => n + (c.saved_cents || 0), 0),
+      win, done, active, calls, texts, customers: active.length,
+      handled: calls, paid, paidCents, notPaid, saved,
       live: s.conversations.find((c) => c.status === "live"),
       review: [...new Set([...open, ...done.filter(isBad)])].sort((a, b) => a.started - b.started),
     };
@@ -167,13 +182,16 @@
     const days = [];
     for (let t = k.win.from; t < k.win.to && days.length < 31; t = addDays(new Date(t), 1).getTime()) days.push(t);
     if (days.length < 2) return "";
+    const base = new Date(s.generatedAt || Date.now()).getTime();
     const rows = days.map((t) => {
-      const end = addDays(new Date(t), 1).getTime(), mine = k.done.filter((c) => { const x = startedAt(s, c); return x >= t && x < end; });
-      return { t, n: mine.length, paid: mine.filter((c) => c.outcome === "purchased").length };
+      const end = addDays(new Date(t), 1).getTime(), at = (m) => { const ms = base - m * 60000; return ms >= t && ms < end; };
+      let n = 0, paid = 0;
+      for (const c of k.active) { const e = eventsOf(c); n += e.calls.filter(at).length + e.texts.filter(at).length; paid += e.sales.filter((x) => x.kind === "paid" && at(x.t)).length; }
+      return { t, n, paid };
     });
     const max = Math.max(1, ...rows.map((r) => r.n));
-    return `<section class="block"><header class="block-head"><h2>By day</h2></header>
-      <div class="card dbars" role="img" aria-label="Conversations per day">${rows.map((r) => `<div class="dbar" title="${esc(fmtDay(new Date(r.t)))}: ${plural(r.n, "conversation")}, ${r.paid} paid"><span class="dbar-fill"><i style="height:${Math.round((r.n / max) * 100)}%"></i></span><small>${new Date(r.t).getDate()}</small></div>`).join("")}</div></section>`;
+    return `<section class="block"><header class="block-head"><h2>Calls and texts by day</h2></header>
+      <div class="card dbars" role="img" aria-label="Calls and texts per day">${rows.map((r) => `<div class="dbar" title="${esc(fmtDay(new Date(r.t)))}: ${r.n} calls and texts, ${r.paid} paid"><span class="dbar-fill"><i style="height:${Math.round((r.n / max) * 100)}%"></i></span><small>${new Date(r.t).getDate()}</small></div>`).join("")}</div></section>`;
   }
 
   function renderHome(s) {
@@ -191,7 +209,7 @@
         <p class="eyebrow">${hello}, ${esc(profile().name)} <span aria-hidden="true">·</span> ${today}</p>
         <h2 class="hero-line">${lead} <span>${money(k.paidCents)} paid by the agent ${k.win.phrase}.</span></h2>
         <dl class="figures card">
-          ${figure("Calls handled", k.handled, "", "", k.win.label)}${figure("Sales paid", k.paid, "accent", "", money(k.paidCents))}${figure("Not paid", k.notPaid, "bad", "bad", "after a purchase attempt")}${figure("Saved for customers", money(k.saved), "save", "ok", "from advice and offers")}
+          ${figure("Calls handled", k.calls, "", "", `${plural(k.customers, "customer")}${k.texts ? ` · ${plural(k.texts, "text")}` : ""}`)}${figure("Sales paid", k.paid, "accent", "", money(k.paidCents))}${figure("Not paid", k.notPaid, "bad", "bad", "after a purchase attempt")}${figure("Saved for customers", money(k.saved), "save", "ok", "from advice and offers")}
         </dl>
         ${k.live ? `<p class="active-line small">${icon("phone")}<b>Active now</b><span class="muted">${esc(k.live.customer)} is on a ${esc(CHANNEL[k.live.channel] === "Voice" ? "call" : "text thread")} about ${esc(k.live.intent.charAt(0).toLowerCase() + k.live.intent.slice(1))}.</span></p>` : ""}
       </section>

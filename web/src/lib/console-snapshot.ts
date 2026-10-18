@@ -55,7 +55,7 @@ export async function buildSnapshot() {
   const convs = await col("conversations").find({ orgId, lastMessageAt: { $gte: since } }).sort({ lastMessageAt: -1 }).limit(500).toArray();
   const convIds = convs.map((c) => c._id);
   const [callDocs, contacts, allContacts, msgs, toolCalls, turns, notes, approvalDocs, handoffDocs, promoDocs, orderDocs, agent, lines, ownerUser, quoteDocs] = await Promise.all([
-    col("calls").find({ orgId, conversationId: { $in: convIds }, summary: { $nin: ["", null] } }).sort({ startedAt: -1 }).toArray(),
+    col("calls").find({ orgId, conversationId: { $in: convIds }, startedAt: { $gte: since } }).sort({ startedAt: -1 }).toArray(),
     col("contacts").find({ orgId, _id: { $in: convs.map((c) => c.contactId) } }).toArray(),
     col("contacts").find({ orgId }).sort({ createdAt: -1 }).limit(500).toArray(),
     col("messages").find({ orgId, conversationId: { $in: convIds }, ts: { $gte: since } }).sort({ ts: 1 }).limit(5000).toArray(),
@@ -83,7 +83,8 @@ export async function buildSnapshot() {
   const turnsBy = group(turns, "conversationId");
   const notesBy = group(notes.filter((n) => n.conversationId), "conversationId");
   const approvalBy = group(approvalDocs, "conversationId");
-  const callBy = group(callDocs, "conversationId");
+  const callBy = group(callDocs.filter((c) => c.summary), "conversationId");   // summary text comes from calls that have one
+  const allCallsBy = group(callDocs, "conversationId");   // every call, for counting
   const orderBy = group(orderDocs, "conversationId");
   const quoteBy = group(quoteDocs, "conversationId");
   const handoffBy = new Map(handoffDocs.map((h) => [idStr(h.conversationId), h]));
@@ -101,7 +102,8 @@ export async function buildSnapshot() {
     const turnRows = turnsBy.get(id) ?? [];
     const cNotes = notesBy.get(id) ?? [];
     const approval = approvalBy.get(id)?.[0];
-    const order = orderBy.get(id)?.[0];
+    const orders = orderBy.get(id) ?? [];
+    const order = orders[0];
     const quote = quoteBy.get(id)?.[0];   // newest checkout quote for this conversation
     const deal = cNotes.find((n) => n.kind === "deal");
     const verified = Boolean(contact?.verifiedPhone) || turnRows.some((t) => (t.toolCalls ?? []).some((x: Document) => x.name === "verify_check_code" && x.ok)) || calls.some((t) => t.tool === "verify_check_code" && t.status === "ok");
@@ -137,6 +139,20 @@ export async function buildSnapshot() {
       : quoteWaiting ? "awaiting_approval"
       : deal && !order && !quoteFailed ? "awaiting_approval"
       : now - lastMsgAt < LIVE_MIN * 60000 ? "live" : "closed";
+    // One customer = one conversation, however often they call, text or buy. So the figures count events, each with its own time:
+    // every call, every inbound text, every paid quote or order (sale), every failed or declined quote (not paid), every redeemed credit (saved).
+    const callTimes = (allCallsBy.get(id) ?? []).map((k) => minsAgo(k.startedAt, now));
+    const inboundTimes = thread.filter((m) => m.direction === "in").map((m) => minsAgo(m.ts, now));
+    const cQuotes = quoteBy.get(id) ?? [];
+    const quoted = new Set(cQuotes.flatMap((q) => (q.status === "paid" ? [idStr(q._id)] : [])));
+    const sales = [
+      ...cQuotes.filter((q) => q.status === "paid").map((q) => ({ t: minsAgo(q.paidAt ?? q.updatedAt, now), kind: "paid", cents: q.dueTodayCents ?? 0 })),
+      // orders the owner confirmed outside checkout (no quote behind them)
+      ...orders.filter((o) => !(o.quoteIds ?? []).some((qid: ObjectId) => quoted.has(idStr(qid)))).map((o) => ({ t: minsAgo(o.createdAt, now), kind: "paid", cents: o.amountCents ?? 0 })),
+      ...cQuotes.filter((q) => q.status === "payment_failed" || q.status === "declined").map((q) => ({ t: minsAgo(q.updatedAt ?? q.createdAt, now), kind: "not_paid", cents: q.dueTodayCents ?? 0 })),
+    ];
+    const saves: { t: number; cents: number }[] = (contact?.memory?.offers ?? []).filter((o: Document) => o.status === "redeemed")
+      .map((o: Document) => ({ t: minsAgo(o.redeemedAt ?? o.at, now), cents: (o.creditCents ?? 0) * (o.months ?? 1) }));
     const firstIn = thread.find((m) => m.direction === "in");
     const intent = clip(firstIn?.body ?? c.lastMessagePreview ?? "", 80);
     const name = shortName(contact?.name ?? "");
@@ -151,7 +167,12 @@ export async function buildSnapshot() {
       intent,
       outcome: outcomeSale,
       amount_cents: order ? order.amountCents ?? 0 : quote ? quote.dueTodayCents ?? null : null,
-      saved_cents: 0,
+      saved_cents: saves.reduce((n, x) => n + x.cents, 0),
+      last_t: minsAgo(c.lastMessageAt, now),
+      calls: callTimes,
+      inbound: inboundTimes,
+      sales,
+      saves,
       item: order?.item ?? quote?.summary ?? deal?.message?.match(/on ([^.]+?)\)/)?.[1] ?? "",
       // what the owner can do about a pending order (the console shows Approve / Decline, or Mark paid for a deal confirmed outside checkout)
       pending: order ? null : approval?.status === "texted" ? { kind: "approval", approval_id: idStr(approval._id), amount_cents: approval.amountCents ?? 0, limit_cents: approval.limitCents ?? 0, summary: approval.items ?? "" }
