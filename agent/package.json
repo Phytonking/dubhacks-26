@@ -12,7 +12,8 @@
     "conv-suite": "tsx --env-file=../web/.env.local scripts/conv-suite.ts",
     "test": "tsx scripts/identity-test.ts && tsx scripts/engine-test.ts && tsx scripts/messenger-test.ts && tsx scripts/scheduler-test.ts && tsx scripts/voice-test.ts && tsx scripts/summarizer-test.ts && tsx scripts/reach-test.ts && tsx scripts/safety-test.ts && tsx scripts/intake-test.ts && tsx scripts/offers-test.ts && tsx scripts/handoff-test.ts && tsx scripts/checkout-test.ts && tsx scripts/inbound-test.ts && tsx scripts/account-test.ts",
     "checkout-test": "tsx scripts/checkout-test.ts",
-    "checkout-eval": "tsx --env-file=../web/.env.local scripts/checkout-live-eval.ts"
+    "checkout-eval": "tsx --env-file=../web/.env.local scripts/checkout-live-eval.ts",
+    "account-eval": "tsx --env-file=../web/.env.local scripts/account-live-eval.ts"
   },
   "dependencies": {
     "@daytona/sdk": "latest",
