@@ -650,3 +650,15 @@ input, select, textarea { caret-color: var(--color-accent); }
 .ev.owner { flex-direction: row-reverse; }
 .ev.owner .time { text-align: left; }
 .ev.owner .bubble { background: var(--panel-2); border: 1px dashed var(--color-edge); }
+
+/* ---------- Drawer notes (agent sidebar) ---------- */
+.sub { display: flex; flex-direction: column; gap: var(--space-3xs); margin-top: var(--space-xs); }
+.sub-label { margin: 0; font-size: 12px; font-weight: 600; color: var(--text); }
+.sub-label .tag { margin-left: 6px; font-weight: 400; color: var(--muted); }
+.sub .small { line-height: 1.55; }
+.notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.notes li { position: relative; padding: 8px 12px 8px 14px; border-radius: var(--radius-control); background: var(--panel-2); font-size: 13.5px; line-height: 1.5; }
+.notes li::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--color-accent-text, var(--muted)); }
+.notes.warn li::before { background: var(--warn, #d9822b); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips .chip { font-size: 12.5px; }

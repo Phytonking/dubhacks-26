@@ -43,15 +43,14 @@
   const profile = () => ({ name: "Eshaan" });
 
   // One outcome per conversation. A conversation waiting on the owner is Pending, not Not paid.
-  const OUTCOMES = { paid: "Paid", pending: "Pending", notpaid: "Not paid", handoff: "Handed off", waited: "Advised to wait", nosale: "No sale" };
-  const OUTCOME_DOT = { paid: "ok", waited: "ok", pending: "warn", notpaid: "bad", handoff: "bad", nosale: "off" };
+  const OUTCOMES = { paid: "Paid", pending: "Pending", notpaid: "Not paid", handoff: "Handed off", waited: "Advised to wait" };
+  const OUTCOME_DOT = { paid: "ok", waited: "ok", pending: "warn", notpaid: "bad", handoff: "bad" };
   function outcomeOf(c) {
     if (c.outcome === "purchased") return "paid";
     if (c.outcome === "waited") return "waited";
     if (c.outcome === "handoff" || c.status === "handoff") return "handoff";
     if (c.status === "awaiting_approval") return "pending";
-    if (c.outcome === "not_paid") return "notpaid";
-    return "nosale";   // closed with no purchase attempt: a question answered, not a failed sale
+    return "notpaid";
   }
   function outcomeChip(c) {
     const o = outcomeOf(c);
@@ -96,14 +95,12 @@
   }
 
   // A call "went badly" when it ended unpaid after a purchase attempt, was handed off, or failed verification.
-  const isBad = (c) => c.outcome === "not_paid" || c.outcome === "handoff" || c.status === "handoff" || c.status === "awaiting_approval";
-  const reviewKind = (c) => c.status === "awaiting_approval" ? "Needs your approval" : c.outcome === "not_paid" ? "Not paid" : c.verified ? "Handed off" : "Failed verification";
+  const isBad = (c) => c.outcome === "not_paid" || c.outcome === "handoff" || c.status === "handoff";
+  const reviewKind = (c) => c.outcome === "not_paid" ? "Not paid" : c.verified ? "Handed off" : "Failed verification";
   function reviewReason(s, c) {
     const h = s.handoffs.find((x) => x.conversation === c.id);
     if (h) return h.reason;
     const a = s.approvals.find((x) => x.conversation === c.id && x.status === "declined");
-    const p = s.approvals.find((x) => x.conversation === c.id && x.status === "texted");
-    if (p) return `${p.items || "Order"} · ${money(p.amount_cents)}/mo, waiting on ${p.owner}`;
     if (a) return `Owner declined ${money(a.amount_cents)}, over the ${money(a.limit_cents)} limit`;
     return c.intent;
   }
@@ -113,7 +110,7 @@
   function reviewRow(s, c) {
     return `<li class="line review-line">
       <div class="line-who">${avatar(c.customer)}<div class="line-main">
-        <div class="row-head"><span class="title">${esc(c.customer)}</span><span class="chip"><span class="dot ${c.status === "awaiting_approval" ? "warn" : "bad"}"></span>${reviewKind(c)}</span></div>
+        <div class="row-head"><span class="title">${esc(c.customer)}</span><span class="chip"><span class="dot bad"></span>${reviewKind(c)}</span></div>
         <div class="small muted">${esc(reviewReason(s, c))}</div>
       </div></div>
       <div class="line-side stack"><span class="t-mono">${ago(c.started)}</span>${arrowLink("Open", `data-conv="${esc(c.id)}"`, `Open conversation with ${c.customer}`)}</div>
@@ -481,6 +478,22 @@
     : `<p class="empty">No messages yet.</p>`;
   let openConvId = null;
 
+  // What is holding an order up, and what the owner can do about it.
+  function pendingSection(c) {
+    const p = c.pending;
+    if (!p || c.outcome === "purchased") return "";
+    const sum = esc(p.summary || c.item || "The customer's order");
+    if (p.kind === "approval") return `<section class="report-sec" aria-label="Needs approval"><p class="section-label">Needs your approval</p>
+          <p class="small muted">${sum}: ${money(p.amount_cents)} due today, over your ${money(p.limit_cents)} limit. The customer cannot pay until you approve.</p>
+          <div class="pf-actions"><button class="btn primary" type="button" data-approve="${esc(p.approval_id)}">Approve</button><button class="btn ghost" type="button" data-decline="${esc(p.approval_id)}">Decline</button></div></section>`;
+    if (p.kind === "payment") return `<section class="report-sec" aria-label="Waiting for payment"><p class="section-label">Waiting for payment</p>
+          <p class="small muted">${sum}: ${money(p.amount_cents)} due today. The customer has a private payment link. This becomes a sale when they pay.</p></section>`;
+    return `<section class="report-sec" aria-label="Pending order"><p class="section-label">Pending order</p>
+          <p class="small muted">${sum} Once it is paid, confirm it here so it counts as a sale.</p>
+          <form class="pf-actions" data-mark-paid-form="${esc(c.id)}"><label class="money-input"><span aria-hidden="true">$</span><input name="amount" type="number" min="0.01" step="any" inputmode="decimal" aria-label="Amount paid in dollars" required></label>
+          <button class="btn primary" type="submit">Mark paid</button></form></section>`;
+  }
+
   function openConversation(id, opener, from, step) {
     const s = api.state, c = s.conversations.find((x) => x.id === id);
     if (!c || c.status === "live") return toast("That conversation isn't in this snapshot.");
@@ -494,6 +507,7 @@
     showDrawer(`${drawerHead(c.customer, `${channelKind(c)} · ${ago(c.started)}`, from)}
       <div class="drawer-body">
         <section class="report-head"><p class="section-label">Summary</p><p class="summary">${esc(c.summary || c.intent)}</p></section>
+        ${pendingSection(c)}
         <section class="transcript-main" aria-label="Transcript">
           <p class="section-label">Transcript <span class="muted">${plural(talk.length, "message")}</span></p>
           <div class="transcript" id="transcript">${transcriptHtml(talk)}</div>
@@ -511,6 +525,7 @@
 
   // T-Mobile sandbox household details (synced from Atlas). Synthetic data; backstory is invented colour, not an account fact.
   const usd = (c) => (c == null ? "—" : `$${(c / 100).toFixed(2)}`);
+  const notes = (items, kind = "") => `<ul class="notes ${kind}">${items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
   function tmoSections(t) {
     const row = (k, v) => (v == null || v === "" ? "" : `<div><span>${esc(k)}</span>${v}</div>`);
     const tenure = t.tenure_months != null ? `${Math.floor(t.tenure_months / 12)}y ${t.tenure_months % 12}m` : "";
@@ -528,11 +543,11 @@
         ${t.persona ? `<section class="report-sec"><p class="section-label">Demo persona · ${esc(String(t.persona.theme).replaceAll("_", " "))}</p><p><b>${esc(t.persona.title)}</b></p><p class="muted">${esc(t.persona.scenario)}</p></section>` : ""}
         <section class="report-sec"><p class="section-label">How the agent sees them</p>
           <div class="meta cust">${row("Relationship", esc(t.relationship || ""))}${row("Language", esc(t.language || ""))}${row("Tone", esc(t.tone || ""))}${row("Prefers", esc(t.channel_pref || ""))}</div>
-          ${t.sensitivities?.length ? `<ul class="list">${t.sensitivities.map((x) => `<li><span class="small">${esc(x)}</span></li>`).join("")}</ul>` : ""}
-          ${t.backstory ? `<p class="small muted">Backstory (${t.backstory_source === "llm" ? "LLM-written" : "rule-based"}, invented): ${esc(t.backstory)}</p>` : ""}
-          ${t.facts?.length ? `<p class="small muted">They told us: ${t.facts.map(esc).join(" · ")}</p>` : ""}
+          ${t.sensitivities?.length ? `<div class="sub"><p class="sub-label">Handle with care</p>${notes(t.sensitivities, "warn")}</div>` : ""}
+          ${t.facts?.length ? `<div class="sub"><p class="sub-label">They told us</p><div class="chips">${t.facts.map((x) => `<span class="chip">${esc(x)}</span>`).join("")}</div></div>` : ""}
+          ${t.backstory ? `<div class="sub"><p class="sub-label">Backstory <span class="tag">${t.backstory_source === "llm" ? "AI-written" : "auto-generated"} · invented</span></p><p class="small muted">${esc(t.backstory)}</p></div>` : ""}
         </section>
-        ${t.voice_notes?.length ? `<section class="report-sec"><p class="section-label">Voice agent notes</p><ul class="list">${t.voice_notes.map((x) => `<li><span class="small">${esc(x)}</span></li>`).join("")}</ul></section>` : ""}`;
+        ${t.voice_notes?.length ? `<section class="report-sec"><p class="section-label">Voice agent notes</p>${notes(t.voice_notes)}</section>` : ""}`;
   }
 
   function openCustomer(name, opener) {
@@ -597,7 +612,7 @@
   }
 
   document.addEventListener("click", async (e) => {
-    const el = e.target.closest("[data-menu],[data-go],[data-close],[data-conv],[data-cust],[data-conv-clear],[data-cust-clear],[data-sale-clear],[data-sale-tab],[data-promo-open],[data-promo-cancel],[data-promo-remove]");
+    const el = e.target.closest("[data-menu],[data-go],[data-close],[data-conv],[data-cust],[data-conv-clear],[data-cust-clear],[data-sale-clear],[data-sale-tab],[data-promo-open],[data-promo-cancel],[data-promo-remove],[data-approve],[data-decline]");
     if (!el) return;
     const d = el.dataset;
     const opener = el.matches("tr") ? el.querySelector(".row-link") || el : el;
@@ -615,6 +630,11 @@
         await api.removePromo(d.promoRemove);
         delete ui.set[`offer:${d.promoRemove}`];
         render(); toast(`Removed ${d.promoRemove}`); $("[data-promo-open]").focus();
+      }
+      else if (d.approve || d.decline) {
+        const id = d.approve || d.decline;
+        await api.decideApproval(id, d.approve ? "approve" : "decline");
+        closeDrawer(); render(); toast(d.approve ? "Approved. The customer can now pay." : "Declined");
       }
       else if (d.cust) openCustomer(d.cust, opener);
       else if (d.conv) openConversation(d.conv, opener, d.from, d.step);
@@ -672,6 +692,18 @@
     el.setSelectionRange(pos, pos);
   });
 
+  document.addEventListener("submit", async (e) => {
+    const f = e.target.closest("[data-mark-paid-form]");
+    if (!f) return;
+    e.preventDefault();
+    const dollars = Number(new FormData(f).get("amount"));
+    if (!(dollars > 0)) return toast("Enter the amount that was paid");
+    const id = f.dataset.markPaidForm, c = api.state.conversations.find((x) => x.id === id);
+    try {
+      await api.markPaid(id, { amount_cents: Math.round(dollars * 100), item: c?.item });
+      closeDrawer(); render(); toast("Recorded as a paid sale");
+    } catch (err) { toast(err.message); }
+  });
   $("#drawer-backdrop").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { if ($(".nav").classList.contains("open")) { setMenu(false); return $("[data-menu]").focus(); } return closeDrawer(); }

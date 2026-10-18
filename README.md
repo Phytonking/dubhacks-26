@@ -58,9 +58,9 @@ The seed only touches the T-Mobile org. Sunrise Bike Shop data is left alone.
 
 ```bash
 cd agent && pnpm install
-pnpm test         # offline suite: identity, engine, messenger/codes/forms, scheduler, voice, summarizer, reach, safety, intake, offers, handoff
+pnpm test         # 12 offline suites: identity, engine, messenger/codes/forms, scheduler, voice, summarizer, reach, safety, intake, offers, handoff, checkout
 pnpm live         # live runner (needs web/.env.local): Photon events -> scheduler lanes -> engine -> replies. ENGINE=legacy = old sandbox path
-pnpm conv-suite   # conversation test set
+pnpm conv-suite   # generated conversations against the real model (uses tokens; not part of pnpm test)
 pnpm typecheck
 ```
 
@@ -75,4 +75,10 @@ The e2e test needs these in `../web/.env.local`: `DAYTONA_API_KEY`, `MODAL_API_E
 
 Platform secrets (Photon, Daytona, Modal, Mongo) stay on the host. Only an allow-listed env goes into a sandbox.
 
+ElevenLabs voice setup: `agent/scripts/elevenlabs-setup.mts`. Why a customer can be sent to a person, and the guard: `docs/AGENT-MASTER.html` section 9e; audit with `agent/scripts/handoff-audit.mts`.
+
 Secure forms live in `web/`: `/f/<token>` is the public page, `/forms` is the owner view behind `FORMS_ADMIN_PASSWORD`. All environment variables are listed in `web/.env.example`.
+
+## Sales and checkout
+
+The agent can quote, text a one-time secure payment link, and record the paid order. Card details never go through chat. See `docs/CHECKOUT.md` (flow, card-data rules, sandbox test cards). Tests: `cd agent && pnpm checkout-test`.

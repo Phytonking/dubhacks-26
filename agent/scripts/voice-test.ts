@@ -83,7 +83,7 @@ await t("a retried request (ElevenLabs retries) does not duplicate the caller's 
   ok((await db.collection("messages").countDocuments({ channelMsgId: "el:conv_1:u1" })) === 1, "u1 once");
 });
 await t("Photon already logged the call: the ElevenLabs conversation is attached to THAT call, not a second record", async () => {
-  await db.collection("calls").insertOne({ orgId, contactId: kit.contactId, conversationId: kit.conversationId, direction: "in", provider: "photon", providerCallId: "pho_call_1", status: "active", startedAt: new Date(kit.now.t.getTime() - 5000), endedAt: null, durationSec: 0, recordingUrl: null, summary: "", outcome: "", line: LINE, peer: CALLER, createdAt: kit.now.t } as never);
+  await db.collection("calls").insertOne({ orgId, contactId: kit.contactId, conversationId: kit.conversationId, direction: "in", provider: "photon", providerCallId: "pho_call_1", status: "active", startedAt: new Date(Date.now() - 5000), endedAt: null, durationSec: 0, recordingUrl: null, summary: "", outcome: "", line: LINE, peer: CALLER, createdAt: kit.now.t } as never);
   llm.i = 0; await sseCall(body("conv_2", "Hello?"));
   const photon: any = await db.collection("calls").findOne({ providerCallId: "pho_call_1" });
   ok(photon.providerConversationId === "conv_2", "linked: " + JSON.stringify(photon.providerConversationId));

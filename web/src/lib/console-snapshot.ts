@@ -54,7 +54,7 @@ export async function buildSnapshot() {
 
   const convs = await col("conversations").find({ orgId, lastMessageAt: { $gte: since } }).sort({ lastMessageAt: -1 }).limit(150).toArray();
   const convIds = convs.map((c) => c._id);
-  const [callDocs, contacts, allContacts, msgs, toolCalls, turns, notes, approvalDocs, handoffDocs, promoDocs, orderDocs, agent, lines, ownerUser] = await Promise.all([
+  const [callDocs, contacts, allContacts, msgs, toolCalls, turns, notes, approvalDocs, handoffDocs, promoDocs, orderDocs, agent, lines, ownerUser, quoteDocs] = await Promise.all([
     col("calls").find({ orgId, conversationId: { $in: convIds }, summary: { $nin: ["", null] } }).sort({ startedAt: -1 }).toArray(),
     col("contacts").find({ orgId, _id: { $in: convs.map((c) => c.contactId) } }).toArray(),
     col("contacts").find({ orgId }).sort({ createdAt: -1 }).limit(500).toArray(),
@@ -69,6 +69,7 @@ export async function buildSnapshot() {
     col("agents").findOne({ orgId }),
     col("channel_lines").find({ orgId, status: "active" }).toArray(),
     col("users").findOne({ orgId, role: "owner" }),
+    col("checkout_quotes").find({ orgId, conversationId: { $in: convIds } }).sort({ createdAt: -1, _id: -1 }).toArray(),
   ]);
 
   const contactById = new Map(contacts.map((c) => [idStr(c._id), c]));
@@ -84,6 +85,7 @@ export async function buildSnapshot() {
   const approvalBy = group(approvalDocs, "conversationId");
   const callBy = group(callDocs, "conversationId");
   const orderBy = group(orderDocs, "conversationId");
+  const quoteBy = group(quoteDocs, "conversationId");
   const handoffBy = new Map(handoffDocs.map((h) => [idStr(h.conversationId), h]));
 
   const guardBlocks = new Map<number, number>();
@@ -99,8 +101,8 @@ export async function buildSnapshot() {
     const turnRows = turnsBy.get(id) ?? [];
     const cNotes = notesBy.get(id) ?? [];
     const approval = approvalBy.get(id)?.[0];
-    const orders = orderBy.get(id) ?? [];
-    const order = orders.find((o) => o.status !== "cancelled") ?? orders[0];   // the live order, else the cancelled one
+    const order = orderBy.get(id)?.[0];
+    const quote = quoteBy.get(id)?.[0];   // newest checkout quote for this conversation
     const deal = cNotes.find((n) => n.kind === "deal");
     const verified = Boolean(contact?.verifiedPhone) || turnRows.some((t) => (t.toolCalls ?? []).some((x: Document) => x.name === "verify_check_code" && x.ok)) || calls.some((t) => t.tool === "verify_check_code" && t.status === "ok");
 
@@ -126,19 +128,14 @@ export async function buildSnapshot() {
     events.sort((a, b) => a.at - b.at);
 
     const lastMsgAt = new Date(c.lastMessageAt).getTime();
-    // A purchase was attempted when an order exists or the owner-approval step was reached and then failed.
-    const failedApproval = order?.status === "cancelled" || (approval && ["cancelled", "declined", "denied", "expired", "failed"].includes(approval.status));
-    const paid = order != null && !["pending", "cancelled"].includes(order.status);   // the agent records an accepted deal as a pending order until the team finishes it
-    const outcomeSale = paid ? "purchased" : failedApproval ? "not_paid" : null;
-    // Saved for the customer: credit the customer accepted in this conversation, times the months it runs.
-    const dealAt = deal ? new Date(deal.createdAt).getTime() : null;
-    const savedCents = order && order.status !== "cancelled" && order.creditCents ? order.creditCents * (order.months ?? 1)
-      : dealAt == null ? 0 : (contact?.memory?.offers ?? [])
-      .filter((o: Document) => o.status === "accepted" && Math.abs(new Date(o.at).getTime() - dealAt) < 60_000)
-      .reduce((n: number, o: Document) => n + (o.creditCents ?? 0) * (o.months ?? 1), 0);
+    // A quote that was not paid is a purchase attempt that failed ("Not paid"); one still waiting (owner approval or the customer's card) is Pending.
+    const quoteWaiting = !order && (quote?.status === "open" || quote?.status === "approved" || quote?.status === "awaiting_approval");
+    const quoteFailed = !order && (quote?.status === "payment_failed" || quote?.status === "declined");
+    const outcomeSale = order ? "purchased" : quoteFailed ? "not_paid" : null;
     const status = c.mode === "human" ? "handoff"
       : approval?.status === "texted" ? "awaiting_approval"
-      : deal && !paid ? "awaiting_approval"
+      : quoteWaiting ? "awaiting_approval"
+      : deal && !order && !quoteFailed ? "awaiting_approval"
       : now - lastMsgAt < LIVE_MIN * 60000 ? "live" : "closed";
     const firstIn = thread.find((m) => m.direction === "in");
     const intent = clip(firstIn?.body ?? c.lastMessagePreview ?? "", 80);
@@ -153,9 +150,13 @@ export async function buildSnapshot() {
       started: minsAgo(thread[0]?.ts ?? c.lastMessageAt, now),
       intent,
       outcome: outcomeSale,
-      amount_cents: order ? order.amountCents ?? 0 : null,
-      saved_cents: savedCents,
-      item: order?.items ?? order?.item ?? deal?.message?.match(/on ([^.]+?)\)/)?.[1] ?? "",
+      amount_cents: order ? order.amountCents ?? 0 : quote ? quote.dueTodayCents ?? null : null,
+      saved_cents: 0,
+      item: order?.item ?? quote?.summary ?? deal?.message?.match(/on ([^.]+?)\)/)?.[1] ?? "",
+      // what the owner can do about a pending order (the console shows Approve / Decline, or Mark paid for a deal confirmed outside checkout)
+      pending: order ? null : approval?.status === "texted" ? { kind: "approval", approval_id: idStr(approval._id), amount_cents: approval.amountCents ?? 0, limit_cents: approval.limitCents ?? 0, summary: approval.items ?? "" }
+        : quoteWaiting ? { kind: "payment", amount_cents: quote.dueTodayCents ?? 0, summary: quote.summary ?? "" }
+        : deal && !quoteFailed ? { kind: "deal", amount_cents: null, summary: deal.message ?? "" } : null,
       summary: callBy.get(id)?.[0]?.summary ?? summarize(thread, c.lastMessagePreview),
       recommendation: null,
       region: contact?.region ?? contact?.facts?.find?.((f: Document) => /^region:/i.test(f.text))?.text.slice(7).trim() ?? "Unknown",
@@ -199,6 +200,7 @@ export async function buildSnapshot() {
   const audit = [
     ...toolCalls.map((t) => ({ at: new Date(t.ts).getTime(), actor: "agent", action: t.tool, conversation: idStr(t.conversationId), detail: t.status })),
     ...turns.flatMap((t) => (t.toolCalls ?? []).map((x: Document) => ({ at: new Date(t.startedAt).getTime(), actor: "agent", action: x.name, conversation: idStr(t.conversationId), detail: x.ok ? "ok" : "failed" }))),
+    ...orderDocs.map((o) => ({ at: new Date(o.updatedAt ?? o.createdAt).getTime(), actor: o.source === "owner_confirmed" ? "human" : "agent", action: "order.paid", conversation: idStr(o.conversationId), detail: o.item ?? "" })),
     ...approvalDocs.filter((a) => a.resolvedAt).map((a) => ({ at: new Date(a.resolvedAt).getTime(), actor: a.resolvedBy ?? "human", action: `approval.${a.status}`, conversation: idStr(a.conversationId), detail: a.checkout ?? "" })),
   ].sort((a, b) => b.at - a.at).slice(0, 60).map(({ at, ...e }) => ({ t: minsAgo(new Date(at), now), ...e }));
 
@@ -238,7 +240,7 @@ export async function fingerprint(): Promise<string> {
   const db = await getDb();
   const org = await getCurrentOrg();
   const parts = await Promise.all(
-    ([["messages", "ts"], ["conversations", "lastMessageAt"], ["tool_calls", "ts"], ["agent_turns", "startedAt"], ["notifications", "createdAt"], ["approvals", "updatedAt"], ["handoffs", "updatedAt"], ["promos", "updatedAt"], ["inbound_events", "receivedAt"], ["orders", "createdAt"], ["contacts", "createdAt"]] as const).map(async ([name, field]) => {
+    ([["messages", "ts"], ["conversations", "lastMessageAt"], ["tool_calls", "ts"], ["agent_turns", "startedAt"], ["notifications", "createdAt"], ["approvals", "updatedAt"], ["handoffs", "updatedAt"], ["promos", "updatedAt"], ["orders", "updatedAt"], ["checkout_quotes", "updatedAt"], ["payments", "createdAt"], ["contacts", "createdAt"]] as const).map(async ([name, field]) => {
       const c = db.collection<Document>(name);
       const [top, n] = await Promise.all([c.find({ orgId: org._id }).sort({ [field]: -1 }).limit(1).project({ [field]: 1 }).next(), c.countDocuments({ orgId: org._id })]);
       return `${name}:${n}:${top ? new Date(top[field]).getTime() : 0}`;

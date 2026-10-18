@@ -96,6 +96,26 @@ window.SelldialAPI = (() => {
       audit("human", "approval.cancelled", ap.conversation, "Visa hold released");
     },
 
+    // Owner decision on an over-limit order. Approving lets the agent send the customer their payment link.
+    async decideApproval(id, decision) {
+      await post(`/api/approvals/${id}/${decision}`);
+      if (mode === "live") return refresh();
+      const ap = state.approvals.find((a) => a.id === id);
+      if (ap) { ap.status = decision === "approve" ? "approved" : "declined"; ap.resolved = 0; }
+      const c = state.conversations.find((x) => x.id === ap?.conversation);
+      if (c) { c.pending = null; if (decision === "decline") c.status = "closed"; }
+      audit("human", `approval.${decision === "approve" ? "approved" : "declined"}`, ap?.conversation || "-", "");
+    },
+
+    // Confirm a pending deal was paid: the backend records the order, which the console counts as a sale.
+    async markPaid(conversationId, { amount_cents, item }) {
+      await post(`/api/conversations/${conversationId}/order`, { amount_cents, item });
+      if (mode === "live") return refresh();
+      const c = state.conversations.find((x) => x.id === conversationId);
+      c.outcome = "purchased"; c.status = "closed"; c.amount_cents = amount_cents; c.item = item || c.item;
+      audit("human", "order.paid", conversationId, c.item || "");
+    },
+
     async claimHandoff(id, agent) {
       await post(`/api/handoffs/${id}/claim`, { agent });
       if (mode === "live") return refresh();

@@ -6,7 +6,7 @@ import { isOptedOut } from "./optout";
 
 // Every outbound text that is not a direct reply goes through here, so consent, opt-outs, rate limits, redaction and channel choice
 // live in ONE place. The destination always comes from the contact's own record, never from the caller of send().
-export type Purpose = "reply" | "otp" | "form_link" | "info";
+export type Purpose = "reply" | "otp" | "form_link" | "payment_link" | "info";
 export type Readiness = (channel: ChannelId, c: { orgId: ObjectId; contact: any; conversationId: ObjectId; address: string }) => Promise<{ ok: boolean; reason?: string }>;
 export type MessengerCfg = {
   adapters: Partial<Record<ChannelId, ChannelAdapter>>;
@@ -25,7 +25,7 @@ export type SendOutcome =
   | { ok: true; channel: ChannelId; messageId: ObjectId; duplicate?: boolean }
   | { ok: false; error: "not_found" | "opted_out" | "no_consent" | "rate_limited" | "no_channel" | "send_failed"; detail?: string };
 
-const PROACTIVE: Purpose[] = ["otp", "form_link", "info"];
+const PROACTIVE: Purpose[] = ["otp", "form_link", "payment_link", "info"];
 const phoneOf = (contact: any): string | null => (contact.handles ?? []).map((h: any) => h.address).find((a: string) => /^\+\d{8,15}$/.test(a)) ?? null;
 
 export class Messenger {

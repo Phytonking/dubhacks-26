@@ -1,6 +1,6 @@
 import type { Db, Document } from "mongodb";
-import { tmoSpecs } from "./tmo-schema";
 import { agentSpecs } from "./agent-schema";
+import { tmoSpecs } from "./tmo-schema";
 
 // Single source of truth for collection validators + indexes.
 // Applied idempotently by `pnpm db:setup` (and by the seed script).
@@ -213,6 +213,14 @@ export const specs: CollectionSpec[] = [
   },
   ...tmoSpecs, // T-Mobile sandbox data (tmo-schema.ts)
   ...agentSpecs, // verification, opt-outs, turn log, notifications, secure forms (agent-schema.ts)
+  {
+    // sales the console counts (public/selldial); written when a pending deal is confirmed paid (console-actions.ts markOrderPaid)
+    name: "orders",
+    schema: obj(["orgId", "conversationId", "amountCents", "status", "createdAt"], {
+      orgId: oid, conversationId: oid, contactId: oidOrNull, amountCents: num, item: str, status: en("paid", "refunded"), source: str, createdAt: date, updatedAt: date,
+    }),
+    indexes: [{ keys: { orgId: 1, conversationId: 1 }, unique: true }, { keys: { orgId: 1, createdAt: -1 } }],
+  },
 ];
 
 /** Create missing collections, (re)apply validators, ensure indexes. Safe to re-run. */

@@ -1,5 +1,6 @@
 import { ObjectId, type Document } from "mongodb";
 import { getDb } from "./db";
+import { resolveApproval } from "./checkout-core";
 import { getCurrentOrg } from "./queries";
 
 // Owner actions from the console. The agent's outbound texting reads these collections;
@@ -21,13 +22,11 @@ export async function resendApproval(id: string) {
 export async function cancelApproval(id: string) {
   const { _id: orgId } = await getCurrentOrg();
   const now = new Date();
-  const db = await getDb();
-  const r = await db.collection<Document>("approvals").findOneAndUpdate(
+  const r = await (await getDb()).collection<Document>("approvals").updateOne(
     { _id: oid(id), orgId, status: "texted" },
     { $set: { status: "cancelled", resolvedAt: now, resolvedBy: "human", checkout: "Visa hold released", updatedAt: now } },
   );
-  if (!r) throw new HttpError(404, "no pending approval with that id");
-  await db.collection<Document>("orders").updateMany({ orgId, conversationId: r.conversationId, status: "pending" }, { $set: { status: "cancelled", updatedAt: now } });
+  if (!r.matchedCount) throw new HttpError(404, "no pending approval with that id");
   return { ok: true };
 }
 
@@ -70,6 +69,37 @@ export async function savePromo(body: Document) {
 export async function removePromo(code: string) {
   const { _id: orgId } = await getCurrentOrg();
   await (await getDb()).collection<Document>("promos").deleteOne({ orgId, code: code.toUpperCase() });
+  return { ok: true };
+}
+
+/** Owner decision on an over-limit order. Approving lets the agent send the customer their payment link. */
+export async function decideApproval(id: string, decision: "approved" | "declined") {
+  const { _id: orgId } = await getCurrentOrg();
+  const r = await resolveApproval(await getDb(), { orgId, approvalId: oid(id), decision, by: "human" });
+  if (!r.ok) throw new HttpError(409, "that approval was already decided or does not exist");
+  return { ok: true };
+}
+
+/**
+ * A deal the customer accepted is Pending until someone confirms it was paid. This records that as an order,
+ * which is what the console counts as a sale. One order per conversation (re-confirming updates it, never duplicates).
+ * Nothing here charges a card: the amount is what the team collected or confirmed outside the agent.
+ */
+export async function markOrderPaid(conversationId: string, body: Document) {
+  const { _id: orgId } = await getCurrentOrg();
+  const db = await getDb();
+  const conv = await db.collection<Document>("conversations").findOne({ _id: oid(conversationId), orgId });
+  if (!conv) throw new HttpError(404, "no conversation with that id");
+  const amountCents = Math.round(Number(body.amount_cents));
+  if (!Number.isFinite(amountCents) || amountCents <= 0 || amountCents > 100_000_00) throw new HttpError(400, "amount must be between $0.01 and $100,000");
+  const deal = await db.collection<Document>("notifications").findOne({ orgId, conversationId: conv._id, kind: "deal" }, { sort: { createdAt: -1 } });
+  const item = String(body.item ?? "").trim().slice(0, 160) || String(deal?.message ?? "").replace(/^Customer accepted:\s*/i, "").slice(0, 160) || "Order";
+  const now = new Date();
+  await db.collection<Document>("orders").updateOne(
+    { orgId, conversationId: conv._id },
+    { $set: { contactId: conv.contactId, amountCents, item, status: "paid", source: "owner_confirmed", updatedAt: now }, $setOnInsert: { createdAt: now } },
+    { upsert: true },
+  );
   return { ok: true };
 }
 
