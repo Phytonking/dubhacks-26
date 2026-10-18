@@ -3,62 +3,114 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Selldial Sign In</title>
-  <script>try { if (localStorage.getItem("selldial:theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch {}</script>
+  <title>Selldial</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="icon" href="selldial-logo-icon.png" type="image/png">
   <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="landing.css">
 </head>
 <body>
-  <!-- The real live screen, playing the demo call, as the backdrop -->
-  <div class="backdrop" aria-hidden="true">
-    <iframe src="live.html?speed=1.5" title="" tabindex="-1" loading="eager"></iframe>
-  </div>
-  <div class="shard shard-top" aria-hidden="true"></div>
-  <div class="shard shard-bottom" aria-hidden="true"></div>
+  <svg width="0" height="0" class="sprite" aria-hidden="true">
+    <symbol id="tmark" viewBox="0 0 48 48">
+      <rect x="7" y="22" width="6" height="6" rx="1"/>
+      <rect x="35" y="22" width="6" height="6" rx="1"/>
+      <path d="M11 9h26v8h-3.2c-.4-2.6-1.8-3.8-4.6-3.8H27V35c0 2.3.8 3 3.3 3V41H17.7v-3c2.5 0 3.3-.7 3.3-3V13.2h-2.2c-2.8 0-4.2 1.2-4.6 3.8H11Z"/>
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  </svg>
 
-  <header class="masthead">
-    <a class="brand" href="index.html" aria-label="Selldial">
-      <img src="logo.svg" alt="" width="26" height="36">
-      <span>Selldial</span>
-    </a>
-    <span class="rule" aria-hidden="true"></span>
-    <span class="product">Sales console</span>
+  <header class="hero">
+    <div class="hero-bg" aria-hidden="true">
+      <img class="shot home" src="landing-bg-home.webp" alt="" width="1080" height="675">
+      <img class="shot convs" src="landing-bg-conversations.webp" alt="" width="1080" height="675">
+    </div>
+    <img class="logo" src="selldial-logo-full.png" alt="Selldial" width="1163" height="327">
+    <h1 class="headline">The cell line <span>that helps customers buy.</span></h1>
+    <p class="lede">Customers call or text. Selldial answers, explains its pick and waits for your yes.</p>
+    <div class="signin">
+      <a class="btn primary" href="console.html#/home"><svg class="tmark" aria-hidden="true"><use href="#tmark"/></svg><span>Log in with T&#8209;Mobile</span></a>
+      <a class="btn secondary" href="console.html#/home">Log in via another provider</a>
+    </div>
+    <a class="next" href="#story">How it works</a>
   </header>
 
-  <main class="welcome" aria-labelledby="welcome-title">
-    <h1 id="welcome-title">Welcome</h1>
-    <p class="oneliner">The phone line that sells honestly, tells customers when to wait, and shows its math.</p>
+  <main id="story" class="story">
+    <section class="beat" aria-labelledby="b1">
+      <div class="beat-copy">
+        <span class="beat-n">01</span>
+        <h2 id="b1">It answers</h2>
+        <p>A customer texts. Selldial picks up, quotes the real price and asks before it does anything.</p>
+      </div>
+      <figure class="panel">
+        <figcaption class="panel-head"><b>Chris B.</b><span>SMS · iPad for design work</span></figcaption>
+        <ol class="chat">
+          <li class="msg customer">I'd like the iPad Pro 13". Can you set it up?</li>
+          <li class="msg agent">Good pick. The iPad Pro 13" comes to $1,549.00. Want me to place the order?</li>
+          <li class="msg customer">Yes, go ahead.</li>
+        </ol>
+      </figure>
+    </section>
 
-    <div class="choices">
-      <a class="choice tmobile" href="console.html#/home" data-provider="T-Mobile">
-        <svg class="tmark" viewBox="0 0 48 48" aria-hidden="true">
-          <rect x="7" y="22" width="6" height="6" rx="1"/>
-          <rect x="35" y="22" width="6" height="6" rx="1"/>
-          <path d="M11 9h26v8h-3.2c-.4-2.6-1.8-3.8-4.6-3.8H27V35c0 2.3.8 3 3.3 3V41H17.7v-3c2.5 0 3.3-.7 3.3-3V13.2h-2.2c-2.8 0-4.2 1.2-4.6 3.8H11Z"/>
-        </svg>
-        <span>Log in with T&#8209;Mobile</span>
-      </a>
-      <a class="choice other" href="console.html#/home" data-provider="Email">
-        <svg class="pmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
-        <span>Log in via another provider</span>
-      </a>
-    </div>
+    <section class="beat" aria-labelledby="b2">
+      <div class="beat-copy">
+        <span class="beat-n">02</span>
+        <h2 id="b2">It explains</h2>
+        <p>Every pick comes with its reason and the option it passed on, in words you can check.</p>
+      </div>
+      <figure class="panel">
+        <figcaption class="panel-head"><b>Chris B.</b><span>Decision timeline</span></figcaption>
+        <ol class="timeline">
+          <li class="tl-step">
+            <span class="tl-mark"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span>
+            <div><p class="label">Verified</p><p class="t">Caller verified</p><p class="note">The caller passed the PIN check.</p></div>
+          </li>
+          <li class="tl-step">
+            <span class="tl-mark"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span>
+            <div>
+              <p class="label">Recommended</p><p class="t">iPad Pro 13"</p>
+              <ul class="why"><li>The M5 chip handles his drawing apps, and the trade-in takes $200.00 off.</li></ul>
+              <p class="note"><b>Runner-up:</b> iPad Air 13" at $799.99, if he does not need the faster screen.</p>
+            </div>
+          </li>
+        </ol>
+      </figure>
+    </section>
 
-    <p class="fine">Demo sign-in: no credentials are collected. All customer data is synthetic. <a href="console.html#/about">About Selldial</a></p>
+    <section class="beat" aria-labelledby="b3">
+      <div class="beat-copy">
+        <span class="beat-n">03</span>
+        <h2 id="b3">You approve</h2>
+        <p>Above your limit, it texts the account owner and holds. Nothing is charged without a yes.</p>
+      </div>
+      <figure class="panel">
+        <figcaption class="panel-head"><b>Chris B.</b><span>Decision timeline</span></figcaption>
+        <ol class="timeline">
+          <li class="tl-step ok">
+            <span class="tl-mark"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span>
+            <div><p class="label">Owner approval</p><p class="t">Approved</p><p class="note">Asked Morgan B. to approve $1,549.00. The limit is $1,500.00. Approved 4 minutes later.</p></div>
+          </li>
+          <li class="tl-step ok">
+            <span class="tl-mark"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></span>
+            <div>
+              <p class="label">Payment</p>
+              <p class="t row"><span>Paid by agent</span><span class="money">$1,549.00</span><span class="chip">Mock</span></p>
+              <p class="note">The agent completed checkout.</p>
+            </div>
+          </li>
+        </ol>
+      </figure>
+    </section>
   </main>
 
-  <script>
-    // Scale the 1440x900 live screen to cover the viewport.
-    const fit = () => document.documentElement.style.setProperty("--backdrop-scale", Math.max(innerWidth / 1440, innerHeight / 900));
-    fit(); addEventListener("resize", fit);
-    // Demo sign-in: remember the provider for the console's profile, then continue.
-    document.querySelectorAll(".choice").forEach((a) => a.addEventListener("click", () => {
-      try { localStorage.setItem("selldial:provider", a.dataset.provider); } catch {}
-    }));
-  </script>
+  <footer class="close">
+    <h2>See every call, and why it went that way.</h2>
+    <div class="signin">
+      <a class="btn primary" href="console.html#/home"><svg class="tmark" aria-hidden="true"><use href="#tmark"/></svg><span>Log in with T&#8209;Mobile</span></a>
+      <a class="btn secondary" href="console.html#/home">Log in via another provider</a>
+    </div>
+    <p class="note-demo">Demo sign-in: no credentials are collected. All customer data is synthetic.</p>
+  </footer>
 </body>
 </html>

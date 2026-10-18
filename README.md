@@ -35,22 +35,25 @@ Platform secrets (Spectrum, Daytona, Modal, Mongo) stay on the host; only an all
 
 ## T-Mobile sandbox data in Atlas
 
-The T-Mobile hackathon dataset (`github.com/mageshkumarj/dubhacks`, synthetic) is migrated into Atlas under its own org ("T-Mobile"): `tmo_*` collections, 54 knowledge rows, 50 persona contacts with character sheets and memory. Design: `docs/PRD-tmobile-data-integration.html`.
+The T-Mobile hackathon dataset (`github.com/mageshkumarj/dubhacks`, synthetic) is migrated into Atlas under its own org ("T-Mobile"): `tmo_*` collections (devices, plans, add-ons, promotions, households with lines/usage/billing/support embedded, personas), 54 knowledge rows, and 50 persona contacts with character sheets and memory. Design: `docs/PRD-tmobile-data-integration.html`.
 
 ```bash
 cd web
 pnpm db:seed:tmobile -- --db /path/to/dubhacks/data/sandbox.db   # idempotent; skips if the dataset checksum is unchanged (--force, --reset-personas)
-pnpm tsx --env-file=.env.local scripts/verify-tmobile.mts --api http://localhost:8000   # Atlas copy vs source API (needs the sandbox server running)
+pnpm db:profile:tmobile                                          # name, household, tone, voice notes and backstory on every account (about 10% LLM-written, rest rule-based; needs MODAL_* for the LLM part)
+pnpm tsx --env-file=.env.local scripts/verify-tmobile.mts --api http://localhost:8000   # Atlas copy vs the source API (needs the sandbox server running)
 ```
 
-It only touches the T-Mobile org; Sunrise Bike Shop data is left alone.
+The Selldial console (`web/public/selldial`, served by `/api/console`) shows the T-Mobile business by default: the Customers screen lists the 50 personas, 8 prospects and 450 more households with plan, lines, bill, support and the agent's persona profile. The seed only touches the T-Mobile org; Sunrise Bike Shop data is left alone.
 
 ## Agent engine (`agent/`)
 
 ```bash
 cd agent && pnpm install
-pnpm test         # 133 offline tests: identity, engine, messenger/codes/forms, scheduler, voice server, summarizer
+pnpm test         # 11 offline suites: identity, engine, messenger/codes/forms, scheduler, voice server, summarizer, reach, safety, intake, offers/negotiation, handoff
+pnpm conv-suite   # 584 generated conversations against the real model (uses tokens; not part of pnpm test)
 pnpm live         # live runner (needs web/.env.local): Photon events -> scheduler lanes -> engine -> replies. ENGINE=legacy = old sandbox path
 ```
 
-Secure forms live in `web/` (`/f/<token>` public page, `/forms` owner view behind `FORMS_ADMIN_PASSWORD`). Environment variables: see `web/.env.example`.
+Secure forms live in `web/` (`/f/<token>` public page, `/forms` owner view behind `FORMS_ADMIN_PASSWORD`). Environment variables: see `web/.env.example`. ElevenLabs voice setup: `agent/scripts/elevenlabs-setup.mts`. Why a customer can be sent to a person, and the guard: `docs/AGENT-MASTER.html` section 9e; audit with `agent/scripts/handoff-audit.mts`.
+

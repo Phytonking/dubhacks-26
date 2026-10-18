@@ -9,7 +9,9 @@
     "lint": "eslint",
     "db:local": "tsx scripts/local-db.mts",
     "db:seed": "tsx --env-file=.env.local scripts/seed.mts",
-    "db:setup": "tsx --env-file=.env.local scripts/setup-db.mts"
+    "db:setup": "tsx --env-file=.env.local scripts/setup-db.mts",
+    "db:seed:tmobile": "tsx --env-file=.env.local scripts/seed-tmobile.mts",
+    "db:profile:tmobile": "tsx --env-file=.env.local scripts/profile-tmobile.mts"
   },
   "dependencies": {
     "mongodb": "^7.7.0",

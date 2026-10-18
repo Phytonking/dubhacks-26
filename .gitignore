@@ -3,3 +3,6 @@ atlas-credentials.env
 *.env
 .env*
 !.env.example
+
+# browser test output
+.playwright-mcp/

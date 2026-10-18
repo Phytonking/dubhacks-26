@@ -1,57 +1,39 @@
-/* Hallmark · genre: modern-minimal · theme: Cobalt · design-system: DESIGN.md · designed-as-app
- * Selldial tokens. Every colour and font in the dashboard references these by name.
- * Light is the default; [data-theme="dark"] is the toggle.
+/* Selldial tokens. Dark only: plum surfaces, pink action, violet second voice. Source of truth for DESIGN.md.
+ * Every colour and font in the console references these by name.
  */
 :root {
-  /* Paper and ink: cool engineered neutrals, hue 256–260 */
-  --color-paper:   oklch(98.5% 0.004 256);
-  --color-paper-2: oklch(96.2% 0.007 256);
-  --color-rule:    oklch(90.5% 0.008 256);
-  --color-rule-2:  oklch(83% 0.011 256);
-  --color-ink:     oklch(24% 0.02 258);
-  --color-ink-2:   oklch(33% 0.018 257);
-  --color-muted:   oklch(47% 0.014 257);
+  /* Three plum tiers, about 5 lightness points apart: page, panel, raised */
+  --color-bg:          oklch(16.5% 0.052 320);
+  --color-surface:     oklch(21.5% 0.057 320);
+  --color-raised:      oklch(27% 0.067 322);
+  --color-rule:        oklch(35% 0.075 335);
+  --color-edge:        oklch(66% 0.24 350 / 0.28);
+  --color-ink:         oklch(97% 0.01 320);
+  --color-ink-2:       oklch(91% 0.015 320);
+  --color-muted:       oklch(79% 0.035 320);
 
-  /* The one signal: cobalt, sitting beside the logo's indigo */
-  --color-accent:      oklch(52% 0.19 266);
-  --color-accent-ink:  oklch(98.5% 0.004 256);
-  --color-accent-wash: oklch(94.5% 0.028 266);
-  --color-focus:       oklch(52% 0.19 266);
+  /* Magenta is the lead colour: fills and markers, plus a lighter step for text */
+  --color-accent:      oklch(66% 0.24 350);
+  --color-accent-text: oklch(80% 0.16 350);
+  --color-accent-ink:  oklch(15% 0.02 320);
+  --color-accent-wash: oklch(31% 0.11 350);
 
-  /* State colours: only where they carry meaning, always with an icon and a label */
-  --color-save:        oklch(48% 0.12 155);
-  --color-save-wash:   oklch(95% 0.035 155);
-  --color-spend:       oklch(50% 0.13 48);
-  --color-spend-wash:  oklch(95.5% 0.03 60);
-  --color-guard:       oklch(48% 0.1 80);
-  --color-guard-wash:  oklch(95.5% 0.045 90);
-  --color-block:       oklch(50% 0.18 25);
-  --color-block-wash:  oklch(95.5% 0.03 25);
+  /* Violet is the supporting voice: links, avatar rings, timeline, switches */
+  --color-violet:      oklch(76% 0.14 295);
+  --color-violet-fill: oklch(54% 0.17 295);
+  --color-violet-wash: oklch(30% 0.08 295);
 
-  /* The one dark band (audit log) */
-  --color-graphite:        oklch(21% 0.016 260);
-  --color-graphite-2:      oklch(25% 0.017 260);
-  --color-graphite-rule:   oklch(31% 0.015 260);
-  --color-graphite-ink:    oklch(93% 0.008 256);
-  --color-graphite-muted:  oklch(71% 0.012 256);
-  --color-graphite-accent: oklch(76% 0.12 266);
-  --color-graphite-save:   oklch(79% 0.14 155);
-  --color-graphite-guard:  oklch(85% 0.12 90);
-  --color-graphite-block:  oklch(75% 0.15 25);
+  /* State colours: always with an icon and a label. They win over magenta. */
+  --color-save:        oklch(80% 0.14 155);
+  --color-guard:       oklch(86% 0.12 90);
+  --color-block:       oklch(74% 0.17 25);
 
-  /* Partner sign-in: T-Mobile magenta, used only on the "Log in with T-Mobile" control */
-  --color-tmobile:     oklch(57.5% 0.235 357);
-  --color-tmobile-ink: oklch(99% 0.003 357);
+  /* Page background: flat in dark. Light keeps its soft glow (see the light block). */
+  --page-bg: var(--color-bg);
 
-  /* Logo stays fixed in both themes */
-  --color-logo:     oklch(53% 0.17 272);
-  --color-logo-ink: oklch(98.5% 0.004 256);
+  --color-scrim:       oklch(7% 0.03 320 / 0.65);
 
-  --color-scrim:  oklch(21% 0.016 260 / 0.42);
-  --shadow-lift:  0 1px 2px oklch(24% 0.02 258 / 0.06);
-  --shadow-float: 0 12px 32px oklch(24% 0.02 258 / 0.16), 0 2px 6px oklch(24% 0.02 258 / 0.08);
-
-  --font-display: "Space Grotesk", "Google Sans", system-ui, sans-serif;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
   --font-body:    "Google Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
@@ -70,8 +52,8 @@
   --space-lg:  2rem;
   --space-xl:  3rem;
 
-  --radius-control: 6px;
-  --radius-card:    10px;
+  --radius-control: 8px;
+  --radius-card:    12px;
   --radius-pill:    999px;
 
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
@@ -80,57 +62,60 @@
   --dur-short:   160ms;
   --dur-med:     280ms;
 
-  color-scheme: light;
+  color-scheme: dark;
 }
 
-:root[data-theme="dark"] {
-  --color-paper:   oklch(17% 0.014 260);
-  --color-paper-2: oklch(21% 0.016 260);
-  --color-rule:    oklch(29% 0.014 260);
-  --color-rule-2:  oklch(37% 0.015 260);
-  --color-ink:     oklch(95% 0.006 256);
-  --color-ink-2:   oklch(87% 0.008 256);
-  --color-muted:   oklch(71% 0.012 256);
+/* Light theme: opt-in with <html data-theme="light"> (set from Settings, saved in localStorage). Dark stays the default.
+ * Same hues and roles as the dark set. Tiers: page, panel (lightest), raised (a step darker for inputs, chips, hover).
+ */
+:root[data-theme="light"] {
+  --color-bg:          oklch(95.5% 0.014 330);
+  --color-surface:     oklch(99% 0.006 330);
+  --color-raised:      oklch(93% 0.02 330);
+  --color-rule:        oklch(84% 0.03 335);
+  --color-edge:        oklch(58% 0.24 350 / 0.28);
+  --color-ink:         oklch(21% 0.04 320);
+  --color-ink-2:       oklch(30% 0.035 320);
+  --color-muted:       oklch(44% 0.035 320);
 
-  --color-accent:      oklch(73% 0.13 266);
-  --color-accent-ink:  oklch(17% 0.014 260);
-  --color-accent-wash: oklch(27% 0.055 266);
-  --color-focus:       oklch(73% 0.13 266);
+  --color-accent:      oklch(58% 0.24 350);
+  --color-accent-text: oklch(47% 0.21 350);
+  --color-accent-ink:  oklch(99% 0.006 330);
+  --color-accent-wash: oklch(91.5% 0.055 350);
 
-  --color-save:        oklch(79% 0.14 155);
-  --color-save-wash:   oklch(26% 0.045 155);
-  --color-spend:       oklch(79% 0.12 55);
-  --color-spend-wash:  oklch(27% 0.045 55);
-  --color-guard:       oklch(85% 0.12 90);
-  --color-guard-wash:  oklch(28% 0.045 90);
-  --color-block:       oklch(75% 0.15 25);
-  --color-block-wash:  oklch(27% 0.055 25);
+  --color-violet:      oklch(46% 0.17 295);
+  --color-violet-fill: oklch(52% 0.17 295);
+  --color-violet-wash: oklch(92% 0.045 295);
 
-  --color-graphite:      oklch(12.5% 0.012 260);
-  --color-graphite-2:    oklch(15.5% 0.013 260);
-  --color-graphite-rule: oklch(24% 0.014 260);
+  --color-save:        oklch(42% 0.13 155);
+  --color-guard:       oklch(46% 0.11 75);
+  --color-block:       oklch(50% 0.19 25);
 
-  --color-scrim:  oklch(10% 0.01 260 / 0.6);
-  --shadow-lift:  none;
-  --shadow-float: 0 12px 32px oklch(8% 0.01 260 / 0.5);
+  --color-scrim:       oklch(25% 0.04 320 / 0.4);
 
-  color-scheme: dark;
+  --page-bg:
+    radial-gradient(ellipse 55% 42% at 14% -4%, oklch(82% 0.1 350 / 0.5), transparent 70%),
+    radial-gradient(ellipse 45% 38% at 34% 0%, oklch(84% 0.08 295 / 0.4), transparent 72%),
+    radial-gradient(ellipse 50% 40% at 100% 100%, oklch(86% 0.07 295 / 0.35), transparent 70%),
+    var(--color-bg);
+
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; overflow-x: clip; }
-html { accent-color: var(--color-accent); scrollbar-color: var(--color-rule-2) transparent; }
+html { accent-color: var(--color-accent); scrollbar-color: var(--color-rule) transparent; }
 body {
-  background: var(--color-paper);
+  background: var(--page-bg);
+  background-attachment: fixed; /* applies to every layer, so sticky bars can match the page exactly */
   color: var(--color-ink-2);
   font: 400 var(--text-sm)/1.45 var(--font-body);
   -webkit-font-smoothing: antialiased;
 }
-:root[data-theme="dark"] body { font-weight: 350; }
 button, input { font: inherit; color: inherit; }
 ::selection { background: var(--color-accent-wash); color: var(--color-ink); }
-:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .num, table { font-variant-numeric: tabular-nums; }
 .mono { font-family: var(--font-mono); font-size: var(--text-xs); }
 .icon { width: 14px; height: 14px; flex: none; vertical-align: -2px; }
