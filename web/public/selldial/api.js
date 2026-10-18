@@ -17,7 +17,9 @@ window.SelldialAPI = (() => {
 
   async function load() {
     try {
-      const res = await fetch("/api/console", { headers: { Accept: "application/json" } });
+      const url = window.SELLDIAL_CONFIG?.apiUrl;
+      if (!url) throw new Error("no backend configured");
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
       if (!res.ok) throw new Error(res.status);
       state = await res.json();
       mode = "live";

@@ -2,23 +2,28 @@
  * Every colour and font in the console references these by name.
  */
 :root {
-  --color-bg:          oklch(13% 0.02 340);
-  --color-surface:     oklch(17% 0.025 340);
-  --color-raised:      oklch(21% 0.03 340);
-  --color-rule:        oklch(28% 0.03 340);
-  --color-ink:         oklch(96% 0.01 340);
-  --color-ink-2:       oklch(88% 0.012 340);
-  --color-muted:       oklch(72% 0.02 340);
+  --color-bg:          #0E0E11;
+  --color-surface:     #17171C;
+  --color-raised:      #1F1F26;
+  --color-rule:        rgba(255, 255, 255, 0.08);
+  --color-rule-strong: rgba(255, 255, 255, 0.16);
+  --color-ink:         #F2F2F5;
+  --color-ink-2:       #D6D6DD;
+  --color-muted:       #9A9AA6;
 
-  /* The one signal */
+  /* The one signal: magenta, only on the primary button, the active nav item and the Home badge */
   --color-accent:      oklch(62% 0.25 352);
-  --color-accent-ink:  oklch(15% 0.02 340);
+  --color-accent-ink:  #FFFFFF;
   --color-accent-wash: oklch(26% 0.1 352);
+  --color-toggle-on:   #8A6A7E;  /* muted, desaturated magenta for switches */
+  --color-focus:       #C9C9D3;
 
-  /* State colours: always with an icon and a label */
-  --color-save:        oklch(79% 0.14 155);
-  --color-guard:       oklch(85% 0.12 90);
-  --color-block:       oklch(72% 0.17 25);
+  /* State colours: always with a dot and a label */
+  --color-save:        #4ADE80;
+  --color-guard:       #FBBF24;
+  --color-block:       #F87171;
+  --color-info:        #8AB4F8;
+  --color-neutral:     #A1A1AA;
 
   --color-scrim:       oklch(8% 0.02 340 / 0.6);
 

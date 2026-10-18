@@ -1,6 +1,8 @@
 /** Selldial console: home, conversations, customers, sales, settings and about. */
 (() => {
   const api = window.SelldialAPI;
+  const CONFIG = window.SELLDIAL_CONFIG;
+  const ownerLimit = () => Math.round(setting("limit") * 100); // cents; CONFIG seeds it, Settings can change it
   const $ = (sel, root = document) => root.querySelector(sel);
 
   // ---------- formatting ----------
@@ -31,7 +33,9 @@
 
   // One outcome per conversation. A conversation waiting on the owner is Pending, not Not paid.
   const OUTCOMES = { paid: "Paid", pending: "Pending", notpaid: "Not paid", handoff: "Handed off", waited: "Advised to wait" };
-  const OUTCOME_DOT = { paid: "ok", waited: "ok", pending: "warn", notpaid: "bad", handoff: "bad" };
+  // Pill colour per status: red = not paid / failed / declined, amber = handed off / pending, green = paid, blue = advised to wait.
+  const OUTCOME_TONE = { paid: "ok", waited: "info", pending: "warn", notpaid: "bad", handoff: "warn" };
+  const pill = (tone, text, extra = "") => `<span class="chip ${tone}"><span class="dot ${tone}${extra}"></span>${esc(text)}</span>`;
   function outcomeOf(c) {
     if (c.outcome === "purchased") return "paid";
     if (c.outcome === "waited") return "waited";
@@ -40,11 +44,12 @@
     return "notpaid";
   }
   function outcomeChip(c) {
+    if (c.status === "live") return pill("ok", "Live", " pulse");
     const o = outcomeOf(c);
-    return `<span class="chip"><span class="dot ${OUTCOME_DOT[o]}"></span>${OUTCOMES[o]}</span>`;
+    return pill(OUTCOME_TONE[o], OUTCOMES[o]);
   }
   const channelKind = (c) => c.channel === "voice" ? "Voice" : "Text";
-  const statusChip = (st) => `<span class="chip"><span class="dot ${st === "Active" ? "ok" : "off"}"></span>${esc(st)}</span>`;
+  const statusChip = (st) => pill(st === "Active" ? "ok" : "neutral", st);
 
   const DAY = 1440; // minutes. Home counts today only; Sales looks further back.
   function stats(s) {
@@ -75,9 +80,9 @@
     return `<tr class="clickable" data-conv="${esc(c.id)}">
       <td><button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">${esc(c.customer)}</button></td>
       <td class="muted hide-sm">${channelKind(c)}</td>
-      <td>${esc(c.intent)}</td>
-      <td>${outcomeChip(c)}</td>
-      <td class="right small muted num">${ago(c.started)}</td>
+      <td class="about-col"><span class="truncate" title="${esc(c.intent)}">${esc(c.intent)}</span></td>
+      <td class="nowrap">${outcomeChip(c)}</td>
+      <td class="right small muted num nowrap">${ago(c.started)}</td>
     </tr>`;
   }
 
@@ -88,19 +93,36 @@
     const h = s.handoffs.find((x) => x.conversation === c.id);
     if (h) return h.reason;
     const a = s.approvals.find((x) => x.conversation === c.id && x.status === "declined");
-    if (a) return `Owner declined ${money(a.amount_cents)}, over the ${money(a.limit_cents)} limit`;
+    if (a) return `Owner declined ${money(a.amount_cents)}, over the ${money(ownerLimit())} limit`;
     return c.intent;
   }
 
   function reviewRow(s, c) {
     return `<li class="review-row">
       <div class="review-main">
-        <div class="row-head"><span class="title">${esc(c.customer)}</span><span class="chip"><span class="dot bad"></span>${reviewKind(c)}</span></div>
+        <div class="row-head"><span class="title">${esc(c.customer)}</span>${pill(reviewKind(c) === "Handed off" ? "warn" : "bad", reviewKind(c))}</div>
         <div class="small muted">${esc(reviewReason(s, c))}</div>
       </div>
       <span class="small muted num">${ago(c.started)}</span>
       <button class="btn" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">Open</button>
     </li>`;
+  }
+
+  // Stat card with a delta vs yesterday and an hourly sparkline (seeded trends).
+  function sparkline(values) {
+    if (!values?.length) return "";
+    const W = 72, H = 22, max = Math.max(...values, 1), step = W / (values.length - 1);
+    const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(H - 2 - (v / max) * (H - 4)).toFixed(1)}`).join(" ");
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><polyline points="${pts}"/></svg>`;
+  }
+  function kpi(label, value, hint, trend, kind) {
+    let delta = "";
+    if (trend) {
+      const d = kind === "saved" ? trend.delta_cents : trend.delta;
+      const text = kind === "saved" ? `${d >= 0 ? "+" : "−"}${money(Math.abs(d), true)}` : `${d > 0 ? "+" : d < 0 ? "−" : "±"}${Math.abs(d)}`;
+      delta = `<div class="trend"><span class="delta num">${text} vs yesterday</span>${sparkline(trend.hourly)}</div>`;
+    }
+    return `<div class="card kpi${kind === "saved" ? " saved" : ""}"><div class="label">${label}</div><div class="value num">${value}</div><div class="hint">${hint}</div>${delta}</div>`;
   }
 
   function renderHome(s) {
@@ -111,11 +133,16 @@
     const recent = s.conversations.filter((c) => c.status !== "live").slice(0, 5);
     return `
       <div class="greeting"><h2>${hello}, ${esc(profile().name)}</h2><span class="muted">${today}</span></div>
+      ${k.live ? `<div class="live-banner" role="status">
+        <span class="dot ok pulse" aria-hidden="true"></span>
+        <div class="grow"><b>Active now</b> <span class="muted">${esc(k.live.customer)} is on a ${CHANNEL[k.live.channel] === "Voice" ? "call" : "text thread"} about ${esc(k.live.intent.charAt(0).toLowerCase() + k.live.intent.slice(1))}.</span></div>
+        <button class="btn" type="button" data-conv="${esc(k.live.id)}">View live transcript</button>
+      </div>` : ""}
       <div class="grid kpis">
-        <div class="card kpi"><div class="label">Calls handled</div><div class="value num">${k.handled}</div><div class="hint">voice and text today</div></div>
-        <div class="card kpi"><div class="label">Sales paid</div><div class="value num">${k.paid}</div><div class="hint">${money(k.paidCents)} paid by agent</div></div>
-        <div class="card kpi"><div class="label">Not paid</div><div class="value num">${k.notPaid}</div><div class="hint">after a purchase attempt</div></div>
-        <div class="card kpi accent"><div class="label">Saved for customers</div><div class="value num">${money(k.saved)}</div><div class="hint">by advising to wait</div></div>
+        ${kpi("Calls handled", k.handled, "voice and text today", s.trends?.handled)}
+        ${kpi("Sales paid", k.paid, `${money(k.paidCents)} paid by agent today`, s.trends?.paid)}
+        ${kpi("Not paid", k.notPaid, "after a purchase attempt today", s.trends?.notPaid)}
+        ${kpi("Saved for customers", money(k.saved), "kept today by advising customers to wait for a deal", s.trends?.saved, "saved")}
       </div>
       <div class="card section">
         <div class="card-head"><h2>Needs review</h2><span class="small muted num">${k.review.length}</span></div>
@@ -125,7 +152,7 @@
         <div class="card-head"><h2>Recent conversations</h2><button class="btn ghost" type="button" data-go="conversations">View all</button></div>
         <div class="table-wrap"><table><tbody>${recent.map((c) => convRow(c)).join("")}</tbody></table></div>
       </div>
-      ${k.live ? `<p class="active-line small">${icon("phone")}<b>Active now</b><span class="muted">${esc(k.live.customer)} is on a ${esc(CHANNEL[k.live.channel] === "Voice" ? "call" : "text thread")} about ${esc(k.live.intent.charAt(0).toLowerCase() + k.live.intent.slice(1))}.</span></p>` : ""}`;
+`;
   }
 
   function renderConversations(s) {
@@ -163,7 +190,7 @@
     const last = (c) => {
       if (custLive(s, c.name)) return `<span class="muted">On a call now</span>`;
       const l = custConvs(s, c.name)[0];
-      return l ? `${esc(l.intent)}<div class="small muted num">${ago(l.started)}</div>` : `<span class="muted">—</span>`;
+      return l ? `<span class="truncate" title="${esc(l.intent)}">${esc(l.intent)}</span><div class="small muted num nowrap">${ago(l.started)}</div>` : `<span class="muted">—</span>`;
     };
     return `
       <div class="filters" style="margin-bottom:12px">
@@ -175,7 +202,7 @@
         <thead><tr><th>Name</th><th class="hide-sm">Phone</th><th class="hide-sm">Region</th><th>Status</th><th>Last conversation</th></tr></thead>
         <tbody>${rows.map((c) => `<tr class="clickable" data-cust="${esc(c.name)}">
           <td><button class="row-link" type="button" data-cust="${esc(c.name)}" aria-label="Open ${esc(c.name)}">${esc(c.name)}</button></td>
-          <td class="mono hide-sm">${esc(c.phone)}</td>
+          <td class="mono num nowrap hide-sm">${esc(c.phone)}</td>
           <td class="hide-sm">${esc(c.region)}</td>
           <td>${statusChip(c.status)}</td>
           <td>${last(c)}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">No customers match. <button class="btn ghost" type="button" data-cust-clear>Clear filters</button></td></tr>`}</tbody>
@@ -202,7 +229,7 @@
       .filter((c) => !q || c.customer.toLowerCase().includes(q));
     const paid = rows.filter((c) => c.outcome === "purchased").length;
     const opt = (v, cur, label) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
-    const pay = (c) => c.outcome === "purchased" ? `<span class="chip"><span class="dot ok"></span>Paid by agent</span>` : `<span class="chip"><span class="dot bad"></span>Not paid</span>`;
+    const pay = (c) => c.outcome === "purchased" ? pill("ok", "Paid by agent") : pill("bad", "Not paid");
     return `
       <div class="filters" style="margin-bottom:12px">
         <label class="select"><span>Region</span><select data-ui="saleRegion">${opt("all", ui.saleRegion, "All regions")}${regions.map((x) => opt(x, ui.saleRegion, x)).join("")}</select></label>
@@ -212,21 +239,21 @@
       </div>
       <p class="small muted" style="margin:0 0 12px">${plural(rows.length, "sale")} · ${paid} paid by agent · ${rows.length - paid} not paid</p>
       <div class="card table-card"><div class="table-wrap flat"><table class="conv-table">
-        <thead><tr><th>Customer</th><th class="hide-sm">Item</th><th class="right">Amount</th><th class="hide-sm">Region</th><th class="hide-sm">Date</th><th>Payment</th></tr></thead>
+        <thead><tr><th>Customer</th><th class="hide-sm item-col">Item</th><th class="right">Amount</th><th class="hide-sm">Region</th><th class="hide-sm">Date</th><th>Payment</th></tr></thead>
         <tbody>${rows.map((c) => `<tr class="clickable" data-conv="${esc(c.id)}">
           <td><button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open sale to ${esc(c.customer)}">${esc(c.customer)}</button><div class="small muted show-sm">${esc(c.item)} · ${saleDate(c.started)}</div></td>
-          <td class="hide-sm">${esc(c.item)}</td>
-          <td class="right num">${money(c.amount_cents)}</td>
-          <td class="hide-sm">${esc(c.region)}</td>
-          <td class="hide-sm muted num">${saleDate(c.started)}</td>
+          <td class="hide-sm item-col"><span class="truncate" title="${esc(c.item)}">${esc(c.item)}</span></td>
+          <td class="right num nowrap">${money(c.amount_cents)}</td>
+          <td class="hide-sm nowrap">${esc(c.region)}</td>
+          <td class="hide-sm muted num nowrap">${saleDate(c.started)}</td>
           <td>${pay(c)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No sales match. <button class="btn ghost" type="button" data-sale-clear>Clear filters</button></td></tr>`}</tbody>
       </table></div></div>`;
   }
 
   // ---------- settings (local state only: nothing here is saved) ----------
-  const SET_DEFAULTS = { limit: 1000, askOwner: true, handoffAsk: true, fails: "3", voice: true, sms: true, imessage: true, whatsapp: true };
+  const SET_DEFAULTS = { limit: CONFIG.ownerLimitCents / 100, askOwner: true, handoffAsk: true, fails: "3", voice: true, sms: true, imessage: true, whatsapp: true };
   const setting = (k) => (k in ui.set ? ui.set[k] : k.startsWith("offer:") ? true : SET_DEFAULTS[k]);
-  const NOT_SAVED = `<span class="hint">Not saved in demo</span>`, READ_ONLY = `<span class="hint">Read-only in demo</span>`;
+  const NOT_SAVED = "", READ_ONLY = ""; // one "Demo mode" banner at the top of Settings replaces per-row hints
   const toggle = (key, label) => `<label class="toggle"><input type="checkbox" data-set="${esc(key)}"${setting(key) ? " checked" : ""}><span class="track" aria-hidden="true"></span><span class="sr-only">${esc(label)}</span><span class="toggle-text">${setting(key) ? "On" : "Off"}</span></label>`;
   const setRow = (title, desc, control, hint) => `<li class="set-row">
     <div class="grow"><div class="title">${title}</div>${desc ? `<div class="small muted">${desc}</div>` : ""}</div>
@@ -256,7 +283,7 @@
         <input id="pf-uses" name="uses" type="number" min="1" step="1" inputmode="numeric" value="${esc(f.uses)}"${bad("uses")}>${err("uses")}</div>
       <div class="pf-field"><label for="pf-requires">Requirement <span class="muted">(optional)</span></label>
         <input id="pf-requires" name="requires" value="${esc(f.requires)}" placeholder="New lines only" maxlength="80" autocomplete="off"></div>
-      <div class="pf-actions"><button class="btn primary" type="submit">Add code</button><button class="btn ghost" type="button" data-promo-cancel>Cancel</button><span class="hint">Not saved in demo</span></div>
+      <div class="pf-actions"><button class="btn primary" type="submit">Add code</button><button class="btn ghost" type="button" data-promo-cancel>Cancel</button></div>
     </form>`;
   }
 
@@ -286,7 +313,8 @@
       + setRow("Hand off when asked", "If the customer asks for a person, the agent passes them on.", toggle("handoffAsk", "Hand off when asked"), NOT_SAVED);
     const channels = [["voice", "Voice", "Phone calls"], ["sms", "SMS", "Text messages"], ["imessage", "iMessage", "Messages on Apple devices"], ["whatsapp", "WhatsApp", "Chats on WhatsApp"]]
       .map(([k, name, desc]) => setRow(name, desc, toggle(k, `${name} enabled`), NOT_SAVED)).join("");
-    return `<div class="settings">
+    return `<p class="demo-banner" role="note">Demo mode: changes aren't saved.</p>
+    <div class="settings">
       ${setCard("Offers and discounts", "The agent can offer only these codes, and never above the maximum.", offers)}
       ${setCard("Spend and approvals", "When the owner has to say yes.", spend)}
       ${setCard("Verification and handoff", "How the agent protects an account and when it steps back.", verify)}
@@ -339,7 +367,8 @@
 
   function openConversation(id, opener, from) {
     const s = api.state, c = s.conversations.find((x) => x.id === id);
-    if (!c || c.status === "live") return toast("That conversation isn't in this snapshot.");
+    if (!c) return toast("That conversation isn't in this snapshot.");
+    const live = c.status === "live";
     const r = c.recommendation, o = outcomeOf(c);
     const ap = s.approvals.find((a) => a.conversation === c.id);
     const h = s.handoffs.find((x) => x.conversation === c.id);
@@ -357,15 +386,16 @@
          <div class="small muted"><b>Runner-up:</b> ${esc(r.runner_up)}</div>`
       : `<div>The agent made no recommendation.</div>${h ? `<div class="small muted">${esc(h.reason)}. ${h.claimed_by ? `Claimed by ${esc(h.claimed_by)}.` : "Waiting for a person."}</div>` : ""}`;
     const sec = (label, body) => `<section class="report-sec"><p class="section-label">${label}</p>${body}</section>`;
-    showDrawer(`${drawerHead(c.customer, `${channelKind(c)} · ${ago(c.started)}`, from)}
+    const apTone = ap && { texted: ["warn", "Pending"], approved: ["ok", "Approved"], declined: ["bad", "Declined"], cancelled: ["neutral", "Cancelled"] }[ap.status];
+    showDrawer(`${drawerHead(c.customer, `${channelKind(c)} · ${live ? "in progress" : ago(c.started)}`, from)}
       <div class="drawer-body">
-        <section class="report-head">${outcomeChip(c)}<p>${esc(c.summary || c.intent)}</p></section>
+        <section class="report-head">${outcomeChip(c)}<p>${esc(c.summary || (live ? `${c.customer} is on the line now: ${c.intent.charAt(0).toLowerCase() + c.intent.slice(1)}.` : c.intent))}</p></section>
         ${sec("What the customer wanted", `<div class="title">${esc(c.intent)}</div>${ask ? `<div class="small muted">“${esc(ask.text)}”</div>` : ""}`)}
         ${sec("What the agent recommended", advice)}
-        ${sec("Payment", `<div class="row-head"><span class="title">${o === "paid" ? "Paid by agent" : "Not paid"}</span>${c.amount_cents != null ? `<span class="num">${money(c.amount_cents)}</span><span class="chip">Mock</span>` : `<span class="muted">No purchase attempted</span>`}</div>`)}
-        ${ap ? sec("Owner approval", `<div>${esc(apText)}</div><div class="small muted">${money(ap.amount_cents)} is over the ${money(ap.limit_cents)} limit.</div>`) : ""}
-        <details class="transcript-box"><summary>Transcript <span class="muted">${plural(talk.length, "message")}</span></summary>
-          <div class="transcript">${talk.map((e) => `<div class="ev ${e.kind}"><div class="time">${ago(e.t)}</div><div class="bubble">${esc(e.text)}</div></div>`).join("")}</div>
+        ${sec("Payment", live ? `<div class="muted">No purchase yet. The call is still going.</div>` : `<div class="row-head">${o === "paid" ? pill("ok", "Paid by agent") : pill(OUTCOME_TONE[o], o === "waited" ? "Advised to wait" : o === "pending" ? "Pending" : o === "handoff" ? "Handed off" : "Not paid")}${c.amount_cents != null ? `<span class="num">${money(c.amount_cents)}</span>` : `<span class="muted">No purchase attempted</span>`}</div>`)}
+        ${ap ? sec("Owner approval", `<div class="row-head">${pill(apTone[0], apTone[1])}</div><div>${esc(apText)}</div><div class="small muted"><span class="num">${money(ap.amount_cents)}</span> is over the <span class="num">${money(ownerLimit())}</span> limit.</div>`) : ""}
+        <details class="transcript-box"${live ? " open" : ""}><summary>Transcript <span class="muted">${plural(talk.length, "message")}</span></summary>
+          <div class="transcript">${talk.map((e) => `<div class="ev ${e.kind}"><div class="time num">${ago(e.t)}</div><div class="bubble">${esc(e.text)}</div></div>`).join("")}</div>
         </details>
       </div>`, opener);
     markSelected(from || c.id);
@@ -424,6 +454,9 @@
       </button>`).join("");
     $("#view-title").textContent = view.title ? view.title() : view.label;
     $("#avatar").textContent = profile().name.trim().charAt(0).toUpperCase();
+    $("#who").textContent = profile().name;
+    $("#tenant").textContent = CONFIG.tenant;
+    $("#line-num").textContent = CONFIG.line;
     $("#view").innerHTML = view.render(s);
     document.title = `${view.label} · Selldial`;
   }
@@ -470,7 +503,7 @@
         max_pct: f.kind === "pct" ? Number(f.amount) : null, max_cents: f.kind === "cents" ? Math.round(Number(f.amount) * 100) : null,
         max_uses: f.uses.trim() ? Number(f.uses) : null });
       ui.promoForm = null;
-      render(); toast(`${code} added to this list. Not saved in demo.`); $("[data-promo-open]").focus();
+      render(); toast(`${code} added to this list.`); $("[data-promo-open]").focus();
     } catch (err) {
       toast(err.message);
     }
@@ -483,6 +516,7 @@
     if (t.dataset.set) {
       ui.set[t.dataset.set] = t.type === "checkbox" ? t.checked : t.type === "number" ? Math.max(0, Number(t.value) || 0) : t.value;
       if (t.type === "checkbox") t.closest(".toggle").querySelector(".toggle-text").textContent = t.checked ? "On" : "Off";
+      if (t.dataset.set === "limit") toast(`Owner approval limit set to ${money(ownerLimit())}`);
     }
   });
 
@@ -498,6 +532,14 @@
     el.setSelectionRange(pos, pos);
   });
 
+  $("#copy-line").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(CONFIG.line); }
+    catch {
+      const t = Object.assign(document.createElement("textarea"), { value: CONFIG.line });
+      document.body.append(t); t.select(); document.execCommand("copy"); t.remove();
+    }
+    toast(`Copied ${CONFIG.line}`);
+  });
   $("#drawer-backdrop").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") return closeDrawer();
@@ -507,7 +549,11 @@
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });
-  window.addEventListener("hashchange", () => { closeDrawer(); render(); });
+  window.addEventListener("hashchange", () => {
+    closeDrawer(); render();
+    window.scrollTo(0, 0);
+    document.querySelectorAll(".main, .view").forEach((el) => { el.scrollTop = 0; });
+  });
 
   const byRecent = (s) => s.conversations.sort((a, b) => a.started - b.started);
   api.load().then(() => { byRecent(api.state); render(); });

@@ -19,15 +19,23 @@
         <span class="brand-name">Selldial</span>
       </a>
       <nav class="nav-links" id="nav"></nav>
-      <a class="signout" href="index.html">Sign out</a>
+      <div class="nav-foot">
+        <span class="avatar" id="avatar" aria-hidden="true"></span>
+        <span class="who" id="who"></span>
+        <a class="signout" href="index.html">Sign out</a>
+      </div>
     </aside>
 
     <main class="main">
       <header class="top">
         <h1 id="view-title">Home</h1>
         <div class="top-right">
-          <span class="tenant">T-Mobile demo</span>
-          <span class="avatar" id="avatar" aria-hidden="true"></span>
+          <span class="tenant" id="tenant"></span>
+          <span class="line-num">Line: <span class="num" id="line-num"></span>
+            <button class="icon-btn copy-btn" id="copy-line" type="button" aria-label="Copy line number">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </span>
         </div>
       </header>
       <section id="view" class="view"></section>
@@ -38,6 +46,7 @@
   <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" inert></aside>
   <div class="toast" id="toast" role="status" hidden></div>
 
+  <script src="config.js"></script>
   <script src="data.js"></script>
   <script src="api.js"></script>
   <script src="app.js"></script>
