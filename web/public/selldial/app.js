@@ -508,6 +508,7 @@
 
   // T-Mobile sandbox household details (synced from Atlas). Synthetic data; backstory is invented colour, not an account fact.
   const usd = (c) => (c == null ? "—" : `$${(c / 100).toFixed(2)}`);
+  const notes = (items, kind = "") => `<ul class="notes ${kind}">${items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
   function tmoSections(t) {
     const row = (k, v) => (v == null || v === "" ? "" : `<div><span>${esc(k)}</span>${v}</div>`);
     const tenure = t.tenure_months != null ? `${Math.floor(t.tenure_months / 12)}y ${t.tenure_months % 12}m` : "";
@@ -525,11 +526,11 @@
         ${t.persona ? `<section class="report-sec"><p class="section-label">Demo persona · ${esc(String(t.persona.theme).replaceAll("_", " "))}</p><p><b>${esc(t.persona.title)}</b></p><p class="muted">${esc(t.persona.scenario)}</p></section>` : ""}
         <section class="report-sec"><p class="section-label">How the agent sees them</p>
           <div class="meta cust">${row("Relationship", esc(t.relationship || ""))}${row("Language", esc(t.language || ""))}${row("Tone", esc(t.tone || ""))}${row("Prefers", esc(t.channel_pref || ""))}</div>
-          ${t.sensitivities?.length ? `<ul class="list">${t.sensitivities.map((x) => `<li><span class="small">${esc(x)}</span></li>`).join("")}</ul>` : ""}
-          ${t.backstory ? `<p class="small muted">Backstory (${t.backstory_source === "llm" ? "LLM-written" : "rule-based"}, invented): ${esc(t.backstory)}</p>` : ""}
-          ${t.facts?.length ? `<p class="small muted">They told us: ${t.facts.map(esc).join(" · ")}</p>` : ""}
+          ${t.sensitivities?.length ? `<div class="sub"><p class="sub-label">Handle with care</p>${notes(t.sensitivities, "warn")}</div>` : ""}
+          ${t.facts?.length ? `<div class="sub"><p class="sub-label">They told us</p><div class="chips">${t.facts.map((x) => `<span class="chip">${esc(x)}</span>`).join("")}</div></div>` : ""}
+          ${t.backstory ? `<div class="sub"><p class="sub-label">Backstory <span class="tag">${t.backstory_source === "llm" ? "AI-written" : "auto-generated"} · invented</span></p><p class="small muted">${esc(t.backstory)}</p></div>` : ""}
         </section>
-        ${t.voice_notes?.length ? `<section class="report-sec"><p class="section-label">Voice agent notes</p><ul class="list">${t.voice_notes.map((x) => `<li><span class="small">${esc(x)}</span></li>`).join("")}</ul></section>` : ""}`;
+        ${t.voice_notes?.length ? `<section class="report-sec"><p class="section-label">Voice agent notes</p>${notes(t.voice_notes)}</section>` : ""}`;
   }
 
   function openCustomer(name, opener) {
