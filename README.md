@@ -58,7 +58,7 @@ The seed only touches the T-Mobile org. Sunrise Bike Shop data is left alone.
 
 ```bash
 cd agent && pnpm install
-pnpm test         # 11 offline suites: identity, engine, messenger/codes/forms, scheduler, voice, summarizer, reach, safety, intake, offers, handoff
+pnpm test         # 12 offline suites: identity, engine, messenger/codes/forms, scheduler, voice, summarizer, reach, safety, intake, offers, handoff, checkout
 pnpm live         # live runner (needs web/.env.local): Photon events -> scheduler lanes -> engine -> replies. ENGINE=legacy = old sandbox path
 pnpm conv-suite   # generated conversations against the real model (uses tokens; not part of pnpm test)
 pnpm typecheck
