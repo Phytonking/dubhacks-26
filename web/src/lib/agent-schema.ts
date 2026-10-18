@@ -95,4 +95,31 @@ export const agentSpecs: CollectionSpec[] = [
     schema: obj(["orgId", "action", "targetId", "at"], { orgId: oid, userId: oidOrNull, action: str, targetId: oid, field: strOrNull, at: date }),
     indexes: [{ keys: { orgId: 1, at: -1 } }],
   },
+  {
+    // What the customer agreed to buy, priced server-side. The amount comes from here, never from the page or the model.
+    name: "checkout_quotes",
+    schema: obj(["orgId", "contactId", "conversationId", "items", "dueTodayCents", "monthlyCents", "requiresApproval", "status", "expiresAt", "createdAt"], {
+      orgId: oid, contactId: oid, conversationId: oid, items: { bsonType: "array" }, summary: str, dueTodayCents: num, monthlyCents: num, requiresApproval: bool, ownerLimitCents: num,
+      status: en("open", "awaiting_approval", "approved", "paid", "payment_failed", "declined", "cancelled"), expiresAt: date, createdAt: date, updatedAt: date, paidAt: dateOrNull,
+    }),
+    indexes: [{ keys: { orgId: 1, conversationId: 1, createdAt: -1 } }, { keys: { orgId: 1, status: 1, createdAt: -1 } }],
+  },
+  {
+    // A one-time payment link for one quote. Only the SHA-256 of the token is stored. No card data is ever stored here or anywhere.
+    name: "payment_requests",
+    schema: obj(["orgId", "contactId", "quoteId", "tokenHash", "status", "attempts", "expiresAt", "createdAt"], {
+      orgId: oid, contactId: oid, conversationId: oidOrNull, quoteId: oid, tokenHash: str, status: en("pending", "processing", "completed", "revoked", "locked"),
+      attempts: num, lastFailure: strOrNull, processingAt: dateOrNull, expiresAt: date, createdAt: date, completedAt: dateOrNull,
+    }),
+    indexes: [{ keys: { tokenHash: 1 }, unique: true }, { keys: { quoteId: 1, createdAt: -1 } }],
+  },
+  {
+    // A successful charge. Brand and last 4 only (never the number, expiry or CVC). One per payment link.
+    name: "payments",
+    schema: obj(["orgId", "quoteId", "requestId", "amountCents", "brand", "last4", "authCode", "status", "createdAt"], {
+      orgId: oid, contactId: oid, conversationId: oidOrNull, quoteId: oid, requestId: oid, amountCents: num, brand: str, last4: { bsonType: "string", pattern: "^\\d{4}$" },
+      authCode: str, gateway: str, status: en("succeeded", "refunded"), createdAt: date,
+    }),
+    indexes: [{ keys: { requestId: 1 }, unique: true }, { keys: { orgId: 1, createdAt: -1 } }],
+  },
 ];

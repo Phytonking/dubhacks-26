@@ -57,3 +57,7 @@ pnpm live         # live runner (needs web/.env.local): Photon events -> schedul
 
 Secure forms live in `web/` (`/f/<token>` public page, `/forms` owner view behind `FORMS_ADMIN_PASSWORD`). Environment variables: see `web/.env.example`. ElevenLabs voice setup: `agent/scripts/elevenlabs-setup.mts`. Why a customer can be sent to a person, and the guard: `docs/AGENT-MASTER.html` section 9e; audit with `agent/scripts/handoff-audit.mts`.
 
+## Sales and checkout
+
+The agent can quote, text a one-time secure payment link, and record the paid order; card details never go through chat. See `docs/CHECKOUT.md` (flow, card-data rules, sandbox test cards). Tests: `cd agent && pnpm checkout-test`.
+
