@@ -26,13 +26,13 @@ Follow them for feel, and follow this file where they differ.
 
 ## Theme: dark + magenta fusion, with an optional light theme
 
-Dark is the default and the primary design. The console also has a light theme, chosen in Settings > Appearance (Dark or Light), saved in `localStorage` under `selldial-theme` and applied by a tiny inline script in the `<head>` of `console.html` before first paint, so there is no flash. The landing page is always dark and never reads the setting. The dark tokens below are the source of truth; the light set lives in `tokens.css` under `:root[data-theme="light"]` and keeps the same roles and hues. The console shares the landing page's look: rich plum surfaces in three clear tiers, with magenta used deliberately as the signature colour, not hidden. Tiers are about 5 lightness points apart, so they separate by tone and a faint pink-tinted edge. No area is flat black.
+Dark is the default and the primary design. The console also has a light theme, chosen in Settings > Appearance (Dark or Light), saved in `localStorage` under `selldial-theme` and applied by a tiny inline script in the `<head>` of `console.html` before first paint, so there is no flash. The landing page is always dark and never reads the setting. The dark tokens below are the source of truth; the light set lives in `tokens.css` under `:root[data-theme="light"]` and keeps the same roles and hues. The console shares the landing page's look: rich plum surfaces in three clear tiers, with magenta used deliberately as the signature colour, not hidden. Tiers are about 5 lightness points apart (page 16.5%, panel 21.5%, raised 27%), so they separate by tone and a faint pink-tinted edge. The dark set is deliberately deep, but no area is flat black: the magenta and violet glows, tinted edges and the raised tier keep it rich.
 
 | Token | Value | Use |
 |---|---|---|
-| `--color-bg` | `oklch(17% 0.05 320)` | Tier 1, page. Carries the top-left glow |
-| `--color-surface` | `oklch(22% 0.055 320)` | Tier 2, side rail, panels, drawer |
-| `--color-raised` | `oklch(27.5% 0.065 322)` | Tier 3, inputs, hovered rows, chips, avatars |
+| `--color-bg` | `oklch(16.5% 0.052 320)` | Tier 1, page. Carries the top-left glow |
+| `--color-surface` | `oklch(21.5% 0.057 320)` | Tier 2, side rail, panels, drawer |
+| `--color-raised` | `oklch(27% 0.067 322)` | Tier 3, inputs, hovered rows, chips, avatars |
 | `--color-rule` | `oklch(35% 0.075 335)` | Hairlines and rings (faintly pink) |
 | `--color-edge` | `oklch(66% 0.24 350 / 0.28)` | Pink-tinted panel edge and hover edge |
 | `--color-ink` | `oklch(97% 0.01 320)` | Headings, key figures |

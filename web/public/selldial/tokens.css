@@ -3,9 +3,9 @@
  */
 :root {
   /* Three plum tiers, about 5 lightness points apart: page, panel, raised */
-  --color-bg:          oklch(19% 0.055 320);
-  --color-surface:     oklch(24% 0.06 320);
-  --color-raised:      oklch(29.5% 0.07 322);
+  --color-bg:          oklch(16.5% 0.052 320);
+  --color-surface:     oklch(21.5% 0.057 320);
+  --color-raised:      oklch(27% 0.067 322);
   --color-rule:        oklch(35% 0.075 335);
   --color-edge:        oklch(66% 0.24 350 / 0.28);
   --color-ink:         oklch(97% 0.01 320);
