@@ -25,7 +25,7 @@ pnpm dev                        # http://localhost:3000
 cd agent
 pnpm install
 # needs in ../web/.env.local: DAYTONA_API_KEY, MODAL_API_ENDPOINT, MODAL_PROXY_TOKEN_ID, MODAL_PROXY_TOKEN_SECRET,
-# SPECTRUM_PROJECT_ID, SPECTRUM_PROJECT_SECRET, MONGODB_URI (see web/.env.example)
+# PHOTON_API_KEY, PHOTON_PROJECT_ID, MONGODB_URI (see web/.env.example)
 pnpm e2e       # creates a real Daytona sandbox, runs ~15 checks on an in-memory Mongo, deletes the sandbox
 pnpm report    # writes docs/TEST-REPORT-agent-runtime.html
 ```

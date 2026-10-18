@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "e2e": "tsx --env-file=../web/.env.local scripts/e2e.ts",
+    "live": "tsx --env-file=../web/.env.local scripts/live.ts",
     "report": "tsx scripts/report.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@daytona/sdk": "latest",
     "mongodb": "^7.7.0",
+    "socket.io-client": "^4.8.4",
     "spectrum-ts": "^12.11.0",
     "ws": "^8.18.0"
   },

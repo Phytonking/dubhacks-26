@@ -5,7 +5,10 @@ import { applySchema } from "../../web/src/lib/schema";
 import { Daytona } from "@daytona/sdk";
 import { SandboxLink } from "../src/sandbox-link";
 import { Orchestrator } from "../src/orchestrator";
-import { LoopbackAdapter, Worker, counters } from "../src/recorded-io";
+import { LoopbackAdapter, PhotonAdapter, Worker, counters } from "../src/recorded-io";
+import { photonEventHandler, mongoCursorStore } from "../src/photon-worker";
+import { webhookServer, verifyWebhook } from "../src/webhook";
+import { createHmac } from "node:crypto";
 
 const need = (k: string) => { const v = process.env[k]; if (!v) throw new Error(`missing env ${k}`); return v.trim(); };
 const MODAL = { endpoint: need("MODAL_API_ENDPOINT"), id: need("MODAL_PROXY_TOKEN_ID"), secret: need("MODAL_PROXY_TOKEN_SECRET") };
@@ -74,7 +77,7 @@ try {
     { orgId, kind: "catalog", title: "Gravel bikes", content: "Trailhead Gravel GX is $1,450. Comes in sizes 49 to 58.", sourceUrl: null, version: 1, status: "ready", createdAt: new Date() },
   ]);
 
-  const secrets = [need("SPECTRUM_PROJECT_SECRET"), DAYTONA_KEY, MODAL.secret, MODAL.id, need("MONGODB_URI")];
+  const secrets = [need("PHOTON_API_KEY"), need("PHOTON_WEBHOOK_SIGNING_SECRET"), DAYTONA_KEY, MODAL.secret, MODAL.id, need("MONGODB_URI")];
   orch = new Orchestrator({ daytonaApiKey: DAYTONA_KEY, llmModel: MODEL, platformSecrets: secrets }, db, link);
   let steps: any[] = [];
   let sandbox: any;
@@ -86,15 +89,15 @@ try {
   });
   assert(sandbox, "provisioning failed, cannot continue");
 
-  await test("Sandbox env has no Spectrum/Daytona/Modal/Mongo secrets", async () => {
+  await test("Sandbox env has no Photon/Daytona/Modal/Mongo secrets", async () => {
     const r = await sandbox.process.executeCommand("env; echo ---; ps aux | head -50");
     const out: string = r.result ?? r.artifacts?.stdout ?? "";
     for (const s of secrets) assert(!out.includes(s), "a platform secret value appears in sandbox env/process list");
-    for (const k of ["SPECTRUM_", "DAYTONA_API", "MODAL_", "MONGODB_URI"]) assert(!out.includes(k), `variable name ${k} present in sandbox`);
+    for (const k of ["PHOTON_", "DAYTONA_API", "MODAL_", "MONGODB_URI"]) assert(!out.includes(k), `variable name ${k} present in sandbox`);
     for (const k of ["TURN_SECRET", "ORG_ID", "AGENT_ID"]) assert(out.includes(k), `${k} missing from sandbox env`);
     const node = (await sandbox.process.executeCommand("node -v")).result?.trim();
     extra.sandboxNode = node;
-    return `env ok (node ${node}); TURN_SECRET present; no Spectrum/Daytona/Modal/Mongo secrets`;
+    return `env ok (node ${node}); TURN_SECRET present; no Photon/Daytona/Modal/Mongo secrets`;
   });
 
   // ---------- messaging ----------
@@ -170,6 +173,99 @@ try {
     assert(words <= 45, `voice reply too long (${words} words)`);
     return `${Date.now() - t0} ms, ${words} words: "${r.text}"  (voice target 1200 ms p50 incl. STT/TTS, not yet met if > 1200)`;
   });
+  await test("Photon event path: message.received -> agent -> Photon sendMessage (mocked) -> delivery events update status", async () => {
+    const calls: any[] = [];
+    const fake: any = { sendText: async (a: any) => { calls.push(a); return { id: "pho_msg_out_1" }; } };
+    const pw = new Worker(db, link, new PhotonAdapter(fake), async (o) => { await orch!.wake(o); });
+    await db.collection("channel_lines").updateOne({ orgId }, { $set: { address: "+12066353267" } });
+    const handle = photonEventHandler(pw, async (line) => (await db.collection("channel_lines").findOne({ address: line }))?.orgId ?? null, (m) => console.log("  [photon]", m));
+    const received = { id: "evt_1", type: "message.received", apiVersion: "2026-07-01", timestamp: new Date().toISOString(), data: { projectId: "pho_prj_test", object: {
+      id: "pho_msg_in_100", platform: "imessage", status: "received", content: { type: "text", format: "plain", text: "Hi! What are your hours?" },
+      sentBy: { id: "pho_usr_cust", handle: "+12065550177", kind: "user", platform: "imessage" },
+      receivedBy: { id: "pho_usr_agent", handle: "+12066353267", kind: "agent", platform: "imessage" },
+      space: { id: "pho_spc_1", kind: "direct", platform: "imessage" } } } };
+    console.log("  [photon] event message.received from +12065550177: Hi! What are your hours?");
+    await handle(received as any);
+    assert(calls.length === 1, `expected 1 sendMessage call, got ${calls.length}`);
+    const c = calls[0];
+    assert(c.spaceId === "pho_spc_1" && c.senderId === "pho_usr_agent" && c.parentMessageId === "pho_msg_in_100", "wrong routing fields: " + JSON.stringify(c));
+    const out = await db.collection("messages").findOne({ orgId, direction: "out", channelMsgId: "pho_msg_out_1" });
+    assert(out && out.clientMsgId === c.idempotencyKey, "idempotency key is not the stored clientMsgId");
+    console.log(`  [photon] sendMessage(spaceId=${c.spaceId}, senderId=${c.senderId}, parent=${c.parentMessageId}, idempotency-key=${String(c.idempotencyKey).slice(0, 8)}…): "${c.text}"`);
+    await handle({ id: "e2", type: "message.dispatched", apiVersion: "2026-07-01", timestamp: "", data: { projectId: "x", object: { id: "pho_msg_out_1", platform: "imessage" } } } as any);
+    await handle({ id: "e3", type: "message.delivered", apiVersion: "2026-07-01", timestamp: "", data: { projectId: "x", object: { id: "pho_msg_out_1", platform: "imessage" } } } as any);
+    await handle({ id: "e4", type: "message.dispatched", apiVersion: "2026-07-01", timestamp: "", data: { projectId: "x", object: { id: "pho_msg_out_1", platform: "imessage" } } } as any); // late duplicate must not move status backwards
+    const after = await db.collection("messages").findOne({ _id: out!._id });
+    assert(after!.deliveryStatus === "delivered", `status is ${after!.deliveryStatus}, expected delivered`);
+    const dup = await handle(received as any).then(() => calls.length);
+    assert(dup === 1, "redelivered event re-sent a reply");
+    const cur = mongoCursorStore(db, "test"); await cur.set(5); await cur.set(3); // $max: never goes backwards
+    assert((await cur.get()) === 5, "cursor moved backwards");
+    return `sendMessage routed to space/agent user, idempotency key = clientMsgId; dispatched -> delivered; late dispatched ignored; replayed event not re-sent; cursor monotonic. Reply: "${c.text}"`;
+  });
+  await test("Photon message.failed marks the stored message failed with a reason", async () => {
+    const m = await db.collection("messages").findOne({ orgId, direction: "out", channelMsgId: "pho_msg_out_1" });
+    await db.collection("messages").updateOne({ _id: m!._id }, { $set: { deliveryStatus: "sent" } }); // reset to test failure transition
+    const pw = new Worker(db, link, new PhotonAdapter({} as any), async () => {});
+    await pw.handleDelivery("message.failed", { id: "pho_msg_out_1", failure: { message: "recipient unreachable" } });
+    const f = await db.collection("messages").findOne({ _id: m!._id });
+    assert(f!.deliveryStatus === "failed" && f!.deliveryError === "recipient unreachable", JSON.stringify(f));
+    return `deliveryStatus=failed, deliveryError="${f!.deliveryError}"`;
+  });
+  await test("Webhook signatures: valid accepted; forged, tampered, stale and unsigned rejected (your real whsec_ secret)", async () => {
+    const secret = need("PHOTON_WEBHOOK_SIGNING_SECRET");
+    const body = JSON.stringify({ id: "evt_w", type: "message.received", apiVersion: "2026-07-01", data: { object: {}, projectId: "p" } });
+    const now = Math.floor(Date.now() / 1000);
+    const std = (id: string, ts: number, b: string, s = secret) => ({ "webhook-id": id, "webhook-timestamp": String(ts), "webhook-signature": "v1," + createHmac("sha256", Buffer.from(s.replace(/^whsec_/, ""), "base64")).update(`${id}.${ts}.${b}`).digest("base64") });
+    const spec = (ts: number, b: string, s = secret) => ({ "x-spectrum-timestamp": String(ts), "x-spectrum-signature": "v0=" + createHmac("sha256", s).update(`v0:${ts}:${b}`).digest("hex") });
+    const r: Record<string, boolean> = {
+      standardValid: verifyWebhook(std("msg_1", now, body), body, [secret]).ok,
+      spectrumValid: verifyWebhook(spec(now, body), body, [secret]).ok,
+      rotationOverlap: verifyWebhook(std("msg_2", now, body, "whsec_" + Buffer.from("old-secret-old-secret-old-secret!").toString("base64")), body, ["whsec_" + Buffer.from("new").toString("base64"), "whsec_" + Buffer.from("old-secret-old-secret-old-secret!").toString("base64")]).ok,
+      wrongSecretRejected: !verifyWebhook(std("msg_3", now, body, "whsec_" + Buffer.from("x".repeat(32)).toString("base64")), body, [secret]).ok,
+      tamperedRejected: !verifyWebhook(std("msg_4", now, body), body + " ", [secret]).ok,
+      staleRejected: !verifyWebhook(std("msg_5", now - 600, body), body, [secret]).ok,
+      futureRejected: !verifyWebhook(std("msg_6", now + 600, body), body, [secret]).ok,
+      unsignedRejected: !verifyWebhook({}, body, [secret]).ok,
+      idSwapRejected: !verifyWebhook({ ...std("msg_7", now, body), "webhook-id": "msg_other" }, body, [secret]).ok,
+    };
+    const bad = Object.entries(r).filter(([, v]) => !v).map(([k]) => k);
+    assert(bad.length === 0, "failed: " + bad.join(", "));
+    return `${Object.keys(r).length}/${Object.keys(r).length} cases correct: ${Object.keys(r).join(", ")}`;
+  });
+  await test("Webhook receiver: signed delivery acked once the message is stored; bad signature 401 and nothing stored; replay ignored", async () => {
+    const secret = need("PHOTON_WEBHOOK_SIGNING_SECRET");
+    const calls: any[] = [];
+    const fake: any = { sendText: async (a: any) => { calls.push(a); return { id: "pho_msg_wh_out" }; } };
+    const ww = new Worker(db, link, new PhotonAdapter(fake, "sms"), async (o) => { await orch!.wake(o); });
+    await db.collection("channel_lines").updateOne({ orgId }, { $set: { address: "+12066353267" } });
+    const handle = photonEventHandler({ sms: ww }, async (line) => (await db.collection("channel_lines").findOne({ address: line }))?.orgId ?? null, (m) => console.log("  [webhook]", m));
+    const srv = webhookServer({ secrets: [secret], handler: handle, log: (m) => console.log("  [webhook]", m) });
+    await new Promise<void>((r) => srv.listen(8788, "127.0.0.1", () => r()));
+    try {
+      const evt = { id: "evt_wh_1", type: "message.received", apiVersion: "2026-07-01", timestamp: new Date().toISOString(), data: { projectId: "pho_prj_t", object: {
+        id: "pho_msg_wh_in_1", platform: "sms", status: "received", content: { type: "text", format: "plain", text: "Do you have gravel bikes?" },
+        sentBy: { id: "pho_usr_c2", handle: "+12065550188", kind: "human", platform: "sms" }, receivedBy: { id: "pho_usr_a2", handle: "+12066353267", kind: "agent", platform: "sms" }, space: { id: "pho_spc_wh", kind: "direct", platform: "sms" } } } };
+      const body = JSON.stringify(evt); const ts = Math.floor(Date.now() / 1000); const id = "msg_whtest_1";
+      const sig = "v1," + createHmac("sha256", Buffer.from(secret.replace(/^whsec_/, ""), "base64")).update(`${id}.${ts}.${body}`).digest("base64");
+      const post = (b: string, headers: Record<string, string>) => fetch("http://127.0.0.1:8788/", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: b });
+      const before = await db.collection("messages").countDocuments({ orgId });
+      const bad = await post(body, { "webhook-id": id, "webhook-timestamp": String(ts), "webhook-signature": "v1,AAAA" });
+      assert(bad.status === 401, `forged request got ${bad.status}`);
+      assert((await db.collection("messages").countDocuments({ orgId })) === before, "forged request wrote rows");
+      const t0 = Date.now();
+      const ok = await post(body, { "webhook-id": id, "webhook-timestamp": String(ts), "webhook-signature": sig });
+      const ackMs = Date.now() - t0;
+      assert(ok.status === 200, `signed request got ${ok.status}`);
+      const stored = await db.collection("messages").findOne({ orgId, channelMsgId: "pho_msg_wh_in_1" });
+      assert(stored && stored.deliveryStatus === "received", "inbound message not stored at ack time");
+      for (let i = 0; i < 40 && calls.length === 0; i++) await new Promise((r) => setTimeout(r, 250));   // agent turn finishes after the ack
+      assert(calls.length === 1, "agent reply was not sent after the ack");
+      const again = await post(body, { "webhook-id": id, "webhook-timestamp": String(ts), "webhook-signature": sig });
+      assert(again.status === 200 && calls.length === 1, "replayed webhook re-ran the agent");
+      return `forged -> 401, no rows; signed -> 200 in ${ackMs} ms with message already stored; agent reply sent after ack ("${String(calls[0].text).slice(0, 70)}"); replay -> 200, not re-run`;
+    } finally { await new Promise((r) => srv.close(() => r(null))); }
+  });
   await test("Stop sandbox, then inbound message wakes it and gets a reply", async () => {
     const ag = String((await db.collection("agents").findOne({ orgId }))!._id);
     const t0 = Date.now();
@@ -189,14 +285,14 @@ try {
     const tools = await db.collection("tool_calls").countDocuments({ orgId });
     const usage = await db.collection("usage").findOne({ orgId });
     const stuck = await worker.stuckSends(0);
-    assert(inRows === counters.inReceived - 1, `inbound rows ${inRows} vs received ${counters.inReceived} (1 duplicate expected)`);
+    assert(inRows === counters.inReceived - 2, `inbound rows ${inRows} vs received ${counters.inReceived} (2 duplicates expected: one direct, one replayed Photon event; replayed webhooks are dropped earlier by webhook-id)`);
     assert(outRows === counters.outAttempted, `outbound rows ${outRows} vs attempts ${counters.outAttempted}`);
     assert(stuck === 0, `${stuck} stuck sends`);
     assert(tools >= 5, `only ${tools} tool_calls rows`);
     assert(usage && usage.tokensOut > 0, "no usage row");
     const u = usage!;
     extra.counts = { inRows, outRows, tools, tokensIn: u.tokensIn, tokensOut: u.tokensOut, adapterSent: adapter.sent.length };
-    return `in ${inRows}/${counters.inReceived - 1} · out ${outRows}/${counters.outAttempted} · tool_calls ${tools} · tokens in/out ${u.tokensIn}/${u.tokensOut} · stuck ${stuck}`;
+    return `in ${inRows}/${counters.inReceived - 2} · out ${outRows}/${counters.outAttempted} · tool_calls ${tools} · tokens in/out ${u.tokensIn}/${u.tokensOut} · stuck ${stuck}`;
   });
   extra.transcript = transcript;
   extra.dbMessages = (await db.collection("messages").find({ orgId }).sort({ ts: 1 }).toArray()).map((m) => ({ dir: m.direction, status: m.deliveryStatus, handling: m.handling, body: m.body, channelMsgId: m.channelMsgId, guardrail: m.guardrail }));

@@ -4,16 +4,30 @@ import type { AgentLink } from "./sandbox-link";
 
 // The only code path allowed to touch a channel. Every message is written to Mongo around the send (PRD §6).
 export type ChannelId = "imessage" | "whatsapp" | "sms" | "voice";
+/** Provider routing info carried from an inbound message to its reply (Photon: space + our agent user). */
+export type ChannelRef = { spaceId?: string; senderId?: string; parentMessageId?: string };
 export interface ChannelAdapter {
   channel: ChannelId;
-  send(address: string, text: string): Promise<{ channelMsgId: string }>;
+  /** idempotencyKey = our clientMsgId, so a retry after a crash cannot double-send. */
+  send(address: string, text: string, ref: ChannelRef, idempotencyKey: string): Promise<{ channelMsgId: string }>;
+}
+
+/** Real iMessage sending through Photon's HTTP API (async accept; final status arrives via delivery events). */
+export class PhotonAdapter implements ChannelAdapter {
+  channel: ChannelId;
+  constructor(private photon: import("./photon").Photon, channel: ChannelId = "imessage") { this.channel = channel; }
+  async send(_address: string, text: string, ref: ChannelRef, idempotencyKey: string) {
+    if (!ref.spaceId || !ref.senderId) throw new Error("missing spaceId/senderId (a shared iMessage line cannot send an unsolicited first message)");
+    const m = await this.photon.sendText({ spaceId: ref.spaceId, senderId: ref.senderId, text, parentMessageId: ref.parentMessageId, idempotencyKey });
+    return { channelMsgId: String(m.id) };
+  }
 }
 
 /** Test adapter: records what would have been sent to a real customer instead of messaging anyone. */
 export class LoopbackAdapter implements ChannelAdapter {
   channel: ChannelId = "imessage";
   sent: Array<{ address: string; text: string }> = [];
-  async send(address: string, text: string) {
+  async send(address: string, text: string, _ref?: ChannelRef, _key?: string) {
     this.sent.push({ address, text });
     return { channelMsgId: `lb_${this.sent.length}_${randomUUID().slice(0, 8)}` };
   }
@@ -37,7 +51,7 @@ export class Worker {
     private ensureOnline: (orgId: ObjectId) => Promise<void>,
   ) {}
 
-  async handleInbound(a: { orgId: ObjectId; address: string; text: string; channelMsgId: string }) {
+  async handleInbound(a: { orgId: ObjectId; address: string; text: string; channelMsgId: string; ref?: ChannelRef; onPersisted?: () => void }) {
     const { db } = this;
     counters.inReceived++;
     const channel = this.adapter.channel;
@@ -57,13 +71,14 @@ export class Worker {
     try {
       await db.collection("messages").insertOne({
         orgId: a.orgId, conversationId: conv!._id, channel, direction: "in", sender: "customer", body: a.text,
-        channelMsgId: a.channelMsgId, deliveryStatus: "received", handling, attempts: 0, ts: new Date(),
+        channelMsgId: a.channelMsgId, deliveryStatus: "received", handling, attempts: 0, ref: a.ref ?? null, ts: new Date(),
       }, { writeConcern: { w: "majority", journal: true } });
     } catch (e) {
-      if ((e as { code?: number }).code === 11000) return { duplicate: true as const };
+      if ((e as { code?: number }).code === 11000) { a.onPersisted?.(); return { duplicate: true as const }; }
       throw e;
     }
     await db.collection("conversations").updateOne({ _id: conv!._id }, { $set: { lastMessageAt: new Date(), lastMessagePreview: a.text.slice(0, 80), lastChannel: channel } });
+    a.onPersisted?.();   // webhook receivers answer 2xx here: the message is durable, the (slow) agent turn continues
     if (handling === "human") return { duplicate: false as const, handling };
     // 2. dispatch to the agent (wake sandbox if needed)
     await this.ensureOnline(a.orgId);
@@ -85,11 +100,11 @@ export class Worker {
         { $inc: { tokensIn: reply.usage.prompt_tokens ?? 0, tokensOut: reply.usage.completion_tokens ?? 0, messagesIn: 0, messagesOut: 0, sandboxSec: 0 } }, { upsert: true });
     }
     // 3. record intent, guardrail, send, confirm
-    const out = await this.sendReply(a.orgId, conv!._id, a.address, reply.text, turnId, agent!.guardrails);
+    const out = await this.sendReply(a.orgId, conv!._id, a.address, reply.text, turnId, agent!.guardrails, { ...a.ref, parentMessageId: a.ref?.parentMessageId ?? a.channelMsgId });
     return { duplicate: false as const, handling, reply, out };
   }
 
-  async sendReply(orgId: ObjectId, conversationId: ObjectId, address: string, text: string, turnId: string, guardrails: { maxDiscountPct: number }) {
+  async sendReply(orgId: ObjectId, conversationId: ObjectId, address: string, text: string, turnId: string, guardrails: { maxDiscountPct: number }, ref: ChannelRef = {}) {
     const { db } = this;
     counters.outAttempted++;
     const g = checkGuardrails(text, guardrails);
@@ -103,7 +118,7 @@ export class Worker {
     if (g.verdict !== "ok") return { status: "blocked" as const, reason: g.reason };
     await db.collection("messages").updateOne({ _id: insertedId }, { $set: { deliveryStatus: "sending" }, $inc: { attempts: 1 } });
     try {
-      const r = await this.adapter.send(address, text);
+      const r = await this.adapter.send(address, text, ref, clientMsgId);
       await db.collection("messages").updateOne({ _id: insertedId }, { $set: { deliveryStatus: "sent", channelMsgId: r.channelMsgId } });
       await db.collection("conversations").updateOne({ _id: conversationId }, { $set: { lastMessageAt: new Date(), lastMessagePreview: text.slice(0, 80) } });
       return { status: "sent" as const, channelMsgId: r.channelMsgId };
@@ -111,6 +126,18 @@ export class Worker {
       await db.collection("messages").updateOne({ _id: insertedId }, { $set: { deliveryStatus: "failed", deliveryError: String((e as Error).message) } });
       return { status: "failed" as const };
     }
+  }
+
+  /** Photon delivery events -> message status. Looks the message up by provider id; unknown ids are ignored (e.g. other projects' echoes). */
+  async handleDelivery(type: string, msg: { id: string; failure?: { reason?: string; message?: string } | null }) {
+    const status = type === "message.delivered" ? "delivered" : type === "message.failed" ? "failed" : type === "message.dispatched" || type === "message.accepted" ? "sent" : null;
+    if (!status) return { matched: 0 };
+    const rank = { queued: 0, sending: 1, sent: 2, delivered: 3, failed: 3 } as Record<string, number>;
+    const doc = await this.db.collection("messages").findOne({ channel: this.adapter.channel, channelMsgId: msg.id });
+    if (!doc) return { matched: 0 };
+    if ((rank[doc.deliveryStatus] ?? 0) >= rank[status] && doc.deliveryStatus !== "sent") return { matched: 1, unchanged: true }; // never move backwards
+    await this.db.collection("messages").updateOne({ _id: doc._id }, { $set: { deliveryStatus: status, ...(status === "failed" ? { deliveryError: msg.failure?.message ?? msg.failure?.reason ?? "failed" } : {}) } });
+    return { matched: 1, status };
   }
 
   /** Reconciler (PRD §6.3): anything stuck queued/sending is surfaced. */

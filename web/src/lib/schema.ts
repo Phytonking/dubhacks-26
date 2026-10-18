@@ -181,6 +181,11 @@ export const specs: CollectionSpec[] = [
     indexes: [{ keys: { orgId: 1, channel: 1, name: 1 }, unique: true }],
   },
   {
+    name: "consumer_cursors",
+    schema: obj(["consumer", "seq", "updatedAt"], { consumer: str, seq: num, updatedAt: date }),
+    indexes: [{ keys: { consumer: 1 }, unique: true }],
+  },
+  {
     name: "calls",
     schema: obj(["orgId", "contactId", "conversationId", "direction", "status", "startedAt", "durationSec"], {
       orgId: oid, contactId: oid, conversationId: oid, direction: en("in", "out"),
