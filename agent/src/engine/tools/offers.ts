@@ -161,10 +161,21 @@ export const negotiation_accept: Tool = {
   async run(ctx, a) {
     const contact: any = await ctx.db.collection("contacts").findOne({ _id: ctx.contactId, orgId: ctx.orgId }, { projection: { memory: 1 } });
     const neg = contact?.memory?.negotiation;
-    const credit = neg?.lastCreditCents ?? 0;
-    if (credit > 0 && neg.turnId === ctx.turnId) return { ok: false, error: "offer_not_presented_yet", data: { hint: "You only just made this offer in this same turn; the customer has not heard it. Tell them the offer and wait for their answer." } };
+    const negCredit = neg?.lastCreditCents ?? 0;
+    // a question is not a yes ("can I sign for 12 months right now?"): wait for the customer to actually agree
+    const lastSaid = [...ctx.guard.evidence].reverse().find((e) => e.startsWith("USER:"))?.slice(5) ?? "";
+    if (/\?\s*$/.test(lastSaid.trim()) && !/\b(yes|yeah|yep|yup|sure|ok(ay)?|deal|do it|go ahead|sign me up|i.?ll take it|sounds (good|great)|let.?s do it)\b/i.test(lastSaid)) return { ok: false, error: "not_a_clear_yes", data: { hint: "The customer asked a question; they have not agreed yet. Answer it, say exactly what they would be getting, and ask if they want it. Call this only after a clear yes." } };
+    if (negCredit > 0 && neg.turnId === ctx.turnId) return { ok: false, error: "offer_not_presented_yet", data: { hint: "You only just made this offer in this same turn; the customer has not heard it. Tell them the offer and wait for their answer." } };
     const planName = neg?.plan ?? a.plan;
     if (!planName) return { ok: false, error: "needs_plan", data: { hint: "Say which plan they agreed to (plan, lines)." } };
+    // Monthly credits from the catalog that this person qualifies for (e.g. the loyalty credit) are part of the price they were told, on top of anything negotiated.
+    let promoCredit = 0;
+    {
+      const k = await known(ctx, { plan: planName, lines: neg?.lines ?? a.lines ?? 1 });
+      const promos: any[] = await ctx.db.collection("tmo_promotions").find({ orgId: ctx.orgId, kind: "bill_credit", valueCents: { $gt: 0 } }).toArray();
+      for (const p of promos) { if (!/month/i.test(`${p.description ?? ""} ${p.name ?? ""}`) || p.per === "device") continue; const u = unmetConditions(p, k); if (!u.unmet.length && !u.unknown.length) promoCredit += p.valueCents * (p.per === "line" ? (neg?.lines ?? a.lines ?? 1) : 1); }
+    }
+    const credit = negCredit + promoCredit;
     const offer: Record<string, unknown> & { creditCents: number; months: number; plan: string; lines: number } = { creditCents: credit, months: DEFAULT_AUTHORITY.maxMonths, plan: planName, lines: neg?.lines ?? a.lines ?? 1, gives: neg?.gives ?? [], summary: a.summary, status: "accepted", at: ctx.now };
 
     // Demo "apply to the account": a verified account holder who agrees to switch plans on lines they already have owes nothing today, so the change is
@@ -175,11 +186,14 @@ export const negotiation_accept: Tool = {
     let applied: { monthlyCents: number; endsAt: Date; lines: number } | null = null;
     if (ref && plan) {
       const who: any = await ctx.db.collection("contacts").findOne({ _id: ctx.contactId, orgId: ctx.orgId }, { projection: { verifiedPhone: 1, handles: 1 } });
-      const acct: any = await ctx.db.collection("tmo_accounts").findOne({ orgId: ctx.orgId, accountId: ref.id }, { projection: { "context.lines": 1 } });
+      const acct: any = await ctx.db.collection("tmo_accounts").findOne({ orgId: ctx.orgId, accountId: ref.id }, { projection: { "context.lines": 1, "context.deals": 1 } });
       const have = (acct?.context?.lines ?? []).length;
       if (isVerified(who, ctx.now) && have >= offer.lines && !plan.deviceConnectionCents) {
         const monthlyCents = Math.max(0, planTotalCents(plan.linePrices ?? [], plan.extraLineCents ?? 0, offer.lines) - credit);
         const endsAt = new Date(ctx.now.getTime() + offer.months * 30.44 * 86400_000);
+        const same = (acct?.context?.deals ?? []).find((d: any) => d.status === "active" && d.planSku === plan.sku && d.lines === offer.lines && d.monthlyCents === monthlyCents && d.creditCents === credit);
+        if (same) { offer.status = "applied"; return { ok: true, data: { status: "applied", plan: plan.name, lines: offer.lines, new_monthly_total: usd(monthlyCents), credit_per_month: credit ? usd(credit) : null, for_months: same.months, ends: new Date(same.endsAt).toISOString().slice(0, 10), due_today: "$0", note: "This was already applied a moment ago; nothing changed.", next: "It is already done on their account. Say so plainly; do not say a team member needs to confirm it." }, audit: { status: "already_applied" } }; }
+        if (acct?.context?.deals?.length) await ctx.db.collection("tmo_accounts").updateOne({ orgId: ctx.orgId, accountId: ref.id }, { $set: { "context.deals.$[old].status": "superseded" } }, { arrayFilters: [{ "old.status": "active", "old.planSku": plan.sku }] });
         const deal = { id: `deal_${ctx.turnId.slice(0, 8)}`, plan: plan.name, planSku: plan.sku, lines: offer.lines, listCents: monthlyCents + credit, creditCents: credit, monthlyCents, months: offer.months, startsAt: ctx.now, endsAt, status: "active", appliedBy: "agent", summary: a.summary };
         const set: Record<string, unknown> = {};
         for (let k = 0; k < offer.lines; k++) Object.assign(set, { [`context.lines.${k}.plan_sku`]: plan.sku, [`context.lines.${k}.plan_name`]: plan.name, [`context.lines.${k}.plan_tier`]: plan.tier, [`context.lines.${k}.plan_family`]: plan.family, [`context.lines.${k}.plan_variant`]: plan.variant, [`context.lines.${k}.plan_data_cap_gb`]: plan.dataCapGb ?? null });

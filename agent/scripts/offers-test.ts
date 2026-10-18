@@ -15,7 +15,7 @@ const run = async (contact: { contactId: ObjectId; conversationId: ObjectId }, n
   const c: any = await db.collection("contacts").findOne({ _id: contact.contactId });
   const d = kit.deps(new ScriptedLlm([]));
   const ctx = { db, orgId, contactId: contact.contactId, conversationId: contact.conversationId, channel: "imessage" as const, mode: "text" as const, party: { contact: c, conversation: {} as never, address: kit.phone, created: false, matchedBy: "channel_handle" as const, externalRefs: c.externalRefs ?? [] },
-    customer: {} as never, turnId: "t", sourceMessageId: new ObjectId(), now, messenger: kit.messenger, env: d.env, guard: { cfg: { maxDiscountPct: 15 }, evidence: ["USER:I will turn on autopay, add another line, bring my number over, stay a full year, add home internet, trade in my phone, upgrade, and go paperless"] }, calls: new Map(), ...o };
+    customer: {} as never, turnId: "t", sourceMessageId: new ObjectId(), now, messenger: kit.messenger, env: d.env, guard: { cfg: { maxDiscountPct: 15 }, evidence: ["USER:I will turn on autopay, add another line, bring my number over, stay a full year, add home internet, trade in my phone, upgrade, and go paperless", ...(o.said ? ["USER:" + String(o.said)] : [])] }, calls: new Map(), ...o };
   const r = await executeTool(d, ctx as never, { id: "x", type: "function", function: { name, arguments: JSON.stringify(args) } });
   return { ...r, data: (() => { try { return JSON.parse(r.content); } catch { return {}; } })() as any };
 };
@@ -110,6 +110,15 @@ await t("accepting on a verified account applies the plan switch and credit to t
   const ru = await run(u, "negotiation_accept", { summary: "x", plan: "Essentials Saver 2.0", lines: 1 }); ok(ru.data.status === "recorded" && !(await db.collection("tmo_accounts").findOne({ accountId: "ACC-AP2", "context.deals": { $exists: true } })), "unverified: recorded only");
   const m = await mkAcct("+14255550863", "ACC-AP3", 1, true);
   const rm = await run(m, "negotiation_accept", { summary: "x", plan: "Essentials Saver 2.0", lines: 2 }); ok(rm.data.status === "recorded", "wants more lines than the account has: recorded for checkout or the team");
+});
+await t("accept: the loyalty credit they were told about is part of what is applied ($55 - $5 = $50); a repeated yes does not add a second deal; a question is not a yes", async () => {
+  const c = await kit.newContact("+14255550864", { externalRefs: [{ system: "tmobile", id: "ACC-AP4", kind: "account" }], verifiedPhone: { number: "+14255550864", at: now, method: "otp" } });
+  await db.collection("tmo_accounts").insertOne({ orgId, accountId: "ACC-AP4", importedAt: now, segment: "single", lines: [], billing: [], support: [], context: { as_of: "2026-10-01", tenure_months: 60, lines: [{ line_id: "L0", member_label: "Line 1", member_role: "primary", plan_name: "Experience More 2.0", plan_sku: "OLD" }] } } as never);
+  const q = await run(c, "negotiation_accept", { summary: "can I sign for 12 months?", plan: "Essentials Saver 2.0", lines: 1 }, { said: "can I sign for 12 months right now?" }); ok(!q.result.ok && q.result.error === "not_a_clear_yes", "a question is not a yes: " + q.content);
+  const r = await run(c, "negotiation_accept", { summary: "Essentials Saver at $50", plan: "Essentials Saver 2.0", lines: 1 }, { said: "ok I'll take it" });
+  ok(r.result.ok && r.data.status === "applied" && r.data.new_monthly_total === "$50" && r.data.credit_per_month === "$5", "the $5 loyalty credit is applied: " + r.content);
+  const r2 = await run(c, "negotiation_accept", { summary: "again", plan: "Essentials Saver 2.0", lines: 1 }, { said: "yes do it" }); ok(r2.result.ok && /already/.test(r2.content), "second yes: " + r2.content);
+  const a: any = await db.collection("tmo_accounts").findOne({ accountId: "ACC-AP4" }); ok(a.context.deals.length === 1 && a.changeLog.length === 1 && a.context.deals[0].monthlyCents === 5000, "one deal, one log entry: " + JSON.stringify(a.context.deals));
 });
 await t("backstop: 'I've noted that' after a clear yes, with no negotiation_accept, records the deal; a maybe or an unrelated note does not", async () => {
   const c = await kit.newContact("+14255550890");

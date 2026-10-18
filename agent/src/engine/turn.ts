@@ -131,6 +131,9 @@ function makeCtx(deps: EngineDeps, input: TurnInput, b: BuiltContext, turnId: st
   };
 }
 
+/** The model sometimes emits tool arguments that are not valid JSON. We answer that call with an error, but the provider rejects the whole next request (HTTP 400) if the broken string is echoed back in the conversation, so echo "{}". */
+const validArgs = (c: ToolCallReq): ToolCallReq => { try { JSON.parse(c.function.arguments || "{}"); return c; } catch { return { ...c, function: { ...c.function, arguments: "{}" } }; } };
+
 /** Run one tool call the model asked for. Everything the model can get wrong is turned into an error result, never a crash. */
 export async function executeTool(deps: EngineDeps, ctx: ToolCtx, call: ToolCallReq): Promise<{ content: string; result: ToolResult; trace: TraceCall }> {
   const t0 = Date.now();
@@ -232,7 +235,7 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
       }
       const pass = calls.filter((c) => passNames.has(c.function.name));
       if (pass.length) return done({ outcome: "reply", text: cleanReply(resp.message.content ?? ""), rounds, passthrough: pass.map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments })) });
-      messages.push({ role: "assistant", content: resp.message.content ?? null, tool_calls: calls });
+      messages.push({ role: "assistant", content: resp.message.content ?? null, tool_calls: calls.map(validArgs) });
       let forced: string | undefined;
       for (const call of calls) {
         const r = await executeTool(deps, ctx, call);
@@ -348,7 +351,7 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
       if (!calls.length) break;
       const pass = calls.filter((c) => passNames.has(c.function.name));
       if (pass.length) { const p = pass.map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments })); yield { type: "passthrough", calls: p }; yield finish(escalated ? "escalated" : "reply", { passthrough: p }); return; }
-      messages.push({ role: "assistant", content: content || null, tool_calls: calls });
+      messages.push({ role: "assistant", content: content || null, tool_calls: calls.map(validArgs) });
       let forced: string | undefined;
       for (const call of calls) {
         const r = await executeTool(deps, ctx, call);

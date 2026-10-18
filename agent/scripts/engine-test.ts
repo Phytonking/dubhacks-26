@@ -194,6 +194,14 @@ await t("a text from their own number on iMessage verifies them (a code to the s
   ok(await verifiedAfter(await mk("+14255550852", "ACC-V2"), "sms"), "SMS from their own number is verified too");
   ok(!(await verifiedAfter(await mk("+14255550853", "ACC-V3"), "voice")), "a phone call still needs the code");
 });
+await t("a tool call with arguments that are not valid JSON is answered with an error, and the broken string is NOT echoed back (the provider answers HTTP 400 to that and the customer would hear a fallback)", async () => {
+  const llm = new ScriptedLlm([{ tools: [{ name: "memory_commit", args: '{"summary": "oops' }] }, { content: "Sorry, one moment. How can I help?" }]);
+  const r = await runTurn(kit.deps(llm), await input("hi there"));
+  ok(r.outcome === "reply" && /How can I help/.test(r.text), JSON.stringify({ o: r.outcome, t: r.text }));
+  const echoed = llm.requests[1].messages.find((m: any) => m.role === "assistant" && m.tool_calls) as any;
+  ok(echoed && JSON.parse(echoed.tool_calls[0].function.arguments) !== undefined, "the echoed arguments parse: " + JSON.stringify(echoed?.tool_calls?.[0]?.function));
+  const tool = llm.requests[1].messages.find((m: any) => m.role === "tool") as any; ok(/invalid_arguments/.test(tool.content), tool.content);
+});
 await t("verification applies to the tool even if the prompt were ignored: no account link -> no_account_linked", async () => {
   const k2 = await kit.newContact("+14255550811", { verifiedPhone: { number: "+14255550811", at: kit.now.t, method: "otp" } });
   const llm = new ScriptedLlm([{ tools: [{ name: "tmo_context", args: {} }] }, { content: "I don't see an account for this number." }]);
