@@ -15,6 +15,20 @@ body { background: var(--color-bg); }
   background: radial-gradient(ellipse 50% 45% at 50% 50%, color-mix(in oklch, var(--color-accent-wash) 45%, transparent), transparent 70%);
   pointer-events: none;
 }
+/* Behind the centre: two real console screens, tilted, blurred and darkened so the copy stays the only thing you read */
+.hero-bg { position: absolute; z-index: -2; inset: 0 calc(50% - 50vw); overflow: clip; pointer-events: none; }
+.shot {
+  position: absolute; top: 50%; width: min(64vw, 1080px); height: auto; border-radius: var(--radius-card);
+  opacity: .35; filter: blur(12px);
+}
+.shot.home { left: 50%; translate: -88% -58%; rotate: -6deg; }
+.shot.convs { left: 50%; translate: -12% -40%; rotate: 5deg; }
+.hero-bg::after {
+  content: ""; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 34% 32% at 50% 50%, color-mix(in oklch, var(--color-bg) 75%, transparent), transparent 100%),
+    color-mix(in oklch, var(--color-bg) 15%, transparent);
+}
 .logo { display: block; height: 44px; width: auto; }
 .headline {
   margin: 0; max-width: 14ch;
@@ -32,18 +46,18 @@ body { background: var(--color-bg); }
 .next::after { content: ""; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; rotate: 45deg; translate: 0 -2px; }
 .next:hover { color: var(--color-ink); }
 
-.signin { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2xs); }
+.signin { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-sm); }
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2xs); height: 36px; padding: 0 var(--space-sm);
-  font-size: var(--text-sm); font-weight: 500; line-height: 1; white-space: nowrap; text-decoration: none;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs); height: 64px; min-width: 280px; padding: 0 var(--space-md);
+  font-size: 1.125rem; font-weight: 500; line-height: 1; white-space: nowrap; text-decoration: none;
   border-radius: var(--radius-control); border: 1px solid transparent;
   transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
 }
 .btn.primary { background: var(--color-accent); color: var(--color-accent-ink); }
 .btn.primary:hover { background: color-mix(in oklch, var(--color-accent) 86%, var(--color-ink)); }
-.btn.secondary { border-color: var(--color-rule); color: var(--color-ink-2); }
+.btn.secondary { border-color: var(--color-rule); background: var(--color-surface); color: var(--color-ink-2); }
 .btn.secondary:hover { background: var(--color-raised); }
-.tmark { width: 18px; height: 18px; fill: currentColor; flex: none; }
+.tmark { width: 28px; height: 28px; fill: currentColor; flex: none; }
 
 /* The story: three beats, copy on the left and the product on the right */
 .story { display: flex; flex-direction: column; gap: clamp(var(--space-xl), 10vw, 8rem); padding-block: var(--space-xl); }
@@ -105,7 +119,10 @@ body { background: var(--color-bg); }
   .logo { height: 36px; }
   .lede { font-size: var(--text-sm); }
   .signin { flex-direction: column; align-items: stretch; width: 100%; }
-  .btn { height: 44px; }
+  .btn { min-width: 0; padding-inline: var(--space-sm); }
+  .shot { width: 130vw; }
+  .shot.home { translate: -70% -75%; }
+  .shot.convs { translate: -30% -15%; }
   .panel-head, .chat, .timeline { padding-inline: var(--space-sm); }
 }
 @media (prefers-reduced-motion: reduce) {
