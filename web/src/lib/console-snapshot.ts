@@ -33,6 +33,14 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 const brief = (v: unknown) => clip(typeof v === "string" ? v : JSON.stringify(v ?? ""), 160);
 const idStr = (id: ObjectId | string) => String(id);
 
+// No stored summary exists yet (voice calls carry one). Until the agent writes one: what the customer opened with, then where it ended.
+function summarize(thread: Document[], preview: string | undefined) {
+  const first = thread.find((m) => m.direction === "in")?.body as string | undefined;
+  const last = (preview ?? "") as string;
+  if (!first) return last;
+  return first === last || !last ? clip(first, 140) : `${clip(first, 90)} Latest: ${clip(last, 90)}`;
+}
+
 export type Snapshot = Awaited<ReturnType<typeof buildSnapshot>>;
 
 export async function buildSnapshot() {
@@ -45,7 +53,8 @@ export async function buildSnapshot() {
 
   const convs = await col("conversations").find({ orgId, lastMessageAt: { $gte: since } }).sort({ lastMessageAt: -1 }).limit(150).toArray();
   const convIds = convs.map((c) => c._id);
-  const [contacts, allContacts, msgs, toolCalls, turns, notes, approvalDocs, handoffDocs, promoDocs, orderDocs, agent, lines, ownerUser] = await Promise.all([
+  const [callDocs, contacts, allContacts, msgs, toolCalls, turns, notes, approvalDocs, handoffDocs, promoDocs, orderDocs, agent, lines, ownerUser] = await Promise.all([
+    col("calls").find({ orgId, conversationId: { $in: convIds }, summary: { $nin: ["", null] } }).sort({ startedAt: -1 }).toArray(),
     col("contacts").find({ orgId, _id: { $in: convs.map((c) => c.contactId) } }).toArray(),
     col("contacts").find({ orgId }).sort({ createdAt: -1 }).limit(500).toArray(),
     col("messages").find({ orgId, conversationId: { $in: convIds }, ts: { $gte: since } }).sort({ ts: 1 }).limit(5000).toArray(),
@@ -72,6 +81,7 @@ export async function buildSnapshot() {
   const turnsBy = group(turns, "conversationId");
   const notesBy = group(notes.filter((n) => n.conversationId), "conversationId");
   const approvalBy = group(approvalDocs, "conversationId");
+  const callBy = group(callDocs, "conversationId");
   const orderBy = group(orderDocs, "conversationId");
   const handoffBy = new Map(handoffDocs.map((h) => [idStr(h.conversationId), h]));
 
@@ -97,7 +107,7 @@ export async function buildSnapshot() {
     const events: Ev[] = [];
     const push = (at: Date, e: Omit<Ev, "at" | "t">) => events.push({ at: new Date(at).getTime(), t: minsAgo(at, now), ...e });
     for (const m of thread) {
-      push(m.ts, { kind: m.sender === "customer" ? "customer" : m.sender === "agent" ? "agent" : "system", text: m.sender === "owner" ? `Owner: ${m.body}` : m.body });
+      push(m.ts, { kind: m.sender === "owner" ? "owner" : m.sender, text: m.body });
       const g = m.guardrail as Document | null;
       if (g && g.verdict && g.verdict !== "ok") {
         const rule = guardKind[g.kind as string] ?? 1;
@@ -135,7 +145,7 @@ export async function buildSnapshot() {
       amount_cents: order ? order.amountCents ?? 0 : null,
       saved_cents: 0,
       item: order?.item ?? deal?.message?.match(/on ([^.]+?)\)/)?.[1] ?? "",
-      summary: c.lastMessagePreview ?? "",
+      summary: callBy.get(id)?.[0]?.summary ?? summarize(thread, c.lastMessagePreview),
       recommendation: null,
       region: contact?.region ?? contact?.facts?.find?.((f: Document) => /^region:/i.test(f.text))?.text.slice(7).trim() ?? "Unknown",
       events: events.map(({ at: _at, ...e }) => e),

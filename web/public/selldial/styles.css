@@ -340,7 +340,7 @@ td.right, th.right { text-align: right; }
 .conv-table .row-link:hover { color: var(--brand-ink); }
 tr.selected td { background: var(--color-accent-wash); }
 tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--color-accent); }
-.report-head p { margin: var(--space-xs) 0 0; font: 500 var(--text-md)/1.4 var(--font-display); color: var(--text); }
+.report-head .summary { margin: var(--space-3xs) 0 0; font: 500 var(--text-md)/1.4 var(--font-display); color: var(--text); }
 .report-sec { padding-top: var(--space-sm); border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: var(--space-3xs); }
 .report-sec .section-label { margin-bottom: var(--space-3xs); }
 .report-sec .pick { font-weight: 500; color: var(--text); }
@@ -584,7 +584,7 @@ a.brand { color: inherit; text-decoration: none; border-radius: var(--radius-con
 .drawer-head .ava { width: 40px; height: 40px; }
 .section-label { color: var(--color-accent-text); font-size: 11px; letter-spacing: .08em; }
 .report-head { padding: var(--space-sm); border: 1px solid var(--color-edge); border-radius: var(--radius-card); background: var(--panel-2); }
-.report-head p { font-size: var(--text-lg); letter-spacing: -0.015em; }
+.report-head .summary { font-size: var(--text-md); letter-spacing: -0.015em; }
 .report-sec { border-top-color: var(--color-edge); }
 .step-body .section-label { color: var(--muted); }
 .meta div { background: var(--panel-2); border-color: transparent; }
@@ -640,3 +640,13 @@ input, select, textarea { caret-color: var(--color-accent); }
 .dot.off { background: var(--muted); }
 @media (min-width: 761px) { .select select { min-height: 36px; } }
 .mini-figs dd.mono { font: 500 var(--text-xl)/1.1 var(--font-display); letter-spacing: -0.025em; }
+
+/* Report drawer: the transcript is the main content */
+.transcript-main { display: flex; flex-direction: column; gap: var(--space-xs); padding-top: var(--space-sm); border-top: 1px solid var(--color-edge); }
+.transcript-main .section-label { margin: 0; }
+.transcript-main .transcript { gap: var(--space-xs); }
+.transcript-main .ev .time { flex-basis: 64px; white-space: nowrap; }
+.transcript-main .bubble { font-size: var(--text-sm); line-height: 1.5; overflow-wrap: anywhere; }
+.ev.owner { flex-direction: row-reverse; }
+.ev.owner .time { text-align: left; }
+.ev.owner .bubble { background: var(--panel-2); border: 1px dashed var(--color-edge); }

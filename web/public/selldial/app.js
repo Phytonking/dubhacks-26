@@ -463,43 +463,6 @@
     ${avatar(title)}<div class="grow"><h2 class="title" id="drawer-title" style="font-size:17px;margin:0">${esc(title)}</h2><div class="small muted">${sub}</div></div>
     <button class="btn ghost icon-btn" id="drawer-close" type="button" data-close aria-label="Close">${icon("close")}</button></div></div>`;
 
-  // The decision timeline: one step each for Verified, Recommended, Owner approval (only when one was needed) and Payment.
-  // `tone` picks the marker colour and icon: done (violet), ok, warn, bad. Colour always comes with an icon and a word.
-  function reportSteps(s, c) {
-    const r = c.recommendation, o = outcomeOf(c);
-    const ap = s.approvals.find((a) => a.conversation === c.id);
-    const h = s.handoffs.find((x) => x.conversation === c.id);
-    const verifyEv = c.events.find((e) => e.name === "account.verify");
-    const reasons = r ? (r.reasons || [r.reason]).filter(Boolean).slice(0, 3) : [];
-    const steps = [c.verified
-      ? { tone: "done", label: "Verified", title: "Caller verified", note: verifyEv ? verifyEv.text : "The caller passed the PIN check." }
-      : { tone: "bad", label: "Not verified", title: "Caller not verified", note: h ? h.reason : "The caller did not pass the PIN check." }];
-    steps.push(r
-      ? { tone: "done", label: "Recommended", title: r.pick, list: reasons, runner: r.runner_up }
-      : { tone: "done", label: "Recommended", title: "No recommendation", note: h && c.verified ? `${h.reason}. ${h.claimed_by ? `Claimed by ${h.claimed_by}.` : "Waiting for a person."}` : "The agent made no changes." });
-    if (ap) {
-      const verdict = { texted: ["warn", "Waiting"], approved: ["ok", "Approved"], declined: ["bad", "Declined"], cancelled: ["bad", "Cancelled"] }[ap.status];
-      steps.push({ tone: verdict[0], label: "Owner approval", title: verdict[1],
-        note: `Asked ${ap.owner} ${ago(ap.sent)} to approve ${money(ap.amount_cents)}. The limit is ${money(ap.limit_cents)}.${ap.resolved != null ? ` ${verdict[1]} ${ago(ap.resolved)}.` : ""}` });
-    }
-    const pay = o === "paid"
-      ? { tone: "ok", title: "Paid by agent", note: "The agent completed checkout." }
-      : { tone: o === "pending" ? "warn" : "bad", title: "Not paid", note: ap ? { texted: "Waiting for the owner to reply YES.", declined: "The owner declined, so the agent did not charge.", cancelled: "Cancelled before the owner replied." }[ap.status] : c.amount_cents != null ? "The purchase did not go through." : "No purchase was attempted." };
-    steps.push({ ...pay, label: "Payment", amount: c.amount_cents });
-    return steps;
-  }
-
-  const TONE_ICON = { done: "check", ok: "check", warn: "clock", bad: "alert" };
-  const stepHtml = (st) => `<li class="step ${st.tone}">
-    <span class="step-mark">${icon(TONE_ICON[st.tone])}</span>
-    <div class="step-body">
-      <p class="section-label">${st.label}</p>
-      <div class="row-head"><span class="title">${esc(st.title)}</span>${st.amount != null ? `<span class="num">${money(st.amount)}</span><span class="chip">Mock</span>` : ""}</div>
-      ${st.list?.length ? `<ul class="why">${st.list.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
-      ${st.runner ? `<div class="small muted"><b>Runner-up:</b> ${esc(st.runner)}</div>` : ""}
-      ${st.note ? `<div class="small muted">${esc(st.note)}</div>` : ""}
-    </div></li>`;
-
   // The conversations an operator can step through: the customer's own when opened from a customer, otherwise the Conversations list as filtered.
   function reportList(s, id, from) {
     if (from) return custConvs(s, from);
@@ -507,11 +470,19 @@
     return list.some((c) => c.id === id) ? list : s.conversations.filter((c) => c.status !== "live");
   }
 
+  // The report is the transcript: what the customer and the agent (or owner) actually said.
+  // Decision steps, recommendations and tool/guardrail events are left out for now; they are still in the snapshot.
+  const talkOf = (c) => c.events.filter((e) => e.kind === "customer" || e.kind === "agent" || e.kind === "owner");
+  const transcriptHtml = (talk) => talk.length
+    ? talk.map((e) => `<div class="ev ${e.kind}"><div class="time">${ago(e.t)}</div><div class="bubble">${esc(e.text)}</div></div>`).join("")
+    : `<p class="empty">No messages yet.</p>`;
+  let openConvId = null;
+
   function openConversation(id, opener, from, step) {
     const s = api.state, c = s.conversations.find((x) => x.id === id);
     if (!c || c.status === "live") return toast("That conversation isn't in this snapshot.");
-    const ask = c.events.find((e) => e.kind === "customer");
-    const talk = c.events.filter((e) => e.kind === "customer" || e.kind === "agent");
+    const talk = talkOf(c);
+    openConvId = c.id;
     const list = reportList(s, c.id, from), at = list.findIndex((x) => x.id === c.id);
     const go = (dir, label, ic) => {
       const t = list[at + dir];
@@ -519,12 +490,11 @@
     };
     showDrawer(`${drawerHead(c.customer, `${channelKind(c)} · ${ago(c.started)}`, from)}
       <div class="drawer-body">
-        <section class="report-head">${outcomeChip(c)}<p>${esc(c.summary || c.intent)}</p></section>
-        <section class="report-sec"><p class="section-label">What the customer wanted</p><div class="title">${esc(c.intent)}</div>${ask ? `<div class="small muted">“${esc(ask.text)}”</div>` : ""}</section>
-        <ol class="timeline" aria-label="Decision timeline">${reportSteps(s, c).map(stepHtml).join("")}</ol>
-        <details class="transcript-box"><summary>Transcript <span class="muted">${plural(talk.length, "message")}</span></summary>
-          <div class="transcript">${talk.map((e) => `<div class="ev ${e.kind}"><div class="time">${ago(e.t)}</div><div class="bubble">${esc(e.text)}</div></div>`).join("")}</div>
-        </details>
+        <section class="report-head"><p class="section-label">Summary</p><p class="summary">${esc(c.summary || c.intent)}</p></section>
+        <section class="transcript-main" aria-label="Transcript">
+          <p class="section-label">Transcript <span class="muted">${plural(talk.length, "message")}</span></p>
+          <div class="transcript" id="transcript">${transcriptHtml(talk)}</div>
+        </section>
       </div>
       <nav class="pager" aria-label="Conversations">${go(-1, "Previous")}<span class="small muted num">${at + 1} of ${list.length}</span>${go(1, "Next")}</nav>`, opener);
     $("#drawer").scrollTop = 0;
@@ -561,6 +531,7 @@
     $("#drawer").inert = true;
     $("#drawer-backdrop").hidden = true;
     markSelected(null);
+    openConvId = null;
     if (drawerOpener?.isConnected) drawerOpener.focus();
     drawerOpener = null;
   }
@@ -687,9 +658,18 @@
   // Live data: re-render when the server says something changed, unless the owner is typing or has a
   // select open. In that case wait until they leave the field so nothing they typed is wiped.
   let stale = false;
+  // An open report keeps its place while new messages arrive: only the transcript is redrawn, and it follows the bottom if you were there.
+  function refreshTranscript() {
+    const box = openConvId && $("#transcript"), c = box && api.state.conversations.find((x) => x.id === openConvId);
+    if (!c) return;
+    const d = $("#drawer"), atEnd = d.scrollHeight - d.scrollTop - d.clientHeight < 40;
+    box.innerHTML = transcriptHtml(talkOf(c));
+    if (atEnd) d.scrollTop = d.scrollHeight;
+  }
   const editing = () => { const a = document.activeElement; return a && $("#view").contains(a) && a.matches("input, textarea, select"); };
   function onLiveUpdate() {
     byRecent(api.state);
+    refreshTranscript();
     if (editing()) { stale = true; return; }
     stale = false;
     render();
