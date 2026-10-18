@@ -411,7 +411,7 @@
     const appearance = setRow("Theme", "Saved in this browser only.",
       `<div class="unit-toggle" role="radiogroup" aria-label="Theme">${["dark", "light"].map((v) => `<label><input type="radio" name="theme" value="${v}"${theme === v ? " checked" : ""}><span>${cap(v)}</span></label>`).join("")}</div>`);
     return `<div class="settings">
-      <p class="set-note small">${icon("alert")}Offer, approval and channel changes are not saved in this demo.</p>
+      <p class="set-note small">${icon("alert")}${api.mode === "live" ? "Promo codes you add or remove are saved. Switches and limits on this page are not saved yet." : "Offer, approval and channel changes are not saved in this demo."}</p>
       ${setCard("Appearance", "How the console looks on this device.", appearance)}
       ${setCard("Offers and discounts", "The agent can offer only these codes, and never above the maximum.", offers)}
       ${setCard("Spend and approvals", "When the owner has to say yes.", spend)}

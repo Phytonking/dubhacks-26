@@ -12,8 +12,7 @@ body { background: var(--color-bg); }
 }
 .hero::before {
   content: ""; position: absolute; z-index: -1; inset: 10% -20%;
-  background: radial-gradient(ellipse 50% 45% at 50% 50%, color-mix(in oklch, var(--color-accent-wash) 45%, transparent), transparent 70%);
-  pointer-events: none;
+  pointer-events: none; /* no glow: the dark landing is flat */
 }
 /* Behind the centre: two real console screens, tilted, blurred and darkened so the copy stays the only thing you read */
 .hero-bg { position: absolute; z-index: -2; inset: 0 calc(50% - 50vw); overflow: clip; pointer-events: none; }

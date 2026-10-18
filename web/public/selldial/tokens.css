@@ -28,12 +28,8 @@
   --color-guard:       oklch(86% 0.12 90);
   --color-block:       oklch(74% 0.17 25);
 
-  /* Page background: a soft magenta-to-violet glow top-left over the page tier */
-  --page-bg:
-    radial-gradient(ellipse 55% 42% at 14% -4%, oklch(48% 0.19 350 / 0.5), transparent 70%),
-    radial-gradient(ellipse 45% 38% at 34% 0%, oklch(44% 0.15 295 / 0.38), transparent 72%),
-    radial-gradient(ellipse 50% 40% at 100% 100%, oklch(40% 0.14 295 / 0.3), transparent 70%),
-    var(--color-bg);
+  /* Page background: flat in dark. Light keeps its soft glow (see the light block). */
+  --page-bg: var(--color-bg);
 
   --color-scrim:       oklch(7% 0.03 320 / 0.65);
 
