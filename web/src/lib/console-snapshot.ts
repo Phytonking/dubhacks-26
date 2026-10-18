@@ -7,7 +7,7 @@ import { hasTmoData, listTmoConsoleCustomers } from "./tmo-queries";
 // read live from MongoDB. Times are minutes-ago, money is integer cents. Collections the agent has not
 // created yet (agent_turns, notifications, approvals, ...) read as empty, so this works on any deployment.
 
-const WINDOW_DAYS = 92; // covers "last month" and a picked day on the Home range control
+const WINDOW_DAYS = 3650; // all time: the console filters by range itself
 const LIVE_MIN = 5; // a conversation with traffic in the last 5 minutes is "live"
 const RULES = [
   [1, "Discounts only from the policy table"],
@@ -58,7 +58,7 @@ export async function buildSnapshot() {
     col("calls").find({ orgId, conversationId: { $in: convIds }, startedAt: { $gte: since } }).sort({ startedAt: -1 }).toArray(),
     col("contacts").find({ orgId, _id: { $in: convs.map((c) => c.contactId) } }).toArray(),
     col("contacts").find({ orgId }).sort({ createdAt: -1 }).limit(500).toArray(),
-    col("messages").find({ orgId, conversationId: { $in: convIds }, ts: { $gte: since } }).sort({ ts: 1 }).limit(5000).toArray(),
+    col("messages").find({ orgId, conversationId: { $in: convIds }, ts: { $gte: since } }).sort({ ts: 1 }).limit(30000).toArray(),
     col("tool_calls").find({ orgId, conversationId: { $in: convIds }, ts: { $gte: since } }).sort({ ts: 1 }).limit(3000).toArray(),
     col("agent_turns").find({ orgId, conversationId: { $in: convIds }, startedAt: { $gte: since } }).sort({ startedAt: 1 }).limit(3000).toArray(),
     col("notifications").find({ orgId, createdAt: { $gte: since } }).sort({ createdAt: -1 }).limit(500).toArray(),
@@ -72,6 +72,11 @@ export async function buildSnapshot() {
     col("checkout_quotes").find({ orgId, conversationId: { $in: convIds } }).sort({ createdAt: -1, _id: -1 }).toArray(),
   ]);
 
+    // What each T-Mobile account is on now: the active deals the agent applied (monthly price after credit, credit for the term).
+  const refId = (c: Document) => (c.externalRefs ?? []).find((r: Document) => r.system === "tmobile")?.id as string | undefined;
+  const accountIds = contacts.map(refId).filter((x): x is string => Boolean(x));
+  const accountDocs = accountIds.length ? await col("tmo_accounts").find({ orgId, accountId: { $in: accountIds } }).project({ accountId: 1, "context.deals": 1 }).toArray() : [];
+  const dealsByAccount = new Map(accountDocs.map((a) => [a.accountId as string, ((a.context?.deals ?? []) as Document[]).filter((d) => d.status === "active")]));
   const contactById = new Map(contacts.map((c) => [idStr(c._id), c]));
   const group = <T extends Document>(rows: T[], key: string) => {
     const m = new Map<string, T[]>();
@@ -145,14 +150,17 @@ export async function buildSnapshot() {
     const inboundTimes = thread.filter((m) => m.direction === "in").map((m) => minsAgo(m.ts, now));
     const cQuotes = quoteBy.get(id) ?? [];
     const quoted = new Set(cQuotes.flatMap((q) => (q.status === "paid" ? [idStr(q._id)] : [])));
-    const sales = [
-      ...cQuotes.filter((q) => q.status === "paid").map((q) => ({ t: minsAgo(q.paidAt ?? q.updatedAt, now), kind: "paid", cents: q.dueTodayCents ?? 0 })),
+    const sales: { t: number; kind: string; cents: number; monthly?: number }[] = [
+      ...cQuotes.filter((q) => q.status === "paid").map((q) => ({ t: minsAgo(q.paidAt ?? q.updatedAt, now), kind: "paid", cents: q.dueTodayCents ?? 0, monthly: q.monthlyCents ?? 0 })),
       // orders the owner confirmed outside checkout (no quote behind them)
-      ...orders.filter((o) => !(o.quoteIds ?? []).some((qid: ObjectId) => quoted.has(idStr(qid)))).map((o) => ({ t: minsAgo(o.createdAt, now), kind: "paid", cents: o.amountCents ?? 0 })),
+      ...orders.filter((o) => !(o.quoteIds ?? []).some((qid: ObjectId) => quoted.has(idStr(qid)))).map((o) => ({ t: minsAgo(o.createdAt, now), kind: "paid", cents: o.dueTodayCents ?? o.amountCents ?? 0, monthly: o.monthlyCents ?? 0 })),
       ...cQuotes.filter((q) => q.status === "payment_failed" || q.status === "declined").map((q) => ({ t: minsAgo(q.updatedAt ?? q.createdAt, now), kind: "not_paid", cents: q.dueTodayCents ?? 0 })),
     ];
-    const saves: { t: number; cents: number }[] = (contact?.memory?.offers ?? []).filter((o: Document) => o.status === "redeemed")
-      .map((o: Document) => ({ t: minsAgo(o.redeemedAt ?? o.at, now), cents: (o.creditCents ?? 0) * (o.months ?? 1) }));
+    // Saved: credit the customer now has for the term, from their active deals; else offers redeemed through checkout.
+    const deals = dealsByAccount.get((contact && refId(contact)) ?? "") ?? [];
+    const saves: { t: number; cents: number }[] = deals.length
+      ? deals.filter((d) => d.creditCents).map((d) => ({ t: minsAgo(d.startsAt, now), cents: d.creditCents * (d.months ?? 1) }))
+      : (contact?.memory?.offers ?? []).filter((o: Document) => o.status === "redeemed").map((o: Document) => ({ t: minsAgo(o.redeemedAt ?? o.at, now), cents: (o.creditCents ?? 0) * (o.months ?? 1) }));
     const firstIn = thread.find((m) => m.direction === "in");
     const intent = clip(firstIn?.body ?? c.lastMessagePreview ?? "", 80);
     const name = shortName(contact?.name ?? "");
@@ -166,8 +174,9 @@ export async function buildSnapshot() {
       started: minsAgo(thread[0]?.ts ?? c.lastMessageAt, now),
       intent,
       outcome: outcomeSale,
-      amount_cents: order ? order.amountCents ?? 0 : quote ? quote.dueTodayCents ?? null : null,
+      amount_cents: order ? order.dueTodayCents ?? order.amountCents ?? 0 : quote ? quote.dueTodayCents ?? null : null,
       saved_cents: saves.reduce((n, x) => n + x.cents, 0),
+      monthly_cents: sales.filter((x) => x.kind === "paid").reduce((n, x) => n + (x.monthly ?? 0), 0),
       last_t: minsAgo(c.lastMessageAt, now),
       calls: callTimes,
       inbound: inboundTimes,
