@@ -43,14 +43,16 @@
   const profile = () => ({ name: "Eshaan" });
 
   // One outcome per conversation. A conversation waiting on the owner is Pending, not Not paid.
-  const OUTCOMES = { paid: "Paid", pending: "Pending", notpaid: "Not paid", handoff: "Handed off", waited: "Advised to wait" };
-  const OUTCOME_DOT = { paid: "ok", waited: "ok", pending: "warn", notpaid: "bad", handoff: "bad" };
+  const OUTCOMES = { paid: "Paid", pending: "Pending", notpaid: "Not paid", handoff: "Handed off", waited: "Advised to wait", nosale: "No sale", live: "Live now" };
+  const OUTCOME_DOT = { paid: "ok", waited: "ok", pending: "warn", notpaid: "bad", handoff: "bad", nosale: "off", live: "ok" };
   function outcomeOf(c) {
     if (c.outcome === "purchased") return "paid";
     if (c.outcome === "waited") return "waited";
     if (c.outcome === "handoff" || c.status === "handoff") return "handoff";
     if (c.status === "awaiting_approval") return "pending";
-    return "notpaid";
+    if (c.outcome === "not_paid") return "notpaid";
+    if (c.status === "live") return "live";   // still talking: no outcome yet
+    return "nosale";   // closed with no purchase attempt: a question answered, not a failed sale
   }
   function outcomeChip(c) {
     const o = outcomeOf(c);
@@ -64,12 +66,13 @@
   const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
   const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const fmtDay = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const HOME_RANGES = { today: "Today", yesterday: "Yesterday", week: "Last 7 days", month: "This month", last30: "Last 30 days", lastmonth: "Last month", day: "Pick a day" };
+  const HOME_RANGES = { today: "Today", all: "All time", yesterday: "Yesterday", week: "Last 7 days", month: "This month", last30: "Last 30 days", lastmonth: "Last month", day: "Pick a day" };
   // The Home window as [from, to) in epoch ms, plus the words that describe it.
   function homeWindow(now = new Date()) {
     const today = midnight(now), tomorrow = addDays(today, 1);
     const w = (from, to, label, phrase) => ({ from: from.getTime(), to: to.getTime(), label, phrase });
     switch (ui.homeRange) {
+      case "all": return w(new Date(0), tomorrow, "All time", "so far");
       case "yesterday": return w(addDays(today, -1), today, "Yesterday", "yesterday");
       case "week": return w(addDays(today, -6), tomorrow, "Last 7 days", "in the last 7 days");
       case "last30": return w(addDays(today, -29), tomorrow, "Last 30 days", "in the last 30 days");
@@ -82,20 +85,35 @@
       default: return w(today, tomorrow, "Today", "today");
     }
   }
-  const startedAt = (s, c) => new Date(s.generatedAt || Date.now()).getTime() - c.started * 60000;
+  // One customer is one conversation however often they call, text or buy, so every figure counts the events inside it,
+  // each with its own time (minutes ago). Snapshots without event lists (the demo data) fall back to one event per conversation.
+  const eventsOf = (c) => ({
+    calls: c.calls ?? (c.channel === "voice" ? [c.started] : []),
+    texts: c.inbound ?? (c.channel === "voice" ? [] : [c.started]),
+    sales: c.sales ?? (c.outcome === "purchased" ? [{ t: c.started, kind: "paid", cents: c.amount_cents || 0 }] : c.outcome === "not_paid" ? [{ t: c.started, kind: "not_paid", cents: 0 }] : []),
+    saves: c.saves ?? (c.saved_cents ? [{ t: c.started, cents: c.saved_cents }] : []),
+  });
   function stats(s) {
     const win = homeWindow();
-    const inWin = (c) => { const t = startedAt(s, c); return t >= win.from && t < win.to; };
-    const done = s.conversations.filter((c) => c.status !== "live" && inWin(c));
-    const paid = done.filter((c) => c.outcome === "purchased");
+    const base = new Date(s.generatedAt || Date.now()).getTime();
+    const within = (t) => { const ms = base - t * 60000; return ms >= win.from && ms < win.to; };
+    let calls = 0, texts = 0, paid = 0, paidCents = 0, monthlyCents = 0, notPaid = 0, saved = 0;
+    const active = [];
+    for (const c of s.conversations) {
+      const e = eventsOf(c);
+      const callsIn = e.calls.filter(within).length, textsIn = e.texts.filter(within).length;
+      const salesIn = e.sales.filter((x) => within(x.t)), savesIn = e.saves.filter((x) => within(x.t));
+      calls += callsIn; texts += textsIn;
+      for (const x of salesIn) x.kind === "paid" ? (paid++, paidCents += x.cents, monthlyCents += x.monthly || 0) : notPaid++;
+      saved += savesIn.reduce((n, x) => n + x.cents, 0);
+      if (callsIn || textsIn || salesIn.length || savesIn.length) active.push(c);
+    }
+    const done = active.filter((c) => c.status !== "live");
     // Open items need the owner whatever day they started on; finished ones follow the range.
     const open = s.conversations.filter((c) => c.status === "awaiting_approval" || c.status === "handoff");
     return {
-      win, done,
-      handled: done.length,
-      paid: paid.length, paidCents: paid.reduce((n, c) => n + c.amount_cents, 0),
-      notPaid: done.filter((c) => outcomeOf(c) === "notpaid").length,
-      saved: done.reduce((n, c) => n + (c.saved_cents || 0), 0),
+      win, done, active, calls, texts, customers: active.length,
+      handled: calls, paid, paidCents, monthlyCents, notPaid, saved,
       live: s.conversations.find((c) => c.status === "live"),
       review: [...new Set([...open, ...done.filter(isBad)])].sort((a, b) => a.started - b.started),
     };
@@ -110,7 +128,7 @@
     settings: { label: "Settings", render: renderSettings },
     about: { label: "About", render: renderAbout },
   };
-  const ui = { convOutcome: "all", convQuery: "", saleTab: "list", saleRegion: "all", saleTime: "30", homeRange: "today", homeDay: "", salePay: "all", saleQuery: "", custQuery: "", custRegion: "all", custStatus: "all", set: {}, promoForm: null };
+  const ui = { convOutcome: "all", convQuery: "", saleTab: "list", saleRegion: "all", saleTime: "all", homeRange: "today", homeDay: "", salePay: "all", saleQuery: "", custQuery: "", custRegion: "all", custStatus: "all", set: {}, promoForm: null };
 
   function convRow(c) {
     return `<tr class="clickable" data-conv="${esc(c.id)}">
@@ -118,7 +136,7 @@
       <td class="muted hide-sm">${via(c)}</td>
       <td>${esc(c.intent)}</td>
       <td>${outcomeChip(c)}</td>
-      <td class="right"><span class="t-mono">${ago(c.started)}</span></td>
+      <td class="right"><span class="t-mono">${ago(c.last_t ?? c.started)}</span></td>
     </tr>`;
   }
 
@@ -150,10 +168,13 @@
   function recentRow(c) {
     return `<li class="line"><button class="line-btn" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">
       <span class="line-who">${avatar(c.customer)}<span class="line-main"><span class="title">${esc(c.customer)}</span><span class="small muted">${esc(c.intent)} · ${via(c)}</span></span></span>
-      <span class="line-side stack">${outcomeChip(c)}<span class="t-mono">${ago(c.started)}</span></span>
+      <span class="line-side stack">${outcomeChip(c)}<span class="t-mono">${ago(c.last_t ?? c.started)}</span></span>
     </button></li>`;
   }
 
+  // Cash collected, and monthly price added by plan changes that collect nothing today.
+  const soldNote = (k) => [k.paidCents || !k.monthlyCents ? money(k.paidCents) : "", k.monthlyCents ? `${money(k.monthlyCents)}/mo` : ""].filter(Boolean).join(" + ");
+  const soldPhrase = (k) => k.paidCents || !k.monthlyCents ? `${money(k.paidCents)} paid${k.monthlyCents ? ` and ${money(k.monthlyCents)}/mo sold` : ""}` : `${money(k.monthlyCents)}/mo sold`;
   function homeControls() {
     const todayIso = isoDay(new Date());
     return `<div class="filters home-range" role="group" aria-label="Time range">
@@ -165,15 +186,18 @@
   // One bar per day in the range: how many conversations, and how many ended paid.
   function dayBars(s, k) {
     const days = [];
-    for (let t = k.win.from; t < k.win.to && days.length < 31; t = addDays(new Date(t), 1).getTime()) days.push(t);
+    for (let t = Math.max(k.win.from, midnight(addDays(new Date(k.win.to), -31)).getTime()); t < k.win.to && days.length < 31; t = addDays(new Date(t), 1).getTime()) days.push(t);
     if (days.length < 2) return "";
+    const base = new Date(s.generatedAt || Date.now()).getTime();
     const rows = days.map((t) => {
-      const end = addDays(new Date(t), 1).getTime(), mine = k.done.filter((c) => { const x = startedAt(s, c); return x >= t && x < end; });
-      return { t, n: mine.length, paid: mine.filter((c) => c.outcome === "purchased").length };
+      const end = addDays(new Date(t), 1).getTime(), at = (m) => { const ms = base - m * 60000; return ms >= t && ms < end; };
+      let n = 0, paid = 0;
+      for (const c of k.active) { const e = eventsOf(c); n += e.calls.filter(at).length + e.texts.filter(at).length; paid += e.sales.filter((x) => x.kind === "paid" && at(x.t)).length; }
+      return { t, n, paid };
     });
     const max = Math.max(1, ...rows.map((r) => r.n));
-    return `<section class="block"><header class="block-head"><h2>By day</h2></header>
-      <div class="card dbars" role="img" aria-label="Conversations per day">${rows.map((r) => `<div class="dbar" title="${esc(fmtDay(new Date(r.t)))}: ${plural(r.n, "conversation")}, ${r.paid} paid"><span class="dbar-fill"><i style="height:${Math.round((r.n / max) * 100)}%"></i></span><small>${new Date(r.t).getDate()}</small></div>`).join("")}</div></section>`;
+    return `<section class="block"><header class="block-head"><h2>Calls and texts by day</h2></header>
+      <div class="card dbars" role="img" aria-label="Calls and texts per day">${rows.map((r) => `<div class="dbar" title="${esc(fmtDay(new Date(r.t)))}: ${r.n} calls and texts, ${r.paid} paid"><span class="dbar-fill"><i style="height:${Math.round((r.n / max) * 100)}%"></i></span><small>${new Date(r.t).getDate()}</small></div>`).join("")}</div></section>`;
   }
 
   function renderHome(s) {
@@ -181,7 +205,7 @@
     const hour = new Date().getHours();
     const hello = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-    const recent = k.done.slice(0, 5);
+    const recent = k.active.slice(0, 5);
     const n = k.review.length;
     const lead = n ? `<em>${plural(n, "conversation")}</em> ${n === 1 ? "needs" : "need"} you.` : "Nothing needs you.";
     const figure = (label, value, cls, dot, note) => `<div><dt><span class="dot ${dot}"></span>${label}</dt><dd class="num ${cls}">${value}${note ? `<small>${note}</small>` : ""}</dd></div>`;
@@ -189,9 +213,9 @@
       ${homeControls()}
       <section class="hero">
         <p class="eyebrow">${hello}, ${esc(profile().name)} <span aria-hidden="true">·</span> ${today}</p>
-        <h2 class="hero-line">${lead} <span>${money(k.paidCents)} paid by the agent ${k.win.phrase}.</span></h2>
+        <h2 class="hero-line">${lead} <span>${soldPhrase(k)} by the agent ${k.win.phrase}.</span></h2>
         <dl class="figures card">
-          ${figure("Calls handled", k.handled, "", "", k.win.label)}${figure("Sales paid", k.paid, "accent", "", money(k.paidCents))}${figure("Not paid", k.notPaid, "bad", "bad", "after a purchase attempt")}${figure("Saved for customers", money(k.saved), "save", "ok", "from advice and offers")}
+          ${figure("Calls handled", k.calls, "", "", `${plural(k.customers, "customer")}${k.texts ? ` · ${plural(k.texts, "text")}` : ""}`)}${figure("Sales paid", k.paid, "accent", "", soldNote(k))}${figure("Not paid", k.notPaid, "bad", "bad", "after a purchase attempt")}${figure("Saved for customers", money(k.saved), "save", "ok", "from advice and offers")}
         </dl>
         ${k.live ? `<p class="active-line small">${icon("phone")}<b>Active now</b><span class="muted">${esc(k.live.customer)} is on a ${esc(CHANNEL[k.live.channel] === "Voice" ? "call" : "text thread")} about ${esc(k.live.intent.charAt(0).toLowerCase() + k.live.intent.slice(1))}.</span></p>` : ""}
       </section>
@@ -211,7 +235,6 @@
   const filterConvs = (s) => {
     const q = ui.convQuery.trim().toLowerCase();
     return s.conversations
-      .filter((c) => c.status !== "live")
       .filter((c) => ui.convOutcome === "all" || outcomeOf(c) === ui.convOutcome)
       .filter((c) => !q || [c.customer, c.intent].join(" ").toLowerCase().includes(q));
   };
@@ -269,8 +292,8 @@
   }
 
   // A sale is a finished purchase attempt: paid by the agent, or not paid. Advice-only conversations are not sales.
-  const isSale = (c) => c.status !== "live" && (c.outcome === "purchased" || c.outcome === "not_paid");
-  const TIMES = { 1: "Today", 7: "Last 7 days", 30: "Last 30 days" };
+  const isSale = (c) => (c.status !== "live" || c.outcome === "purchased") && (c.outcome === "purchased" || c.outcome === "not_paid");
+  const TIMES = { 1: "Today", 7: "Last 7 days", 30: "Last 30 days", all: "All time" };
   const saleDate = (min) => {
     const d = new Date(Date.now() - min * 60000), days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
     if (days === 0) return `Today, ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
@@ -279,7 +302,7 @@
 
   // Region and time narrow both tabs, so the list and the charts always count the same sales.
   const salesInScope = (s) => s.conversations.filter(isSale).sort((a, b) => a.started - b.started)
-    .filter((c) => c.started < Number(ui.saleTime) * DAY)
+    .filter((c) => ui.saleTime === "all" || c.started < Number(ui.saleTime) * DAY)
     .filter((c) => ui.saleRegion === "all" || c.region === ui.saleRegion);
   const isPaid = (c) => c.outcome === "purchased";
   const optHtml = (v, cur, label) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
@@ -319,7 +342,7 @@
         <tbody>${rows.map((c) => `<tr class="clickable" data-conv="${esc(c.id)}">
           <td><span class="who">${avatar(c.customer)}<span><button class="row-link" type="button" data-conv="${esc(c.id)}" aria-label="Open sale to ${esc(c.customer)}">${esc(c.customer)}</button><div class="small muted show-sm">${esc(c.item)} · ${saleDate(c.started)}</div></span></span></td>
           <td class="hide-sm">${esc(c.item)}</td>
-          <td class="right money">${money(c.amount_cents)}</td>
+          <td class="right money">${saleAmount(c)}</td>
           <td class="hide-sm">${esc(c.region)}</td>
           <td class="hide-sm"><span class="t-mono">${saleDate(c.started)}</span></td>
           <td>${pay(c)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No sales match. <button class="btn ghost" type="button" data-sale-clear>Clear filters</button></td></tr>`}</tbody>
@@ -328,6 +351,8 @@
 
   // ---------- analytics: plain SVG and CSS, counted from the same sales as the list ----------
   const chartBlock = (title, takeaway, body) => `<section class="chart card"><h3>${title}</h3><p class="small muted">${takeaway}</p>${body}</section>`;
+  // What a sale is worth: cash due today, plus the monthly price when the customer is on a recurring plan.
+  const saleAmount = (c) => c.monthly_cents ? `${c.amount_cents ? `${money(c.amount_cents)} + ` : ""}${money(c.monthly_cents)}/mo` : money(c.amount_cents);
   const sumCents = (rows) => rows.reduce((n, c) => n + (c.amount_cents || 0), 0);
   const group = (rows, key) => rows.reduce((m, c) => ((m[key(c)] ||= []).push(c), m), {});
   const hbars = (items) => { // items: [{label, value, note}]; bar width is relative to the largest
@@ -337,8 +362,9 @@
 
   function renderAnalytics(rows) {
     if (!rows.length) return `<p class="empty">No sales in this range. <button class="btn ghost" type="button" data-sale-clear>Clear filters</button></p>`;
-    const days = Number(ui.saleTime), paid = rows.filter(isPaid), notPaid = rows.length - paid.length;
-    const span = days === 1 ? "the last 24 hours" : `the last ${days} days`;
+    const days = ui.saleTime === "all" ? Math.min(120, Math.max(30, Math.ceil(Math.max(...rows.map((c) => c.started)) / DAY) + 1)) : Number(ui.saleTime);
+    const paid = rows.filter(isPaid), notPaid = rows.length - paid.length;
+    const span = ui.saleTime === "all" ? "all time" : days === 1 ? "the last 24 hours" : `the last ${days} days`;
 
     // 1. Sales per day (per hour when the range is one day), paid and not paid stacked.
     const unit = days === 1 ? 60 : DAY, n = days === 1 ? 24 : days, W = 20, H = 150;
@@ -587,10 +613,11 @@
         <section class="report-sec"><p class="section-label">${t.account_id ? `Account ${esc(t.account_id)}` : "Prospect"}</p>
           <div class="meta cust">
             ${row("Segment", esc(t.segment || ""))}${row("Plan", esc(t.plan || ""))}${row("Lines", t.line_count != null ? esc(String(t.line_count)) : "")}
-            ${row(t.account_id ? "Monthly bill" : "Budget", t.bill_cents != null ? esc(usd(t.bill_cents)) + (t.bill_change_pct ? ` <span class="small muted">${t.bill_change_pct > 0 ? "+" : ""}${(t.bill_change_pct * 100).toFixed(1)}% vs recent</span>` : "") : "")}
+            ${row(t.account_id ? "Monthly bill" : "Budget", t.bill_cents != null ? esc(usd(t.bill_cents)) + (t.deals?.length ? "/mo" : "") + (t.bill_was_cents != null ? ` <span class="small muted">was ${esc(usd(t.bill_was_cents))}</span>` : "") + (t.bill_change_pct ? ` <span class="small muted">${t.bill_change_pct > 0 ? "+" : ""}${(t.bill_change_pct * 100).toFixed(1)}% vs recent</span>` : "") : "")}
             ${row("Tenure", esc(tenure))}${row("Credit", esc(t.credit_tier || ""))}${row("Phone financing", t.financing_cents ? esc(usd(t.financing_cents)) + " owed" : t.account_id ? "Paid off" : "")}
             ${row("Support (90d)", t.support_90d != null ? `${t.support_90d}${t.unresolved_90d ? ` · ${t.unresolved_90d} open` : ""}` : "")}${row("Upgrade-ready lines", t.upgrade_lines != null && t.account_id ? esc(String(t.upgrade_lines)) : "")}
           </div>
+          ${(t.deals || []).map((d) => `<p class="small muted">Plan change: ${esc(d.plan)} on ${d.lines} line${d.lines === 1 ? "" : "s"}, ${esc(usd(d.monthly_cents))}/mo${d.credit_cents ? ` after a ${esc(usd(d.credit_cents))}/mo credit` : ""} for ${d.months} months${d.ends ? `, ends ${esc(d.ends)}` : ""}.</p>`).join("")}
           ${t.devices?.length ? `<p class="small muted">${t.devices.map(esc).join(" · ")}</p>` : ""}
           ${t.household?.length > 1 ? `<p class="small muted">Household: ${t.household.map((h) => esc(`${h.name} (${h.label})`)).join(", ")}</p>` : ""}
         </section>
@@ -676,7 +703,7 @@
       else if (d.go) { setMenu(false); location.hash = `#/${d.go}`; }
       else if ("convClear" in d) { ui.convOutcome = "all"; ui.convQuery = ""; render(); }
       else if (d.saleTab) { ui.saleTab = d.saleTab; render(); $(`[data-sale-tab="${d.saleTab}"]`).focus(); }
-      else if ("saleClear" in d) { ui.saleRegion = "all"; ui.saleTime = "30"; ui.salePay = "all"; ui.saleQuery = ""; render(); }
+      else if ("saleClear" in d) { ui.saleRegion = "all"; ui.saleTime = "all"; ui.salePay = "all"; ui.saleQuery = ""; render(); }
       else if ("custClear" in d) { ui.custRegion = "all"; ui.custStatus = "all"; ui.custQuery = ""; render(); }
       else if ("promoOpen" in d) { ui.promoForm = { code: "", kind: "cents", amount: "", uses: "", requires: "", errors: {} }; render(); $("#pf-code").focus(); }
       else if ("promoCancel" in d) { ui.promoForm = null; render(); $("[data-promo-open]").focus(); }

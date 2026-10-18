@@ -26,6 +26,10 @@ export async function listTmoConsoleCustomers(orgId: ObjectId, limit = 500) {
   for (const a of accounts as any[]) {
     const p = a.profile ?? {}, x = a.context ?? {}, persona = personaByAccount.get(a.accountId), contact = contactByRef.get(a.accountId);
     const lines = (x.lines ?? []) as any[];
+    // The agent's applied deals set what the customer pays now: the bill is those deals' monthly totals, not the stale synced figure.
+    const active = ((x.deals ?? []) as any[]).filter((d) => d.status === "active");
+    const synced = x.billing?.latest_total_cents ?? null;
+    const bill = active.length ? active.reduce((n, d) => n + (d.monthlyCents ?? 0), 0) : synced;
     out.push({
       id: a.accountId, name: short(p.fullName ?? p.displayName ?? a.accountId), phone: phone(contact), region: p.region ?? "Unknown",
       status: REL_STATUS[p.relationship] ?? "Active",
@@ -34,8 +38,10 @@ export async function listTmoConsoleCustomers(orgId: ObjectId, limit = 500) {
         segment: a.segment, tenure_months: a.tenureMonths, credit_tier: a.creditTier, autopay: Boolean(a.autopay), discount_group: a.discountGroup ?? null,
         language: p.voice?.language ?? a.language, relationship: p.relationship, tone: p.tone, channel_pref: p.channelPref,
         household: (p.household ?? []).map((h: any) => ({ name: h.name, label: h.label, role: h.role })),
-        plan: lines[0]?.plan_name ?? null, line_count: lines.length, bill_cents: x.billing?.latest_total_cents ?? null,
-        bill_change_pct: x.billing?.change_pct_vs_prior_avg ?? null,
+        plan: lines[0]?.plan_name ?? null, line_count: lines.length, bill_cents: bill,
+        bill_change_pct: active.length ? null : x.billing?.change_pct_vs_prior_avg ?? null,
+        bill_was_cents: active.length && synced != null && synced !== bill ? synced : null,
+        deals: active.map((d) => ({ plan: d.plan, lines: d.lines, monthly_cents: d.monthlyCents, credit_cents: d.creditCents ?? 0, months: d.months, ends: d.endsAt ? new Date(d.endsAt).toISOString().slice(0, 10) : null })),
         financing_cents: lines.reduce((n: number, l: any) => n + (l.financing?.balance_cents ?? 0), 0),
         devices: lines.map((l: any) => (l.device ? `${l.device.name} (${l.device.age_months} mo${l.financing?.paid_off ? ", paid off" : ""})` : "Own phone")),
         upgrade_lines: x.eligibility?.upgrade_eligible_lines ?? 0, support_90d: x.support?.contacts_90d ?? null, unresolved_90d: x.support?.unresolved_90d ?? null,
