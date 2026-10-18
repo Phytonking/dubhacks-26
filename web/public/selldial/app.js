@@ -165,7 +165,7 @@
   function recentRow(c) {
     return `<li class="line"><button class="line-btn" type="button" data-conv="${esc(c.id)}" aria-label="Open conversation with ${esc(c.customer)}">
       <span class="line-who">${avatar(c.customer)}<span class="line-main"><span class="title">${esc(c.customer)}</span><span class="small muted">${esc(c.intent)} · ${via(c)}</span></span></span>
-      <span class="line-side stack">${outcomeChip(c)}<span class="t-mono">${ago(c.started)}</span></span>
+      <span class="line-side stack">${outcomeChip(c)}<span class="t-mono">${ago(c.last_t ?? c.started)}</span></span>
     </button></li>`;
   }
 
