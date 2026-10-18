@@ -35,7 +35,7 @@ Side rail with six items: **Home, Conversations, Customers, Sales, Settings, Abo
 - **Sales:** most recent first. Filters: region, time, customer, payment status (Paid by agent or Not paid). No charts or dense math.
 - **Settings:** Offers and discounts, Spend and approvals, Verification and handoff, Channels (Voice, SMS, iMessage, WhatsApp). No RCS, no Web chat, no Appearance.
 - **About:** short and well designed.
-- **Landing (`index.html`):** one centred column: the full logo, the line "The sell line that helps customers buy.", two compact side-by-side sign-in buttons ("Log in with T-Mobile" with the T mark, "Log in via another provider"), and a small demo note at the bottom. A faint dark magenta glow behind the centre. No heading, no masthead, no diagonal shapes.
+- **Landing (`index.html`):** one centred column: the full logo, the line "The cell line that helps customers buy.", two compact side-by-side sign-in buttons ("Log in with T-Mobile" with the T mark, "Log in via another provider"), and a small demo note at the bottom. A faint dark magenta glow behind the centre. No heading, no masthead, no diagonal shapes.
 
 ## Work order
 
