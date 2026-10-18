@@ -1,13 +1,15 @@
 import { ObjectId } from "mongodb";
-import { collections } from "./db";
+import { collections, getDb } from "./db";
 
 // Every query takes orgId. Never query a tenant collection without it.
 
-// TODO(auth): resolve org from the signed-in user's session. Until auth lands,
-// the app serves the first org in the database (the seeded demo business).
+// TODO(auth): resolve org from the signed-in user's session. Until auth lands, the console serves the T-Mobile org
+// (the business with synced tmo_* data), else the oldest org (the seeded demo business).
 export async function getCurrentOrg() {
   const { orgs } = await collections();
-  const org = await orgs.findOne({}, { sort: { createdAt: 1 } });
+  const db = await getDb();
+  const tmo = await db.collection("tmo_meta").findOne({}, { projection: { orgId: 1 } });
+  const org = (tmo ? await orgs.findOne({ _id: tmo.orgId }) : null) ?? (await orgs.findOne({}, { sort: { createdAt: 1 } }));
   if (!org) throw new Error("No org found. Run `pnpm db:seed`.");
   return org;
 }

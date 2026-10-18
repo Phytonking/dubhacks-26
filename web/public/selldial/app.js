@@ -57,7 +57,7 @@
     return `<span class="chip"><span class="dot ${OUTCOME_DOT[o]}"></span>${OUTCOMES[o]}</span>`;
   }
   const channelKind = (c) => c.channel === "voice" ? "Voice" : "Text";
-  const statusChip = (st) => `<span class="chip"><span class="dot ${st === "Active" ? "ok" : "off"}"></span>${esc(st)}</span>`;
+  const statusChip = (st) => `<span class="chip"><span class="dot ${["Active", "Loyal"].includes(st) ? "ok" : st === "At risk" ? "bad" : "off"}"></span>${esc(st)}</span>`;
 
   const DAY = 1440; // minutes. Home counts today only; Sales looks further back.
   function stats(s) {
@@ -205,8 +205,8 @@
       <p class="count-line"><span class="tally">${rows.length}</span> ${rows.length === 1 ? "customer" : "customers"}, most recent first</p>
       <div class="card table-card"><div class="table-wrap flat"><table class="conv-table">
         <thead><tr><th>Name</th><th class="hide-sm">Phone</th><th class="hide-sm">Region</th><th>Status</th><th>Last conversation</th></tr></thead>
-        <tbody>${rows.map((c) => `<tr class="clickable" data-cust="${esc(c.name)}">
-          <td><span class="who">${avatar(c.name)}<button class="row-link" type="button" data-cust="${esc(c.name)}" aria-label="Open ${esc(c.name)}">${esc(c.name)}</button></span></td>
+        <tbody>${rows.map((c) => `<tr class="clickable" data-cust="${esc(c.id ?? c.name)}">
+          <td><span class="who">${avatar(c.name)}<button class="row-link" type="button" data-cust="${esc(c.id ?? c.name)}" aria-label="Open ${esc(c.name)}">${esc(c.name)}</button></span></td>
           <td class="mono hide-sm">${esc(c.phone)}</td>
           <td class="hide-sm">${esc(c.region)}</td>
           <td>${statusChip(c.status)}</td>
@@ -506,9 +506,36 @@
     document.querySelectorAll("tr[data-conv], tr[data-cust]").forEach((tr) => tr.classList.toggle("selected", (tr.dataset.conv || tr.dataset.cust) === id));
   }
 
+  // T-Mobile sandbox household details (synced from Atlas). Synthetic data; backstory is invented colour, not an account fact.
+  const usd = (c) => (c == null ? "—" : `$${(c / 100).toFixed(2)}`);
+  function tmoSections(t) {
+    const row = (k, v) => (v == null || v === "" ? "" : `<div><span>${esc(k)}</span>${v}</div>`);
+    const tenure = t.tenure_months != null ? `${Math.floor(t.tenure_months / 12)}y ${t.tenure_months % 12}m` : "";
+    return `
+        <section class="report-sec"><p class="section-label">${t.account_id ? `Account ${esc(t.account_id)}` : "Prospect"}</p>
+          <div class="meta cust">
+            ${row("Segment", esc(t.segment || ""))}${row("Plan", esc(t.plan || ""))}${row("Lines", t.line_count != null ? esc(String(t.line_count)) : "")}
+            ${row(t.account_id ? "Monthly bill" : "Budget", t.bill_cents != null ? esc(usd(t.bill_cents)) + (t.bill_change_pct ? ` <span class="small muted">${t.bill_change_pct > 0 ? "+" : ""}${(t.bill_change_pct * 100).toFixed(1)}% vs recent</span>` : "") : "")}
+            ${row("Tenure", esc(tenure))}${row("Credit", esc(t.credit_tier || ""))}${row("Phone financing", t.financing_cents ? esc(usd(t.financing_cents)) + " owed" : t.account_id ? "Paid off" : "")}
+            ${row("Support (90d)", t.support_90d != null ? `${t.support_90d}${t.unresolved_90d ? ` · ${t.unresolved_90d} open` : ""}` : "")}${row("Upgrade-ready lines", t.upgrade_lines != null && t.account_id ? esc(String(t.upgrade_lines)) : "")}
+          </div>
+          ${t.devices?.length ? `<p class="small muted">${t.devices.map(esc).join(" · ")}</p>` : ""}
+          ${t.household?.length > 1 ? `<p class="small muted">Household: ${t.household.map((h) => esc(`${h.name} (${h.label})`)).join(", ")}</p>` : ""}
+        </section>
+        ${t.persona ? `<section class="report-sec"><p class="section-label">Demo persona · ${esc(String(t.persona.theme).replaceAll("_", " "))}</p><p><b>${esc(t.persona.title)}</b></p><p class="muted">${esc(t.persona.scenario)}</p></section>` : ""}
+        <section class="report-sec"><p class="section-label">How the agent sees them</p>
+          <div class="meta cust">${row("Relationship", esc(t.relationship || ""))}${row("Language", esc(t.language || ""))}${row("Tone", esc(t.tone || ""))}${row("Prefers", esc(t.channel_pref || ""))}</div>
+          ${t.sensitivities?.length ? `<ul class="list">${t.sensitivities.map((x) => `<li><span class="small">${esc(x)}</span></li>`).join("")}</ul>` : ""}
+          ${t.backstory ? `<p class="small muted">Backstory (${t.backstory_source === "llm" ? "LLM-written" : "rule-based"}, invented): ${esc(t.backstory)}</p>` : ""}
+          ${t.facts?.length ? `<p class="small muted">They told us: ${t.facts.map(esc).join(" · ")}</p>` : ""}
+        </section>
+        ${t.voice_notes?.length ? `<section class="report-sec"><p class="section-label">Voice agent notes</p><ul class="list">${t.voice_notes.map((x) => `<li><span class="small">${esc(x)}</span></li>`).join("")}</ul></section>` : ""}`;
+  }
+
   function openCustomer(name, opener) {
-    const s = api.state, c = (s.customers || []).find((x) => x.name === name);
+    const s = api.state, c = (s.customers || []).find((x) => (x.id ?? x.name) === name) || (s.customers || []).find((x) => x.name === name);
     if (!c) return;
+    const key = c.id ?? c.name;
     const convs = custConvs(s, c.name);
     showDrawer(`${drawerHead(c.name, "Customer")}
       <div class="drawer-body">
@@ -517,12 +544,13 @@
           <div><span>Region</span>${esc(c.region)}</div>
           <div><span>Status</span>${statusChip(c.status)}</div>
         </div>
+        ${c.tmo ? tmoSections(c.tmo) : ""}
         <section class="report-sec"><p class="section-label">Conversations</p>
           ${convs.length ? `<ul class="list">${convs.map((x) => `<li><button class="conv-pick" type="button" data-conv="${esc(x.id)}" data-from="${esc(c.name)}" aria-label="Open ${esc(x.intent)}">
             <span class="grow"><span class="title">${esc(x.intent)}</span><span class="small muted">${channelKind(x)} · ${ago(x.started)}</span></span>${outcomeChip(x)}</button></li>`).join("")}</ul>` : `<div class="muted">No finished conversations yet.</div>`}
         </section>
       </div>`, opener);
-    markSelected(c.name);
+    markSelected(key);
   }
 
   function closeDrawer() {

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PRD — T-Mobile Data Integration + Customer Memory + Persona Layer</title>
+<style>
+  :root{
+    --bg:#fafaf7; --fg:#1a1a17; --muted:#66655e; --line:#e3e1d8; --card:#fff;
+    --accent:#2f5d50; --accent-soft:#e4efe9; --warn:#9a5b00; --warn-soft:#fbf0dc; --bad:#9b2c2c;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px 96px;display:grid;grid-template-columns:200px 1fr;gap:48px}
+  nav{position:sticky;top:0;align-self:start;padding-top:48px;font-size:14px}
+  nav a{display:block;color:var(--muted);text-decoration:none;padding:4px 0}
+  nav a:hover{color:var(--accent)}
+  nav .t{font-weight:600;color:var(--fg);margin-bottom:10px}
+  main{padding-top:48px;min-width:0}
+  h1{font-size:34px;line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:23px;margin:56px 0 12px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+  h3{font-size:16px;margin:26px 0 6px}
+  p{margin:8px 0}
+  .meta{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-weight:600;margin-right:6px}
+  .pill.warn{background:var(--warn-soft);color:var(--warn)}
+  code{font-family:var(--mono);font-size:13px;background:#efede4;padding:1px 5px;border-radius:4px}
+  pre{background:#1d2421;color:#e8efe9;padding:16px 18px;border-radius:8px;overflow:auto;font:12.5px/1.55 var(--mono)}
+  pre code{background:none;padding:0;color:inherit}
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:12px 0;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f1efe6;font-weight:600}
+  .callout{background:var(--accent-soft);border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .callout.warn{background:var(--warn-soft);border-color:var(--warn)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+  .card h3{margin-top:4px}
+  ul,ol{padding-left:22px;margin:8px 0}
+  li{margin:3px 0}
+  svg{max-width:100%;height:auto}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;overflow:auto}
+  footer{margin-top:64px;color:var(--muted);font-size:13px}
+  a{color:var(--accent)}
+  @media(max-width:860px){.wrap{grid-template-columns:1fr}nav{display:none}.grid2{grid-template-columns:1fr}}
+</style>
+</head><body><div class="wrap"><nav><div class="t">Contents</div><a href="#1-summary">1. Summary</a><a href="#2-goals">2. Goals / non-goals</a><a href="#3-source">3. Source data: what T-Mobile gives us</a><a href="#4-architecture">4. Architecture: three data paths</a><a href="#5-atlas">5. Atlas changes</a><a href="#6-knowledge">6. Path A: knowledge backfill</a><a href="#7-customers">7. Path B: customer linking + snapshots</a><a href="#8-persona">8. Persona layer: making it feel like a person</a><a href="#9-memory">9. Memory: how it stays</a><a href="#10-tools">10. Agent tools (live API)</a><a href="#11-guardrails">11. Guardrails and privacy</a><a href="#12-demo">12. Demo scripts per theme</a><a href="#13-phases">13. Phases and acceptance tests</a><a href="#14-risks">14. Risks and open questions</a></nav><main>
+<h1>PRD — T-Mobile Data Integration + Customer Memory + Persona Layer</h1>
+<p class="meta">Status: Draft v0.2 (Atlas migration implemented) · 2026-10-17 · Owner: Avi Agola · Companion to <code>PRD.html</code>, <code>PRD-agent-runtime-photon-voice.html</code>. Source repo: <code>github.com/mageshkumarj/dubhacks</code> (T-Mobile hackathon sandbox, all stub data).</p>
+
+<div class="callout"><strong>Status (2026-10-17): Atlas migration shipped.</strong> The decision since v0.1 is to migrate the raw dataset into Atlas (not just knowledge) and read it from there. Where the build differs from the sections below:
+<ul>
+<li><strong>Collections:</strong> <code>tmo_devices</code> (with the 0-60 month trade-in curve embedded), <code>tmo_plans</code>, <code>tmo_addons</code>, <code>tmo_promotions</code>, <code>tmo_accounts</code> (one doc per household: lines with 12 months of usage, add-ons, billing, support, signals embedded), <code>tmo_personas</code>, <code>tmo_meta</code>. All carry <code>orgId</code> and a unique <code>(orgId, naturalKey)</code> index. 5,042 households / 11,944 lines / about 35 MB.</li>
+<li><strong>Snapshots replaced by <code>tmo_accounts.context</code>:</strong> the full <code>/v1/customers/{id}/context</code> object is precomputed at import (the dataset is static, "as of 2026-10-01"). <code>scripts/verify-tmobile.mts</code> compares all 5,042 against the live API: <strong>0 mismatches</strong>. No <code>customer_snapshots</code> collection is needed until the data goes live.</li>
+<li><strong>Knowledge:</strong> 54 rows (11 plans, 21 offers, protection tiers, 3 add-on groups, accessories, 6 phone-maker lists, 11 rule/FAQ rows). Kinds stay <code>catalog</code> and <code>faq</code> (no enum change); provenance is in <code>source{system,ref,sha}</code>. Re-seed replaces only <code>source.system=tmobile</code> rows.</li>
+<li><strong>Contacts:</strong> 50 persona contacts in the T-Mobile org with <code>externalRefs</code>, <code>profile</code> (character sheet, <code>synthetic:true</code>) and <code>memory</code> (summary, openLoops). Demo handles are fictional <code>+1206555 0101-0150</code>. Re-seeding keeps learned facts and memory; <code>--reset-personas</code> restores them.</li>
+<li><strong>Agent wiring:</strong> the host (<code>recorded-io.ts</code> + <code>tmo-customer.ts</code>) builds a CUSTOMER section from Atlas and sends it in the turn config; the sandbox never touches Mongo. <code>agentd</code> search is now scored (title and whole-word weighting, rarity weighting, discount-variant plans down-ranked).</li>
+<li><strong>Profiles on every account (2026-10-17):</strong> <code>tmo_accounts.profile</code> exists for all 5,042 households (deterministic name, household names, tone, relationship, sensitivities, <code>voice{language, locale, notes[]}</code> for the voice agent, <code>backstory</code>). 521 backstories are LLM-written (all 50 personas except a few fallbacks, plus a deterministic 10% of accounts); the rest are rule-based. <code>backstorySource</code> says which, and <code>backstoryRule</code> always keeps the rule text. Run <code>pnpm db:profile:tmobile</code>. A contact created when a real number links to an account should fall back to the account's profile if it has none.</li>
+<li><strong>Not built yet:</strong> live pricing tools (cart/checkout stay in the Python sandbox API, §10), <code>memory.remember</code>/<code>memory.commit</code> write-back, rolling summary job, inbox contact panel, vector search. The T-Mobile org has no Photon line yet, so no real inbound reaches it; <code>getCurrentOrg()</code> still serves Sunrise (oldest org).</li>
+</ul>
+Run: <code>cd web &amp;&amp; pnpm db:seed:tmobile -- --db /path/to/dubhacks/data/sandbox.db</code> (or <code>TMO_DB_PATH</code>), then <code>pnpm tsx --env-file=.env.local scripts/verify-tmobile.mts --api http://localhost:8000</code>.</div>
+<h2 id="1-summary">1. Summary</h2>
+<p>T-Mobile is our example client. The sandbox gives us a catalog, 5,000 households and 50 ready-made personas, but <strong>no names, phone numbers, or message text</strong>. Our agent today only has keyword search over owner-written <code>knowledge</code> rows; it has no customer record in its prompt and no live tools.</p>
+<p>This PRD defines how the T-Mobile data gets into MongoDB Atlas and the agent, split by how fast the data changes:</p>
+<ul>
+<li><strong>Slow / policy data</strong> (plans, promos, rules) is <em>backfilled</em> into <code>knowledge</code> as chunks.</li>
+<li><strong>Customer data</strong> is <em>linked</em> to a <code>contact</code> by account id and <em>snapshotted</em> with a timestamp; the live API stays the source of truth.</li>
+<li><strong>Personality and memory</strong> are Atlas-owned: a character profile per contact, a rolling summary, learned facts and open commitments that persist across channels and sandbox restarts.</li>
+<li><strong>Actions</strong> (price a cart, check eligibility) go through audited agent tools that call the sandbox API.</li>
+</ul>
+<div class="callout"><strong>Principle.</strong> The sandbox API owns <em>facts about the account</em>. Atlas owns <em>the relationship</em>: who this person is to us, what we said, what we promised. Never let the agent state a price or eligibility from memory; it must come from a tool result or knowledge chunk from this turn or a snapshot with an age.</div>
+
+<h2 id="2-goals">2. Goals / non-goals</h2>
+<p><strong>Goals</strong></p>
+<ol>
+<li>An agent texting as T-Mobile answers plan, promo, trade-in and upgrade questions correctly from real sandbox rules, with zero invented numbers.</li>
+<li>Each of the 50 personas is a recognisable <em>person</em> (name, household, tone, history) the agent greets and remembers, not a row of fields.</li>
+<li>Anything learned or promised in a conversation survives restarts, sandbox sleep and channel changes (iMessage today, WhatsApp/SMS/voice later).</li>
+<li>Integration is a seed + adapter, not agent code: a second client (e.g. the Sunrise Bike Shop demo) must work with zero code changes (PRD.html phase 3 goal).</li>
+<li>Every external call is in <code>tool_calls</code>; every claim is traceable to a chunk, snapshot or tool result.</li>
+</ol>
+<p><strong>Non-goals</strong></p>
+<ul>
+<li>Mirroring all 5,000 accounts, 126k usage rows or 53k bills into Atlas.</li>
+<li>Real charges. Checkout in the sandbox is mock and in-memory.</li>
+<li>Scoring the churn labels. They are held out by the organizers and not in the repo.</li>
+<li>Customer-facing PII storage beyond the demo set.</li>
+</ul>
+
+<h2 id="3-source">3. Source data: what T-Mobile gives us</h2>
+<p>Findings from running the server locally (port 8765) and querying SQLite directly. Data is "as of" <strong>2026-10-01</strong>.</p>
+<table><thead><tr><th>Area</th><th>What exists</th><th>Gap for us</th></tr></thead><tbody>
+<tr><td>Catalog</td><td>62 devices (45 current, 17 legacy), 11 plans, 31 add-ons, 21 promos with machine-readable conditions, trade-in curves 0-60 months</td><td>No FAQ, policy prose or brand voice. Prices, deductibles, 3 retention promos, 12 accessories are invented</td></tr>
+<tr><td>Customers</td><td>5,042 accounts, 11,944 lines. <code>GET /v1/customers/{id}/context</code> returns plan, devices, financing, upgrade/trade-in eligibility, billing trend, support friction, churn proxies</td><td><strong>No names, phones, emails.</strong> Labels are "Line 1", "Teen A". Join to a message handle does not exist</td></tr>
+<tr><td>Support</td><td>11,214 contacts: channel, topic, sentiment, resolved</td><td>No message text. Agent can cite counts and topics, not content</td></tr>
+<tr><td>Personas</td><td>42 customers (<code>ACC-PERSONA-01..42</code>) + 8 prospects (<code>PROSPECT-01..08</code>), 10 per theme: cart_whisperer, matchmaker, next_best_moment, timekeeper, household_optimizer. Each has <code>title</code>, <code>scenario</code>, optional <code>starting_cart</code></td><td>Scenarios deliberately do not state the right answer. Only one line of identity per persona</td></tr>
+<tr><td>Commerce</td><td>Cart API prices correctly (financing by credit tier, trade-in, line pricing, protection tiers, promo eligibility with <code>reasons</code>)</td><td>Carts/orders in memory, reset on restart. Checkout needs <code>Idempotency-Key</code>; nothing is charged</td></tr>
+</tbody></table>
+<p>Verified example: <code>ACC-PERSONA-03</code> (iPhone 13, paid off, 40 months) with iPhone 17 and trade-in in cart priced to <code>$0 due today, $41.51/mo, $203.60 trade-in credit</code>. <code>/v1/promotions</code> marked 3 of 21 offers eligible and gave human-readable reasons for the other 18.</p>
+
+<h2 id="4-architecture">4. Architecture: three data paths</h2>
+<pre><code>                 T-Mobile sandbox (FastAPI + SQLite, stub)
+                   │ catalog/promos        │ customer context      │ cart / tradein / financing
+          (A) backfill │            (B) link + snapshot │                (C) live tool calls
+                   ▼                       ▼                        ▼
+   ┌─────────────────────────── MongoDB Atlas (system of record) ───────────────────────┐
+   │ knowledge + chunks │ contacts (+profile, memory) │ customer_snapshots │ tool_calls │
+   └──────────────▲──────────────────────▲───────────────────────────▲─────────────────┘
+                  │ search               │ load at turn start        │ audit
+          Daytona sandbox agent (persona prompt = org voice + contact character + memory)
+                  ▲
+   iMessage / WhatsApp / SMS / voice via Photon  (inbound handle → contact → account id)</code></pre>
+<table><thead><tr><th>Path</th><th>Data</th><th>Freshness</th><th>Where it lives</th></tr></thead><tbody>
+<tr><td>A. Backfill</td><td>Plans, promos, add-ons, financing/trade-in rules, device list, policy FAQ</td><td>Re-seeded when <code>metadata.content_sha256</code> changes</td><td><code>knowledge</code>, <code>knowledge_chunks</code></td></tr>
+<tr><td>B. Link + snapshot</td><td>Per-customer context, 50 persona accounts</td><td>Stamped <code>fetchedAt</code>; refreshed when older than 24h or on demand</td><td><code>contacts.externalRefs</code>, <code>customer_snapshots</code></td></tr>
+<tr><td>C. Live tools</td><td>Eligibility, promos for a cart, trade-in value, financing quote, cart ops</td><td>Always live</td><td>Result in reply; row in <code>tool_calls</code></td></tr>
+</tbody></table>
+
+<h2 id="5-atlas">5. Atlas changes</h2>
+<p>Validators in <code>web/src/lib/schema.ts</code> do not set <code>additionalProperties:false</code>, so new fields on existing collections are additive. Update <code>models.ts</code> and the validator together.</p>
+<h3>5.1 New and changed collections</h3>
+<table><thead><tr><th>Collection</th><th>Change</th><th>Fields</th></tr></thead><tbody>
+<tr><td><code>orgs</code></td><td>add</td><td><code>integrations.tmobile{baseUrl, datasetSha, asOf, stub:true}</code>; <code>brandVoice</code> filled for T-Mobile</td></tr>
+<tr><td><code>agents</code></td><td>add</td><td><code>toolsEnabled: string[]</code> (e.g. <code>tmo.context</code>), <code>guardrails.requireApprovalFor: string[]</code> (e.g. <code>tmo.checkout</code>), <code>disclosure</code> text</td></tr>
+<tr><td><code>contacts</code></td><td>add</td><td><code>externalRefs[{system:"tmobile", id:"ACC-PERSONA-03", kind:"account"|"prospect"}]</code>; <code>profile</code> (character, §8); <code>memory</code> (§9)</td></tr>
+<tr><td><code>customer_snapshots</code></td><td>new</td><td><code>orgId, contactId, system, externalId, asOf, fetchedAt, data (context JSON), hash</code>. Index <code>{contactId:1, fetchedAt:-1}</code>. Keep last 5</td></tr>
+<tr><td><code>knowledge</code></td><td>add</td><td><code>kind</code> enum gains <code>policy</code>, <code>promo</code>, <code>plan</code>, <code>device</code>; <code>source{system, ref, sha}</code> so re-seed upserts instead of duplicating</td></tr>
+<tr><td><code>tool_calls</code></td><td>reuse</td><td>already has <code>tool, args, status, ms, approvedBy</code>. Add optional <code>contactId</code> and <code>resultRef</code></td></tr>
+</tbody></table>
+<h3>5.2 Indexes</h3>
+<ul>
+<li><code>contacts</code>: unique partial on <code>{orgId, externalRefs.system, externalRefs.id}</code> so one account maps to one contact.</li>
+<li><code>knowledge</code>: unique partial on <code>{orgId, source.system, source.ref}</code> for idempotent seed.</li>
+<li><code>knowledge_chunks</code>: Atlas Search / vector index (add when keyword search proves too weak, see §6).</li>
+</ul>
+
+<h2 id="6-knowledge">6. Path A: knowledge backfill</h2>
+<p>Script <code>web/scripts/seed-tmobile.mts</code>, idempotent, reads the API (not SQLite) so it works against a hosted sandbox.</p>
+<table><thead><tr><th>Source</th><th>Chunking</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>/v1/catalog/plans</code></td><td>1 per plan</td><td>Render per-line price table and worked example ("Beyond, 3 lines = $105 + $75 + $50"), caps, perks, eligibility, line limits</td></tr>
+<tr><td><code>/v1/catalog/promotions</code></td><td>1 per promo</td><td>Plain-language conditions generated from the condition columns. Mark <code>source=stub</code> promos as "retention offers"</td></tr>
+<tr><td><code>/v1/catalog/addons</code></td><td>1 per kind + 1 protection-tier table</td><td>Protection tier → price → phone price band; deductibles flagged illustrative</td></tr>
+<tr><td><code>/v1/catalog/devices</code></td><td>1 per manufacturer family, current phones only</td><td>Name, tier, MSRP, protection tier. Legacy phones are not sold; keep them out of sales answers but available to the context tool</td></tr>
+<tr><td>README pricing rules</td><td>~8 rule chunks</td><td>Financing by credit tier, trade-in applies to first device, financed trade-in charges remaining balance, plan change = difference, new line pricing, promo conflicts, 12-month upgrade rule</td></tr>
+<tr><td>Authored by us</td><td>~20 FAQ chunks</td><td>Gap fill: upgrade timing guidance, when <em>not</em> to upsell, how to explain a bill change reason, port-in basics, escalation language</td></tr>
+</tbody></table>
+<ul>
+<li>Every chunk carries the stub notice in <code>agent.disclosure</code>, not in each chunk.</li>
+<li>Current <code>agentd.mjs</code> uses keyword overlap and takes top 3. With ~150 chunks this will miss paraphrases ("cheaper for my family" vs "4 Line Offer"). Phase 2: embeddings in <code>knowledge_chunks.embedding</code> + Atlas Vector Search. Phase 1 mitigation: put plan names and synonyms in each chunk title.</li>
+<li>Re-seed compares <code>metadata.content_sha256</code> from the sandbox to <code>orgs.integrations.tmobile.datasetSha</code>; skip when equal.</li>
+</ul>
+
+<h2 id="7-customers">7. Path B: customer linking + snapshots</h2>
+<h3>7.1 Identity bridge</h3>
+<p>The dataset has no handles. We create the bridge:</p>
+<ol>
+<li>Seed creates one <code>contact</code> per persona (50) with a demo handle (Photon test number or a placeholder E.164 under <code>+1555…</code> for non-live demos) and <code>externalRefs=[{tmobile, ACC-PERSONA-nn}]</code>.</li>
+<li>Inbound message: <code>(orgId, channel, address)</code> → contact → <code>externalRefs</code> → account id. Already unique-indexed, no router change.</li>
+<li>Unknown handle: contact is <code>stage:new</code> with no <code>externalRefs</code>. Agent treats them as a prospect and may ask for lines, budget, usage (the matchmaker flow). It never guesses an account. Linking to a real account later is an owner action, logged.</li>
+<li>Prospects (<code>PROSPECT-nn</code>) get <code>externalRefs.kind="prospect"</code> and their <code>stated_*</code> fields as facts. No context call exists for them.</li>
+</ol>
+<h3>7.2 Snapshots</h3>
+<ul>
+<li>At turn start, if the contact has an account ref and the newest snapshot is older than the TTL (default 24h) or the sandbox <code>as_of</code> changed, call <code>/context</code> and insert a snapshot. Fall back to the last snapshot if the API is down, and tell the agent its age.</li>
+<li>The prompt gets a <strong>compact digest</strong>, not the raw JSON (about 300 tokens): plan, lines with device age and payoff status, eligible lines, latest bill and change reason, support 90d count, risk signals.</li>
+<li>Diff against the previous snapshot on refresh (bill rose, installment ended, new support contact). Diffs become <em>events</em> the agent can mention naturally and feed §9.</li>
+</ul>
+
+<h2 id="8-persona">8. Persona layer: making it feel like a person</h2>
+<p>Two layers, both stored in Atlas, both generated once and then frozen so the same person is the same person every demo.</p>
+<h3>8.1 Agent voice (per org, set once)</h3>
+<p><code>orgs.brandVoice</code> + <code>agents.persona</code> for T-Mobile: direct, friendly, plain language, no jargon, never pushy, always says what it costs per month and today. Includes do/don't examples. This is the "personified" assistant.</p>
+<h3>8.2 Customer character sheet (per contact)</h3>
+<p>Dataset fields are mapped deterministically; invented flavour is generated once with a fixed seed from the persona id, marked <code>synthetic:true</code>, and never contradicts the dataset.</p>
+<table><thead><tr><th><code>contacts.profile</code> field</th><th>From</th><th>Effect on the agent</th></tr></thead><tbody>
+<tr><td><code>displayName</code>, <code>householdNames[]</code></td><td>Generated; ties to <code>member_label</code>/<code>member_role</code></td><td>"Hey Maya", "your daughter's line". Replaces "Teen A"</td></tr>
+<tr><td><code>language</code></td><td><code>accounts.language</code></td><td>Reply language. <code>other</code> triggers a polite English reply and offer of a human</td></tr>
+<tr><td><code>channelPref</code></td><td><code>contact_preference</code> (app/sms/email/call)</td><td>Default length and whether to suggest a call or the app</td></tr>
+<tr><td><code>tone</code> (terse | chatty | cautious | analytical)</td><td>Derived from segment, tenure, sentiment history; override per persona</td><td>Reply length, emoji, how much detail up front</td></tr>
+<tr><td><code>relationship</code></td><td>Tenure, support sentiment, competitor score, port-out flag</td><td>Loyal long-timer vs wary vs at-risk. Sets how soft or direct the agent is</td></tr>
+<tr><td><code>sensitivities[]</code></td><td>Support topics + unresolved</td><td>"Had 3 billing complaints: do not open with an upsell"</td></tr>
+<tr><td><code>goal</code>, <code>theme</code></td><td>Persona <code>scenario</code>, <code>primary_theme</code></td><td>What this person probably wants; stored as a hypothesis, not stated to them</td></tr>
+<tr><td><code>backstory</code> (2-3 lines)</td><td>Generated from scenario, <code>synthetic:true</code></td><td>Colour only. Never used as evidence for an eligibility or price statement</td></tr>
+</tbody></table>
+<p>The prompt composes <strong>org voice → character sheet → snapshot digest → memory → relevant knowledge</strong> in that order, so identity and hard constraints sit before retrieved text.</p>
+<div class="callout warn"><strong>Honesty rule.</strong> Personification changes <em>how</em> the agent talks, not <em>what is true</em>. Backstory and "knowing" the customer must come from the dataset; invented colour is never presented as a fact about the real account. The agent never claims to be a human; the disclosure text from <code>agents.disclosure</code> goes in the first message of a new conversation.</div>
+
+<h2 id="9-memory">9. Memory: how it stays</h2>
+<p>Four layers, each with an owner and a write rule. All in Atlas, loaded by the host at turn start (the sandbox may sleep; nothing is stored only there).</p>
+<table><thead><tr><th>Layer</th><th>Field</th><th>Written by</th><th>Lifetime</th></tr></thead><tbody>
+<tr><td>Account state</td><td><code>customer_snapshots</code></td><td>Host, from API</td><td>Last 5 versions</td></tr>
+<tr><td>Learned facts</td><td><code>contacts.facts[]</code> (exists: text, sourceMessageId, learnedAt)</td><td>Agent via <code>memory.remember</code>, host validates</td><td>Until contradicted or owner deletes. Add <code>confidence</code>, <code>supersededBy</code></td></tr>
+<tr><td>Conversation summary</td><td><code>contacts.memory.summary</code>, <code>summaryUpToMsgId</code></td><td>Host, after every N messages or idle gap</td><td>Rolling. Recent 12 messages stay verbatim, older ones fold into the summary</td></tr>
+<tr><td>Open loops</td><td><code>contacts.memory.openLoops[{text, dueAt, status, sourceMessageId}]</code></td><td>Agent via <code>memory.commit</code></td><td>Until done. Surfaced first next turn ("you asked me to check the trade-in value on your iPhone 13")</td></tr>
+</tbody></table>
+<h3>Rules</h3>
+<ul>
+<li><strong>Facts vs dataset.</strong> Facts store what the customer <em>said</em> ("moving in January", "daughter needs a phone by her birthday"). They never duplicate dataset values; those come from the snapshot so they cannot go stale.</li>
+<li><strong>Provenance.</strong> Every fact and open loop links a <code>sourceMessageId</code>. Facts with no source are rejected by the host.</li>
+<li><strong>Contradiction.</strong> A new fact that conflicts marks the old one <code>supersededBy</code>; nothing is hard-deleted so the inbox can show history.</li>
+<li><strong>Cross-channel.</strong> Memory hangs off the contact, not the handle, so iMessage → WhatsApp → voice shares it (already the conversation model: one per contact).</li>
+<li><strong>Owner control.</strong> Inbox contact panel shows profile, facts, open loops, snapshot age and a "forget" button. Edits are audited.</li>
+<li><strong>Reset for demos.</strong> <code>seed-tmobile.mts --reset-personas</code> restores profiles/memory to the seeded state without touching knowledge.</li>
+</ul>
+
+<h2 id="10-tools">10. Agent tools (live API)</h2>
+<p>Implemented in <code>agentd</code> as thin HTTP wrappers, called through the host so sandbox network egress stays allow-listed. Each call writes <code>tool_calls</code>.</p>
+<table><thead><tr><th>Tool</th><th>Backs onto</th><th>Class</th></tr></thead><tbody>
+<tr><td><code>tmo.context</code></td><td><code>GET /v1/customers/{id}/context</code></td><td>read</td></tr>
+<tr><td><code>tmo.usage</code> / <code>tmo.billing</code> / <code>tmo.support</code></td><td>per-customer endpoints</td><td>read</td></tr>
+<tr><td><code>tmo.promotions</code></td><td><code>GET /v1/promotions?account_id=&amp;cart_id=</code></td><td>read; returns <code>eligible</code> + <code>reasons</code></td></tr>
+<tr><td><code>tmo.tradein_value</code> / <code>tmo.tradein_curve</code></td><td><code>/v1/tradein/*</code></td><td>read; curve answers "wait or upgrade now"</td></tr>
+<tr><td><code>tmo.financing_quote</code></td><td><code>POST /v1/financing/quote</code></td><td>read</td></tr>
+<tr><td><code>tmo.cart_*</code> (create, add, remove, get)</td><td><code>/v1/cart*</code></td><td>write, low risk, in-memory; cart id stored in <code>memory.openLoops</code></td></tr>
+<tr><td><code>tmo.checkout</code></td><td><code>POST /v1/checkout</code> + <code>Idempotency-Key</code></td><td>write, <strong>requires owner approval</strong> (<code>approvedBy</code>). Key = <code>conversationId:cartId</code></td></tr>
+<tr><td><code>knowledge.search</code></td><td>exists</td><td>read</td></tr>
+<tr><td><code>memory.remember</code> / <code>memory.commit</code></td><td>Atlas via host</td><td>write, validated</td></tr>
+</tbody></table>
+<p>Cart state lives in sandbox memory and resets on restart, so the host stores the cart contents (items array) with the open loop and rebuilds the cart if the id is gone.</p>
+
+<h2 id="11-guardrails">11. Guardrails and privacy</h2>
+<ul>
+<li><strong>No invented numbers.</strong> Existing system prompt rule stays. Add: money figures must trace to a tool result or chunk from this turn; snapshot values are quoted with "as of &lt;date&gt;".</li>
+<li><strong>Stub disclosure.</strong> Everything is synthetic; demo UI shows a "sandbox data" badge, agent never says an offer is real.</li>
+<li><strong>Proportionate action.</strong> For next_best_moment personas (false alarms vs real churn risk) the guardrail is to prefer a human handoff over a discount. <code>guardrails.escalateOn</code> seeded with: <code>cancellation_inquiry</code> topic in 30d, <code>port_out_inquiry=1</code>, 3+ unresolved contacts, explicit request for a person.</li>
+<li><strong>Discount ceiling.</strong> <code>maxDiscountPct</code> low (e.g. 0 for monthly price; promo offers come only from eligible API results).</li>
+<li><strong>Don't upsell the wrong moment.</strong> Rule chunks: no upgrade pitch within 3 months of an upgrade with a balance owed; a financed trade-in charges the balance today, say so.</li>
+<li><strong>Minimum data.</strong> The prompt digest excludes anything not needed for the question; raw context is never shown to the customer wholesale.</li>
+<li><strong>Secrets.</strong> Sandbox base URL is not secret; any future real API key stays host-side per the existing platform-secrets rule.</li>
+</ul>
+
+<h2 id="12-demo">12. Demo scripts per theme</h2>
+<table><thead><tr><th>Theme</th><th>Persona</th><th>Customer says</th><th>Agent should</th></tr></thead><tbody>
+<tr><td>timekeeper</td><td><code>ACC-PERSONA-03</code> (paid-off iPhone 13, 40mo)</td><td>"Should I upgrade?"</td><td>Pull context + trade-in value, quote iPhone 17 with trade-in via cart ($0 today, $41.51/mo in the verified run), note OLD-PHONE and loyalty credits, offer to hold the cart</td></tr>
+<tr><td>timekeeper</td><td><code>ACC-PERSONA-07</code> (upgraded 3 months ago, owes most)</td><td>Upgrade offer arrived</td><td>Explain remaining balance would be charged today; recommend waiting; set open loop to revisit</td></tr>
+<tr><td>next_best_moment</td><td><code>ACC-PERSONA-21</code> (6 years, no support, app use collapsed)</td><td>Silence / proactive outreach</td><td>Soft check-in, no discount, human on warm path; log fact on response</td></tr>
+<tr><td>matchmaker</td><td><code>PROSPECT-04</code> (family of four, streaming teens)</td><td>"What plan for 4 lines?"</td><td>Ask only what is missing, price 4-line options from the plan table, check 4 Line Offer eligibility</td></tr>
+<tr><td>household_optimizer</td><td><code>ACC-PERSONA-41</code> + related account</td><td>"Can we save money?"</td><td>Read both contexts, compare consolidated vs separate with the cart tool, note linked account needs its own consent</td></tr>
+<tr><td>cart_whisperer</td><td><code>PROSPECT-01</code> (switching, bringing number)</td><td>Phone in cart only</td><td>Use promotions <code>reasons</code> to suggest port-in, protection tier matching the phone, compatible accessories</td></tr>
+</tbody></table>
+<p>Memory demo: end a thread mid-decision, kill the sandbox, text again two days later on another channel. Agent opens with the open loop and uses the stored first name without re-asking.</p>
+
+<h2 id="13-phases">13. Phases and acceptance tests</h2>
+<table><thead><tr><th>Phase</th><th>Scope</th><th>Done when</th></tr></thead><tbody>
+<tr><td>1 · Backfill</td><td><code>seed-tmobile.mts</code> A path, org/agent config, voice, disclosure</td><td>10 canned questions (plan price for 3 lines, 55+ eligibility, protection tier for a $1,100 phone…) answered exactly from chunks; re-run seed creates no duplicates</td></tr>
+<tr><td>2 · Contacts + snapshots</td><td>50 persona contacts, <code>externalRefs</code>, snapshot service, digest in prompt</td><td>Persona 03 greeted by name; unknown handle never gets an account; stale-snapshot path tested with API down</td></tr>
+<tr><td>3 · Tools</td><td>Read tools, cart tools, audit rows, approval-gated checkout</td><td>Verified numbers above reproduced through the agent; every tool call has a <code>tool_calls</code> row; checkout blocked without approval</td></tr>
+<tr><td>4 · Memory + profile</td><td>Character sheets, summary, facts, open loops, inbox panel, reset</td><td>Restart test: sandbox destroyed, next turn recalls fact + open loop; contradicting fact supersedes; "forget" removes from prompt</td></tr>
+<tr><td>5 · Retrieval quality</td><td>Embeddings + Atlas Vector Search; paraphrase eval set</td><td>Top-3 recall on 40 paraphrased questions beats keyword baseline</td></tr>
+</tbody></table>
+<p>Extend <code>agent/scripts/e2e.ts</code> with a T-Mobile mock server (spawn the sandbox repo's uvicorn) and add its checks to the test report.</p>
+
+<h2 id="14-risks">14. Risks and open questions</h2>
+<table><thead><tr><th>Risk / question</th><th>Mitigation or decision needed</th></tr></thead><tbody>
+<tr><td>Persona flavour read as fact about a real customer</td><td><code>synthetic:true</code> flag, honesty rule, backstory excluded from eligibility reasoning</td></tr>
+<tr><td>Keyword retrieval misses paraphrases</td><td>Synonyms in chunk titles now, vector search phase 5</td></tr>
+<tr><td>Snapshot stale versus live account</td><td>TTL + age in prompt + tools for anything pricing-related</td></tr>
+<tr><td>Sandbox restarts wipe carts</td><td>Host stores cart contents with open loop, rebuilds on 404</td></tr>
+<tr><td>Prompt size grows with memory</td><td>Digest not raw JSON, summary fold-in, cap facts to top 15 by recency/relevance</td></tr>
+<tr><td>Wrong tone for at-risk or angry customers</td><td>Sensitivities + escalateOn; human mode in inbox is the escape hatch</td></tr>
+<tr><td><strong>Open:</strong> demo phone numbers</td><td>Live Photon numbers for a few personas, placeholders for the rest?</td></tr>
+<tr><td><strong>Open:</strong> are tools proxied by the host or called from the sandbox?</td><td>Recommend host-proxied for audit and egress control</td></tr>
+<tr><td><strong>Open:</strong> hosted sandbox API</td><td>Run our own copy so carts do not collide between demos and CI</td></tr>
+<tr><td><strong>Open:</strong> who writes the FAQ/policy chunks</td><td>We draft; T-Mobile contact reviews</td></tr>
+<tr><td><strong>Open:</strong> does the judging include held-out churn scoring?</td><td>If so, we need a separate non-agent scoring path, out of scope here</td></tr>
+</tbody></table>
+<footer>Source data repo: github.com/mageshkumarj/dubhacks (synthetic, schema v9, as of 2026-10-01). Findings reproduced locally on 2026-10-17.</footer>
+</main></div></body></html>

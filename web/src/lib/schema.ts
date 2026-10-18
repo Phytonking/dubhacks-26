@@ -1,4 +1,5 @@
 import type { Db, Document } from "mongodb";
+import { tmoSpecs } from "./tmo-schema";
 
 // Single source of truth for collection validators + indexes.
 // Applied idempotently by `pnpm db:setup` (and by the seed script).
@@ -194,6 +195,7 @@ export const specs: CollectionSpec[] = [
     }),
     indexes: [{ keys: { orgId: 1, startedAt: -1 } }, { keys: { contactId: 1 } }],
   },
+  ...tmoSpecs, // T-Mobile sandbox data (tmo-schema.ts)
 ];
 
 /** Create missing collections, (re)apply validators, ensure indexes. Safe to re-run. */
