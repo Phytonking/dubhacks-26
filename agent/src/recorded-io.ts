@@ -18,7 +18,8 @@ export class PhotonAdapter implements ChannelAdapter {
   constructor(private photon: import("./photon").Photon, channel: ChannelId = "imessage") { this.channel = channel; }
   async send(_address: string, text: string, ref: ChannelRef, idempotencyKey: string) {
     if (!ref.spaceId || !ref.senderId) throw new Error("missing spaceId/senderId (a shared iMessage line cannot send an unsolicited first message)");
-    const m = await this.photon.sendText({ spaceId: ref.spaceId, senderId: ref.senderId, text, parentMessageId: ref.parentMessageId, idempotencyKey });
+    // No parentMessageId: SMS and shared-line iMessage spaces reject threaded replies (409 SPACE_NOT_SENDABLE).
+    const m = await this.photon.sendText({ spaceId: ref.spaceId, senderId: ref.senderId, text, idempotencyKey });
     return { channelMsgId: String(m.id) };
   }
 }
