@@ -4,7 +4,7 @@ import { fingerprint } from "@/lib/console-snapshot";
 // Server-sent events: tells the console when to refetch /api/console. Carries no customer data itself.
 // Uses a MongoDB change stream when the deployment supports it (Atlas, replica sets) and otherwise
 // polls a cheap fingerprint every 2s (the standalone dev server from `pnpm db:local` has no change streams).
-const WATCHED = ["messages", "conversations", "tool_calls", "agent_turns", "notifications", "approvals", "handoffs", "promos", "orders", "inbound_events", "checkout_quotes", "payment_requests", "payments", "contacts"];
+const WATCHED = ["messages", "conversations", "tool_calls", "agent_turns", "notifications", "approvals", "handoffs", "promos", "orders", "inbound_events", "checkout_quotes", "payment_requests", "payments", "calls", "contacts"];
 const POLL_MS = 2000;
 const HEARTBEAT_MS = 20000;
 
