@@ -683,5 +683,22 @@
   window.addEventListener("hashchange", () => { setMenu(false); closeDrawer(); render(); });
 
   const byRecent = (s) => s.conversations.sort((a, b) => a.started - b.started);
-  api.load().then(() => { byRecent(api.state); render(); });
+
+  // Live data: re-render when the server says something changed, unless the owner is typing or has a
+  // select open. In that case wait until they leave the field so nothing they typed is wiped.
+  let stale = false;
+  const editing = () => { const a = document.activeElement; return a && $("#view").contains(a) && a.matches("input, textarea, select"); };
+  function onLiveUpdate() {
+    byRecent(api.state);
+    if (editing()) { stale = true; return; }
+    stale = false;
+    render();
+  }
+  document.addEventListener("focusout", () => setTimeout(() => { if (stale && !editing()) onLiveUpdate(); }, 0));
+
+  api.load().then(() => {
+    byRecent(api.state);
+    render();
+    api.subscribe(onLiveUpdate, (st) => { document.documentElement.dataset.link = st; });
+  });
 })();
