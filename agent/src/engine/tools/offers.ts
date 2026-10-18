@@ -168,7 +168,7 @@ export const negotiation_accept: Tool = {
     const offer = { creditCents: credit, months: DEFAULT_AUTHORITY.maxMonths, plan: planName, lines: neg?.lines ?? a.lines ?? 1, gives: neg?.gives ?? [], summary: a.summary, status: "accepted", at: ctx.now };
     await ctx.db.collection("contacts").updateOne({ _id: ctx.contactId, orgId: ctx.orgId }, { $push: { "memory.offers": offer } as never, $unset: { "memory.negotiation": "" } });
     await ctx.db.collection("notifications").insertOne({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, kind: "deal", message: `Customer accepted: ${a.summary}${credit ? ` (${usd(credit)}/mo credit for ${offer.months} months on ${planName})` : ` (${planName} at list price)`}. Please finish the order.`, urgency: "high", read: false, createdAt: ctx.now } as never);
-    return { ok: true, data: { status: "recorded", next: "Tell them it is noted and a team member will finish setting it up and confirm. Do not say it is already applied." }, sideEffect: true };
+    return { ok: true, data: { status: "recorded", next: "Tell them it is noted. If something is due today (a connection charge, a phone), offer to text a secure payment link and, on a yes, call checkout_quote with use_accepted_offer, read it back, then checkout_send_payment_link. If nothing is due today, tell them a team member will confirm it. Do not say it is already applied." }, sideEffect: true };
   },
 };
 export type { ObjectId };

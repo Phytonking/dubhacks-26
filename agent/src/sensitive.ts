@@ -8,7 +8,14 @@ export function redactSensitive(text: string): { text: string; redacted: boolean
   let redacted = false;
   let out = text.replace(/\b\d{3}[-\s]\d{2}[-\s]\d{4}\b/g, () => { redacted = true; return "[redacted SSN]"; });
   out = out.replace(/\b(ssn|social(?:\s+security)?(?:\s+number)?)\b([^.\n]{0,25}?)\b(\d{9})\b/gi, (_m, a, b) => { redacted = true; return `${a}${b}[redacted SSN]`; });
-  out = out.replace(/\b(?:\d[ -]?){13,19}\b/g, (m) => { const d = m.replace(/\D/g, ""); if (d.length >= 13 && d.length <= 19 && luhn(d)) { redacted = true; return "[redacted card number]"; } return m; });
+  out = out.replace(/\b(?:\d[ -]?){13,19}\b/g, (m) => { const d = m.replace(/\D/g, ""); if (d.length >= 13 && d.length <= 19 && luhn(d)) { redacted = true; return "[redacted card number]" + (m.match(/[ -]+$/)?.[0] ?? ""); } return m; });
+  // A mistyped or partial card number (fails the Luhn check) is still a card number: 15-16 digits starting 3-6, or the usual 4-4-4-4 / 4-6-5 grouping, go too.
+  // Order numbers, tracking numbers (start 7-9), phone numbers (10-11 digits) and amounts are left alone.
+  out = out.replace(/\b[3-6]\d{14,15}\b/g, () => { redacted = true; return "[redacted card number]"; });
+  out = out.replace(/\b\d{4}([ -])\d{4}\1\d{4}\1\d{3,4}\b/g, () => { redacted = true; return "[redacted card number]"; });
+  out = out.replace(/\b\d{4}([ -])\d{6}\1\d{5}\b/g, () => { redacted = true; return "[redacted card number]"; });
+  // "exp 04/28", "expires 4/2028": the label stays, the date goes
+  out = out.replace(/\b(exp(?:iry|iration|ires)?(?:\s+date)?)\b(\s*(?:is|was|=|:|-)?\s*)(\d{1,2}\s*\/\s*(?:\d{2}|\d{4}))\b/gi, (_m, label, mid) => { redacted = true; return `${label}${mid}[redacted]`; });
   // "my password is hunter2", "PIN 8675309", "the cvv is 123": the label stays, the value goes
   out = out.replace(/\b(password|passcode|pass code|pin(?: number| code)?|cvv|cvc|security code)\b(\s*(?:is|was|=|:|-)?\s*)([^\s,;]{3,})/gi, (m, label, mid, val) => {
     if (/^(number|code|for|the|to|and|you|me|please|is|was|reset|here|again)$/i.test(val) || !/[a-z0-9]/i.test(val)) return m;
@@ -29,4 +36,6 @@ export function asksForSecrets(sentence: string): boolean {
   return ASK_VERB.test(sentence) || /\?\s*$/.test(sentence);
 }
 
+/** A card in chat means they want to pay: send them to the payment link instead of the generic form. */
+export const PAYMENT_REDIRECT = "For your security, please don't send card details here. I can text you a private payment link instead.";
 export const TEXT_REDIRECT = "For your security, please don't send that here. I can text you a private form instead if you'd like.";

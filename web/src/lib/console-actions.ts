@@ -1,5 +1,6 @@
 import { ObjectId, type Document } from "mongodb";
 import { getDb } from "./db";
+import { resolveApproval } from "./checkout-core";
 import { getCurrentOrg } from "./queries";
 
 // Owner actions from the console. The agent's outbound texting reads these collections;
@@ -68,6 +69,14 @@ export async function savePromo(body: Document) {
 export async function removePromo(code: string) {
   const { _id: orgId } = await getCurrentOrg();
   await (await getDb()).collection<Document>("promos").deleteOne({ orgId, code: code.toUpperCase() });
+  return { ok: true };
+}
+
+/** Owner decision on an over-limit order. Approving lets the agent send the customer their payment link. */
+export async function decideApproval(id: string, decision: "approved" | "declined") {
+  const { _id: orgId } = await getCurrentOrg();
+  const r = await resolveApproval(await getDb(), { orgId, approvalId: oid(id), decision, by: "human" });
+  if (!r.ok) throw new HttpError(409, "that approval was already decided or does not exist");
   return { ok: true };
 }
 

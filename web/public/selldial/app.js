@@ -478,6 +478,22 @@
     : `<p class="empty">No messages yet.</p>`;
   let openConvId = null;
 
+  // What is holding an order up, and what the owner can do about it.
+  function pendingSection(c) {
+    const p = c.pending;
+    if (!p || c.outcome === "purchased") return "";
+    const sum = esc(p.summary || c.item || "The customer's order");
+    if (p.kind === "approval") return `<section class="report-sec" aria-label="Needs approval"><p class="section-label">Needs your approval</p>
+          <p class="small muted">${sum}: ${money(p.amount_cents)} due today, over your ${money(p.limit_cents)} limit. The customer cannot pay until you approve.</p>
+          <div class="pf-actions"><button class="btn primary" type="button" data-approve="${esc(p.approval_id)}">Approve</button><button class="btn ghost" type="button" data-decline="${esc(p.approval_id)}">Decline</button></div></section>`;
+    if (p.kind === "payment") return `<section class="report-sec" aria-label="Waiting for payment"><p class="section-label">Waiting for payment</p>
+          <p class="small muted">${sum}: ${money(p.amount_cents)} due today. The customer has a private payment link. This becomes a sale when they pay.</p></section>`;
+    return `<section class="report-sec" aria-label="Pending order"><p class="section-label">Pending order</p>
+          <p class="small muted">${sum} Once it is paid, confirm it here so it counts as a sale.</p>
+          <form class="pf-actions" data-mark-paid-form="${esc(c.id)}"><label class="money-input"><span aria-hidden="true">$</span><input name="amount" type="number" min="0.01" step="any" inputmode="decimal" aria-label="Amount paid in dollars" required></label>
+          <button class="btn primary" type="submit">Mark paid</button></form></section>`;
+  }
+
   function openConversation(id, opener, from, step) {
     const s = api.state, c = s.conversations.find((x) => x.id === id);
     if (!c || c.status === "live") return toast("That conversation isn't in this snapshot.");
@@ -491,10 +507,7 @@
     showDrawer(`${drawerHead(c.customer, `${channelKind(c)} · ${ago(c.started)}`, from)}
       <div class="drawer-body">
         <section class="report-head"><p class="section-label">Summary</p><p class="summary">${esc(c.summary || c.intent)}</p></section>
-        ${c.status === "awaiting_approval" && c.outcome !== "purchased" ? `<section class="report-sec" aria-label="Pending order"><p class="section-label">Pending order</p>
-          <p class="small muted">${esc(c.item || "The customer accepted a deal.")} Once it is paid, confirm it here so it counts as a sale.</p>
-          <form class="pf-actions" data-mark-paid-form="${esc(c.id)}"><label class="money-input"><span aria-hidden="true">$</span><input name="amount" type="number" min="0.01" step="any" inputmode="decimal" aria-label="Amount paid in dollars" required></label>
-          <button class="btn primary" type="submit">Mark paid</button></form></section>` : ""}
+        ${pendingSection(c)}
         <section class="transcript-main" aria-label="Transcript">
           <p class="section-label">Transcript <span class="muted">${plural(talk.length, "message")}</span></p>
           <div class="transcript" id="transcript">${transcriptHtml(talk)}</div>
@@ -599,7 +612,7 @@
   }
 
   document.addEventListener("click", async (e) => {
-    const el = e.target.closest("[data-menu],[data-go],[data-close],[data-conv],[data-cust],[data-conv-clear],[data-cust-clear],[data-sale-clear],[data-sale-tab],[data-promo-open],[data-promo-cancel],[data-promo-remove]");
+    const el = e.target.closest("[data-menu],[data-go],[data-close],[data-conv],[data-cust],[data-conv-clear],[data-cust-clear],[data-sale-clear],[data-sale-tab],[data-promo-open],[data-promo-cancel],[data-promo-remove],[data-approve],[data-decline]");
     if (!el) return;
     const d = el.dataset;
     const opener = el.matches("tr") ? el.querySelector(".row-link") || el : el;
@@ -617,6 +630,11 @@
         await api.removePromo(d.promoRemove);
         delete ui.set[`offer:${d.promoRemove}`];
         render(); toast(`Removed ${d.promoRemove}`); $("[data-promo-open]").focus();
+      }
+      else if (d.approve || d.decline) {
+        const id = d.approve || d.decline;
+        await api.decideApproval(id, d.approve ? "approve" : "decline");
+        closeDrawer(); render(); toast(d.approve ? "Approved. The customer can now pay." : "Declined");
       }
       else if (d.cust) openCustomer(d.cust, opener);
       else if (d.conv) openConversation(d.conv, opener, d.from, d.step);
