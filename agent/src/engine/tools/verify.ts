@@ -1,4 +1,6 @@
+import { isVerified } from "../../customer";
 import { checkCode, issueCode, markSent, voidCode } from "../../verification";
+const alreadyVerified = async (ctx: import("../types").ToolCtx) => isVerified(await ctx.db.collection("contacts").findOne({ _id: ctx.contactId, orgId: ctx.orgId }), ctx.now);
 import type { Tool } from "../types";
 
 // The code never appears in: tool results, tool_calls audit rows, agent_turns, stored messages (redacted), or anything the model sees.
@@ -9,6 +11,7 @@ export const verify_send_code: Tool = {
   async run(ctx) {
     if (!ctx.party.externalRefs.some((r) => r.system === "tmobile" && r.kind === "account"))   // verification protects an existing account; a new person has none
       return { ok: false, error: "not_needed", data: { hint: "This person has no account on file, so there is nothing to verify. Help them as a new customer." } };
+    if (await alreadyVerified(ctx)) return { ok: true, data: { status: "already_verified", hint: "They are already verified; do not send another code. Answer their question." } };
     const number = ctx.party.address;
     const issued = await issueCode(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, number, secret: ctx.env.verifySecret, now: ctx.now });
     if (!issued.ok) return { ok: false, error: issued.error, data: { retryAfterSeconds: issued.retryAfterSec } };
@@ -39,6 +42,7 @@ export const verify_check_code: Tool = {
   description: "Check the 6-digit code the customer read back to you (digits or spoken words both work). Tells you only whether it was right.",
   parameters: { type: "object", properties: { code: { type: "string", minLength: 1, maxLength: 60, description: "exactly what the customer said or typed" } }, required: ["code"] },
   async run(ctx, { code }) {
+    if (await alreadyVerified(ctx)) return { ok: true, data: { status: "already_verified", hint: "They are already verified. This was not a code; answer what they asked." } };
     const r = await checkCode(ctx.db, { orgId: ctx.orgId, contactId: ctx.contactId, number: ctx.party.address, code, secret: ctx.env.verifySecret, method: `otp_${ctx.channel}`, now: ctx.now });
     const audit = { status: r.status };   // the attempt text is not stored
     if (r.status === "verified") return { ok: true, data: { status: "verified", valid_minutes: 30 }, audit, sideEffect: true };

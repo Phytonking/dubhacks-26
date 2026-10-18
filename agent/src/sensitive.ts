@@ -9,6 +9,11 @@ export function redactSensitive(text: string): { text: string; redacted: boolean
   let out = text.replace(/\b\d{3}[-\s]\d{2}[-\s]\d{4}\b/g, () => { redacted = true; return "[redacted SSN]"; });
   out = out.replace(/\b(ssn|social(?:\s+security)?(?:\s+number)?)\b([^.\n]{0,25}?)\b(\d{9})\b/gi, (_m, a, b) => { redacted = true; return `${a}${b}[redacted SSN]`; });
   out = out.replace(/\b(?:\d[ -]?){13,19}\b/g, (m) => { const d = m.replace(/\D/g, ""); if (d.length >= 13 && d.length <= 19 && luhn(d)) { redacted = true; return "[redacted card number]"; } return m; });
+  // "my password is hunter2", "PIN 8675309", "the cvv is 123": the label stays, the value goes
+  out = out.replace(/\b(password|passcode|pass code|pin(?: number| code)?|cvv|cvc|security code)\b(\s*(?:is|was|=|:|-)?\s*)([^\s,;]{3,})/gi, (m, label, mid, val) => {
+    if (/^(number|code|for|the|to|and|you|me|please|is|was|reset|here|again)$/i.test(val) || !/[a-z0-9]/i.test(val)) return m;
+    redacted = true; return `${label}${mid}[redacted]`;
+  });
   return { text: out, redacted };
 }
 

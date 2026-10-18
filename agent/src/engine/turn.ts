@@ -13,6 +13,7 @@ import type { ChatMessage, EngineEnv, LlmPort, Tool, ToolCallReq, ToolCtx, ToolR
 import { validateArgs } from "./validate";
 
 export const MAX_ROUNDS = 6;   // the last round has no tools: the model must answer with what it has
+const VOICE_MAX_WORDS = 60;
 const WRAP_UP = "You have used your tool budget for this turn. Answer the customer now in your own words using only the tool results above. Do not call any more tools.";
 export type EngineDeps = { db: Db; llm: LlmPort; tools: Tool[]; messenger: Messenger; env: EngineEnv; log?: (m: string) => void };
 export type TraceCall = { name: string; ok: boolean; ms: number; error?: string };
@@ -41,9 +42,21 @@ export function trimToSentence(text: string): string {
   return m ? m[0].trim() : "";
 }
 
+const PERSON = /\b(i'?ll|i will|we'?ll|we will|let me) (get|bring|connect|have|find|send) (someone|a person|a human|a team member|a specialist|somebody)\b|\b(connect|put|bring|get|transfer|hand|pass)\b[^.?!]{0,30}\b(you|this|that)\b[^.?!]{0,25}\b(person|someone|human|team|specialist|representative|agent)\b|\ba (person|human|team member|specialist|representative|someone) (will|is going to|from the team will)\b|\bfollow up with you\b/i;
+const OFFER = /\b(would you like|want me to|do you want|shall i|should i|if you'?d like|if you would like|i can (also )?(connect|bring|get|have)|happy to (connect|bring|get)|prefer|which would)\b/i;
+/** The reply PROMISES a person (not just offers one): then a person must actually be told. */
+export const promisesPerson = (text: string) => takeSentences(text, true)[0].some((s) => PERSON.test(s) && !OFFER.test(s) && !/\?\s*$/.test(s));
+
+/** At most ONE question per reply: statements are kept, questions after the first are dropped (a questionnaire is both annoying and, on a call, hard to answer). */
+export function limitQuestions(text: string): string {
+  const [sents] = takeSentences(text, true); let asked = false;
+  const out = sents.filter((s) => { if (!/\?["')]*$/.test(s)) return true; if (asked) return false; asked = true; return true; });
+  return out.length === sents.length ? text : out.join(" ").trim();
+}
+
 /** Plain text only: no markdown emphasis, no bullets, no stray whitespace. */
 export function cleanReply(text: string): string {
-  return stripThinking(text).replace(/\*\*|__|`/g, "").replace(/^\s*[-*•]\s+/gm, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return stripThinking(text).replace(/^[ \t]*#{1,6}[ \t]+.*$/gm, "").replace(/\*\*|__|`/g, "").replace(/^\s*[-*•]\s+/gm, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function makeCtx(deps: EngineDeps, input: TurnInput, b: BuiltContext, turnId: string): ToolCtx {
@@ -119,7 +132,7 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
   const trace: TraceCall[] = []; let sideEffects = false, escalated = false; const effort = effortFor(input.mode);
   /** The assistant must never ask for a password, PIN, SSN or card number in the conversation. Replace such a reply with the move-to-text message. */
   const noSecretRequests = async (text: string) => {
-    if (!takeSentences(text, true)[0].some(asksForSecrets)) return text;
+    if (!takeSentences(text, true)[0].some(asksForSecrets)) return limitQuestions(text);
     sideEffects = true;
     if (input.mode === "voice") return (await reachHint(ctx, "private_details")).reply;
     return TEXT_REDIRECT;
@@ -132,7 +145,7 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
   try {
     while (rounds < MAX_ROUNDS) {
       rounds++;
-      if (rounds === MAX_ROUNDS) messages.push({ role: "system", content: WRAP_UP });
+      if (rounds === MAX_ROUNDS) messages.push({ role: "user", content: `[note to assistant, not from the customer] ${WRAP_UP}` });
       const resp = await deps.llm.chat({ messages, tools: rounds === MAX_ROUNDS ? undefined : specs, effort: effortNow, maxTokens: maxNow, temperature: 0.3, signal: input.signal });
       add(usage, resp.usage); lastFinish = resp.finish;
       const calls = resp.message.tool_calls ?? [];
@@ -174,7 +187,7 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
     const reason = verdict.reason;
     try {
       messages.push({ role: "assistant", content: final });
-      messages.push({ role: "system", content: `Your draft was rejected: ${reason}. Rewrite it using only facts from the tools, the knowledge, or the customer's own words. Do not mention this note.` });
+      messages.push({ role: "user", content: `[note to assistant, not from the customer] Your draft was rejected: ${reason}. Rewrite it using only facts from the tools, the knowledge, or the customer's own words. Do not mention this note.` });
       const again = await deps.llm.chat({ messages, effort, maxTokens: maxTokensFor(input.mode), temperature: 0.2, signal: input.signal });
       add(usage, again.usage);
       const retry = cleanReply(again.message.content ?? "");
@@ -183,9 +196,14 @@ export async function runTurn(deps: EngineDeps, input: TurnInput): Promise<TurnR
       const kept = keepPassingSentences(retry || final, b.guard, ctx.guard.evidence);   // still failing: send only the sentences that pass, if any remain
       if (kept) return done({ outcome: escalated ? "escalated" : "reply", text: await noSecretRequests(kept), rounds: rounds + 1, note: `sanitized (dropped unsupported sentence): ${reason}` });
     } catch { /* fall through to the safe fallback */ }
+    if (verdict.verdict === "blocked" && verdict.kind === "ungrounded_amount") {   // a number we could not back up: do not hand the whole conversation to a person for that; tell the team and stay on
+      await ctx.db.collection("notifications").insertOne({ orgId: ctx.orgId, contactId: ctx.contactId, conversationId: ctx.conversationId, kind: "handoff", message: `The agent held back an answer it could not back up (${reason}). The customer was told someone will confirm.`, urgency: "normal", read: false, createdAt: ctx.now } as never);
+      return done({ outcome: "blocked", text: "I want to be sure I give you the right number, so I'll have someone confirm that for you. Is there anything else I can help with in the meantime?", rounds, sideEffects: true, note: `blocked: ${reason}` });
+    }
     await escalateFallback(deps, ctx, `guardrail: ${reason}`);
     return done({ outcome: "blocked", text: SAFE_FALLBACK, rounds, escalated: true, sideEffects: true, note: `blocked: ${reason}` });
   }
+  if (!escalated && promisesPerson(final)) { await escalateFallback(deps, { ...ctx, mode: "text" }, "the reply promised that a person would follow up"); escalated = true; sideEffects = true; }   // never promise a person without telling one
   return done({ outcome: escalated ? "escalated" : "reply", text: await noSecretRequests(final), rounds });
 }
 
@@ -209,8 +227,9 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
   const finish = (outcome: TurnResult["outcome"], extra: Partial<TurnResult> = {}): StreamEvent => ({ type: "done", spoken, result: {
     turnId, outcome, text: spoken, rounds, toolCalls: trace, usage, sideEffects, escalated, passthrough: [], note, ms: Date.now() - t0, model: deps.llm.model, effort, ...extra } });
 
+  let askedOne = false;
   let muted = false;   // set once the assistant tries to ask for a secret: the redirect is spoken instead and nothing more from the model is
-  const say = async function* (sentences: string[]): AsyncGenerator<StreamEvent> {
+  const say = async function* (sentences: string[], forced = false): AsyncGenerator<StreamEvent> {
     for (const raw of sentences) {
       if (muted) return;
       const s = stripToolMarkup(cleanReply(raw)); if (!s) continue;   // tool syntax is never spoken; real words around it still are
@@ -220,6 +239,8 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
         for (const part of takeSentences(msg, true)[0]) { spoken += (spoken ? " " : "") + part; yield { type: "sentence", text: part, replaced: true }; }
         return;
       }
+      if (!forced && /\?["')]*$/.test(s)) { if (askedOne) continue; askedOne = true; }   // one question per reply
+      if (!forced && input.mode === "voice" && spoken && (spoken + " " + s).split(/\s+/).length > VOICE_MAX_WORDS) continue;   // a call is not a lecture: stop at a sentence boundary
       const v = checkText(s, b.guard, ctx.guard.evidence);
       if (v.verdict === "blocked") { flagged = true; note = `sentence blocked: ${v.reason}`; if (!spoken.endsWith(SAFE_LINE)) { spoken += (spoken ? " " : "") + SAFE_LINE; yield { type: "sentence", text: SAFE_LINE, replaced: true }; } }
       else { spoken += (spoken ? " " : "") + s; yield { type: "sentence", text: s }; }
@@ -229,7 +250,7 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
   try {
     while (rounds < MAX_ROUNDS) {
       rounds++;
-      if (rounds === MAX_ROUNDS) messages.push({ role: "system", content: WRAP_UP });
+      if (rounds === MAX_ROUNDS) messages.push({ role: "user", content: `[note to assistant, not from the customer] ${WRAP_UP}` });
       let buf = ""; let content = "";
       const acc = new Map<number, { id: string; name: string; args: string }>(); let streamFinish = "";
       for await (const d of deps.llm.stream({ messages, tools: rounds === MAX_ROUNDS ? undefined : specs, effort, maxTokens: maxTokensFor(input.mode), temperature: 0.3, signal: input.signal })) {
@@ -251,10 +272,11 @@ export async function* streamTurn(deps: EngineDeps, input: TurnInput): AsyncGene
         messages.push({ role: "tool", tool_call_id: call.id, content: r.content });
         forced ??= r.result.reply;
       }
-      if (forced) { yield* say(takeSentences(cleanReply(forced), true)[0]); break; }
+      if (forced) { yield* say(takeSentences(cleanReply(forced), true)[0], true); break; }
       if (rounds === MAX_ROUNDS) throw new Error("tool loop did not finish");   // only if the model ignored the no-tools round
     }
     if (!spoken) throw new Error("empty reply");
+    if (!escalated && promisesPerson(spoken)) { await escalateFallback(deps, { ...ctx, mode: "text" }, "the reply promised that a person would follow up"); escalated = true; sideEffects = true; }
     yield finish(flagged ? "blocked" : escalated ? "escalated" : "reply");
   } catch (e) {
     if (input.signal?.aborted) { note = "interrupted"; yield finish("failed"); return; }

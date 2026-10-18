@@ -33,15 +33,23 @@ export function checkGroundedMoney(text: string, evidence: string[]): Verdict {
     for (const m of e.matchAll(/(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?![\d,])/g)) ev.add(norm(m[1], m[2]));   // bare numbers ("1450", "89.00")
   }
   const nums = [...ev].map(Number);
+  // simple arithmetic on grounded amounts is fine ("$330 vs $160 is $170 more", "$930 minus a $292 trade-in"): the sum or difference of two amounts in the evidence
+  const derived = new Set<string>(); const cents = [...new Set(nums.map((v) => Math.round(v * 100)))].slice(0, 400);
+  for (let i = 0; i < cents.length; i++) for (let j = i; j < cents.length; j++) { derived.add(((cents[i] + cents[j]) / 100).toFixed(2)); derived.add((Math.abs(cents[i] - cents[j]) / 100).toFixed(2)); }
   // a spoken amount may be the whole-dollar rounding of an exact one in the evidence ("$107" for $106.98)
-  for (const a of amountsIn(text)) if (!ev.has(a) && !(a.endsWith(".00") && nums.some((v) => v % 1 !== 0 && Math.abs(v - Number(a)) < 0.5))) return { verdict: "blocked", reason: `amount $${a.replace(/\.00$/, "")} is not in this turn's evidence`, kind: "ungrounded_amount" };
+  for (const a of amountsIn(text)) if (!ev.has(a) && !derived.has(a) && !(a.endsWith(".00") && nums.some((v) => v % 1 !== 0 && Math.abs(v - Number(a)) < 0.5))) return { verdict: "blocked", reason: `amount $${a.replace(/\.00$/, "")} is not in this turn's evidence`, kind: "ungrounded_amount" };
   return { verdict: "ok" };
 }
 
 export type GuardCfg = { maxDiscountPct: number; requireGroundedMoney?: boolean };
 export function checkText(text: string, cfg: GuardCfg, evidence: string[]): Verdict {
   const d = checkDiscount(text, cfg.maxDiscountPct);
-  if (d.verdict !== "ok") return d;
+  if (d.verdict !== "ok") {
+    // a percentage that a tool returned this turn ("25% off" on accessories) is a catalog fact, not an invented discount; the customer's own "50% off" never counts
+    const pct = /discount (\d+(?:\.\d+)?)%/.exec((d as { reason?: string }).reason ?? "")?.[1];
+    const fromTool = pct && evidence.some((e) => !e.startsWith("USER:") && new RegExp(`(?<![\\d.])${pct}\\s?%\\s*off`, "i").test(e));
+    if (!fromTool) return d;
+  }
   if (cfg.requireGroundedMoney) return checkGroundedMoney(text, evidence);
   return { verdict: "ok" };
 }

@@ -4,7 +4,7 @@ import { buildContext, toolsBlock } from "../src/engine/context";
 import { readdirSync, readFileSync } from "node:fs";
 import { checkGroundedMoney, takeSentences } from "../src/engine/guardrails";
 import { ALL_TOOLS, validateRegistry } from "../src/engine/tools/index";
-import { MAX_ROUNDS, runTurn, streamTurn, SAFE_FALLBACK, cleanReply } from "../src/engine/turn";
+import { limitQuestions, MAX_ROUNDS, runTurn, streamTurn, SAFE_FALLBACK, cleanReply } from "../src/engine/turn";
 import { stripThinking } from "../src/engine/llm";
 import { FORM_TEMPLATES } from "../../web/src/lib/form-templates";
 import { ScriptedLlm, ok, t, finish, makeKit } from "./_testkit";
@@ -87,14 +87,15 @@ await t("guardrail (money): an amount that is not in this turn's evidence is rew
   const llm = new ScriptedLlm([{ content: "A tune-up is only $59 today." }, { content: "A basic tune-up is $89." }]);
   const r = await runTurn(kit.deps(llm), await input("tune-up price?"));
   ok(r.outcome === "reply" && r.text.includes("$89") && /guardrail retry/.test(r.note ?? ""), JSON.stringify({ t: r.text, n: r.note }));
-  ok(llm.requests[1].messages.some((m: any) => m.role === "system" && /rejected/.test(m.content)), "correction note was sent");
+  ok(llm.requests[1].messages.some((m: any) => m.role === "user" && /rejected/.test(m.content)), "correction note was sent");
 });
-await t("guardrail (money): still ungrounded after the retry -> safe fallback and a person, the invented price is never returned", async () => {
+await t("guardrail (money): still ungrounded after the retry -> a plain 'someone will confirm' reply, the team is told, the customer stays with the agent; the invented price is never returned", async () => {
   const k2 = await kit.newContact("+14255550780");
   const llm = new ScriptedLlm([{ content: "It is $12.34." }, { content: "Honestly just $7." }]);
   const r = await runTurn(kit.deps(llm), await input("price?", { conversationId: k2.conversationId }));
-  ok(r.outcome === "blocked" && r.text === SAFE_FALLBACK && !r.text.includes("$"), JSON.stringify(r));
-  ok(((await db.collection("conversations").findOne({ _id: k2.conversationId })) as any).mode === "human", "handed to a person");
+  ok(r.outcome === "blocked" && /someone confirm/.test(r.text) && !r.text.includes("$") && !r.text.includes("12.34"), JSON.stringify(r));
+  ok(((await db.collection("conversations").findOne({ _id: k2.conversationId })) as any).mode === "agent", "stays with the agent");
+  ok((await db.collection("notifications").countDocuments({ conversationId: k2.conversationId, kind: "handoff" })) === 1, "team told");
 });
 await t("guardrail (discount): 50% off is blocked when the ceiling is 10%", async () => {
   const llm = new ScriptedLlm([{ content: "Sure, 50% off today!" }, { content: "I can't discount that, but I can check promos." }]);
@@ -317,5 +318,10 @@ await t("money: a whole-dollar rounding of an exact amount is fine ($107 for $10
   ok(checkGroundedMoney("Your bill is $107.50.", ["latest_total: $106.98"]).verdict === "blocked", "not a whole-dollar rounding");
   ok(checkGroundedMoney("That plan is $50.", ['{"plan":"Saver","monthly_total":"$55","lines":50}']).verdict === "blocked", "a bare 50 inside a tool result does not make $50 a quoted price");
   ok(checkGroundedMoney("So about $100 a month.", ["USER:I pay like 100 bucks for one line"]).verdict === "ok", "the customer's own bare number does");
+});
+await t("one question per reply: statements stay, later questions go", async () => {
+  ok(limitQuestions("Got it, Priya. Who are you with now? And how many lines?") === "Got it, Priya. Who are you with now?", limitQuestions("Got it, Priya. Who are you with now? And how many lines?"));
+  ok(limitQuestions("Beyond is $280 a month. Want me to check promos?") === "Beyond is $280 a month. Want me to check promos?", "single question untouched");
+  ok(limitQuestions("It is $55. That includes AutoPay.") === "It is $55. That includes AutoPay.", "no question untouched");
 });
 await finish(kit);

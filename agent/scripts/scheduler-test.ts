@@ -23,7 +23,7 @@ class SlowLlm extends ScriptedLlm {
 }
 const workers = (o: Record<string, unknown> = {}) => ({ imessage: new Worker(db, {} as never, adapters.imessage, async () => {}, { scheduled: true, debounceMs: 60, maxWaitMs: 400, brand: "Sunrise", ...o }) });
 const inbound = (w: Worker, conv: { address?: string }, text: string, id?: string) => w.handleInbound({ orgId, address: conv.address ?? kit.phone, text, channelMsgId: id ?? `m_${Math.random().toString(36).slice(2)}`, ref: { spaceId: "spc", senderId: "usr" } });
-const mkSched = (llm: ScriptedLlm, w: ReturnType<typeof workers>, o: Record<string, unknown> = {}) => new Scheduler({ db, engine: kit.deps(llm), workers: w, pollMs: 20, leaseMs: 5000, heartbeatMs: 1000, ...o });
+const mkSched = (llm: ScriptedLlm, w: ReturnType<typeof workers>, o: Record<string, unknown> = {}) => new Scheduler({ db, engine: kit.deps(llm), workers: w, learn: false, pollMs: 20, leaseMs: 5000, heartbeatMs: 1000, ...o });
 const clean = async () => { for (const a of Object.values(adapters)) { a.sent.length = 0; a.failNext = 0; } await db.collection("messages").deleteMany({}); await db.collection("agent_turns").deleteMany({}); await db.collection("opt_outs").deleteMany({}); await db.collection("notifications").deleteMany({});
   await db.collection("conversations").updateMany({}, { $unset: { lane: "" }, $set: { mode: "agent" } }); };
 const outbound = () => db.collection("messages").find({ direction: "out" }).toArray();

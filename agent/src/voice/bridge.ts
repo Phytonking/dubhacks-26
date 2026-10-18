@@ -3,7 +3,7 @@ import { ObjectId, type Db } from "mongodb";
 import { randomUUID } from "node:crypto";
 import { streamTurn, SAFE_FALLBACK, type EngineDeps } from "../engine/turn";
 import type { ChatMessage, LlmPort } from "../engine/types";
-import { applyExtraction, extractIntake } from "../intake-extract";
+import { applyExtraction, extractIntake, learnFromTurn } from "../intake-extract";
 import { normalizeAddress, resolveParty } from "../identity";
 import { redactSensitive } from "../sensitive";
 import { extractCallInfo, verifyElevenLabsSignature } from "./elevenlabs";
@@ -96,6 +96,7 @@ export function startVoiceServer(cfg: VoiceCfg): Promise<{ server: Server; port:
         await db.collection("usage").updateOne({ orgId, day: now().toISOString().slice(0, 10) }, { $inc: { tokensIn: result.usage.prompt_tokens, tokensOut: result.usage.completion_tokens, messagesIn: 1, messagesOut: spoken ? 1 : 0, sandboxSec: 0 } }, { upsert: true });
       }
       await db.collection("conversations").updateOne({ _id: party.conversation._id }, { $set: { lastMessageAt: now(), lastMessagePreview: (spoken || utterance).slice(0, 80), lastChannel: "voice" } });
+      void learnFromTurn({ db, llm: engine.llm }, { orgId, contactId: party.contact._id, text: utterance, recorded: Boolean(result?.toolCalls?.some((t: any) => t.name === "customer_profile_update" && t.ok)), channel: "voice", callId: call }).catch((e) => log(`learn: ${(e as Error).message}`));
     } catch (e) { log(`voice persist failed: ${(e as Error).message}`); }
   }
 

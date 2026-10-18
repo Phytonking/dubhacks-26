@@ -39,16 +39,33 @@ export function parseJsonObject(text: string): any {
   try { return JSON.parse(t.slice(a, b + 1)); } catch { return {}; }
 }
 
+const STOP = new Set(["the", "and", "for", "with", "that", "this", "have", "has", "are", "was", "but", "not", "you", "your", "from", "plan", "phone", "phones", "line", "lines"]);
+const WORDNUM: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+/** Keep only what the CALLER's own words support: the model sometimes lifts a name or a plan from the AGENT's lines. Drops anything it cannot find in what the caller said. */
+export function supportedByCaller(ex: Extracted, caller: string): Extracted {
+  const c = caller.toLowerCase(); const words = new Set(c.match(/[a-z0-9']+/g) ?? []);
+  const str = (v: string) => { const t = (v.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter((w) => !STOP.has(w)); return !t.length || t.filter((w) => words.has(w) || c.includes(w)).length >= Math.ceil(t.length / 2); };
+  const num = (n: number) => words.has(String(n)) || [...words].some((w) => WORDNUM[w] === n) || new RegExp(`\\b${n}\\b`).test(c) || (n % 100 === 0 && n >= 100 && /hundred/.test(c)) || (n >= 1000 && /thousand/.test(c));
+  const o: Extracted = {};
+  if (ex.first_name && words.has(ex.first_name.toLowerCase())) o.first_name = ex.first_name;
+  for (const k of ["current_carrier", "current_plan", "needs"] as const) if (ex[k] && str(ex[k]!)) o[k] = ex[k];
+  for (const k of ["monthly_bill_usd", "budget_usd", "line_count"] as const) if (ex[k] != null && num(ex[k]!)) o[k] = ex[k];
+  for (const k of ["devices", "interests", "notes"] as const) { const v = (ex[k] ?? []).filter(str); if (v.length) o[k] = v; }
+  if (ex.preferred_contact && c.includes(ex.preferred_contact === "imessage" ? "imessage" : ex.preferred_contact)) o.preferred_contact = ex.preferred_contact;
+  return o;
+}
+
 export async function extractIntake(llm: LlmPort, transcript: { role: string; message: string }[]): Promise<Extracted> {
   const text = transcript.filter((t) => typeof t.message === "string" && t.message.trim()).map((t) => `${t.role === "user" ? "CALLER" : "AGENT"}: ${redactSensitive(t.message.trim()).text}`).join("\n").slice(-12_000);
   if (!/CALLER:/.test(text)) return {};
   const r = await llm.chat({ messages: [{ role: "system", content: PROMPT }, { role: "user", content: text + "\n\nJSON only:" }], effort: "none", maxTokens: 700, temperature: 0 });
-  return sanitizeExtracted(parseJsonObject(r.message.content ?? ""));
+  const callerText = transcript.filter((t) => t.role === "user" && typeof t.message === "string").map((t) => t.message).join(" ");
+  return supportedByCaller(sanitizeExtracted(parseJsonObject(r.message.content ?? "")), callerText);
 }
 
 /** Store on the call, and fill gaps on the contact (never overwrite). A contact with no account becomes a tracked prospect. Returns the fields added to the contact. */
-export async function applyExtraction(db: Db, a: { orgId: ObjectId; callId: ObjectId; contactId: ObjectId; ex: Extracted; now: Date }): Promise<string[]> {
-  await db.collection("calls").updateOne({ _id: a.callId }, { $set: { extracted: { ...a.ex, at: a.now, live: false } } });
+export async function applyExtraction(db: Db, a: { orgId: ObjectId; callId?: ObjectId | null; contactId: ObjectId; ex: Extracted; now: Date; channel?: string; via?: string }): Promise<string[]> {
+  if (a.callId) await db.collection("calls").updateOne({ _id: a.callId }, { $set: { extracted: { ...a.ex, at: a.now, live: false } } });
   if (!Object.keys(a.ex).length) return [];
   const c: any = await db.collection("contacts").findOne({ _id: a.contactId, orgId: a.orgId }, { projection: { intake: 1, externalRefs: 1, profile: 1 } });
   if (!c) return [];
@@ -61,9 +78,21 @@ export async function applyExtraction(db: Db, a: { orgId: ObjectId; callId: Obje
   if (!added.length) return [];
   set["intake.updatedAt"] = a.now;
   if (a.ex.first_name && !c.profile?.displayName) set["profile.displayName"] = a.ex.first_name;
-  const upd: any = { $set: set, $push: { "intake.sources": { $each: [{ at: a.now, callId: a.callId, channel: "voice", via: "post_call" }], $slice: -20 } } };
+  const upd: any = { $set: set, $push: { "intake.sources": { $each: [{ at: a.now, ...(a.callId ? { callId: a.callId } : {}), channel: a.channel ?? "voice", via: a.via ?? "post_call" }], $slice: -20 } } };
   if (Object.keys(add).length) upd.$addToSet = add;
   if (!(c.externalRefs ?? []).some((r: any) => r.system === "tmobile")) upd.$push.externalRefs = { system: "tmobile", kind: "prospect", id: String(a.contactId), linkedAt: a.now, via: "intake" };
   await db.collection("contacts").updateOne({ _id: a.contactId, orgId: a.orgId }, upd);
   return added;
+}
+
+/**
+ * Safety net for the live conversation: when the person said something about themselves and the model did not record it (it sometimes
+ * answers instead of calling customer_profile_update), read their message once and fill the gaps. Runs AFTER the reply, never delays it.
+ */
+export async function learnFromTurn(deps: { db: Db; llm: LlmPort }, a: { orgId: ObjectId; contactId: ObjectId; text: string; recorded: boolean; channel: string; callId?: ObjectId | null; now?: Date }): Promise<string[]> {
+  const text = a.text.trim();
+  if (a.recorded || text.length < 12 || (!/\d/.test(text) && text.split(/\s+/).length < 5)) return [];
+  const ex = await extractIntake(deps.llm, [{ role: "user", message: text }]);
+  if (!Object.keys(ex).length) return [];
+  return applyExtraction(deps.db, { orgId: a.orgId, callId: a.callId ?? null, contactId: a.contactId, ex, now: a.now ?? new Date(), channel: a.channel, via: "turn" });
 }

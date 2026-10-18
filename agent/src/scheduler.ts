@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db, ObjectId } from "mongodb";
+import { learnFromTurn } from "./intake-extract";
 import { runTurn, type EngineDeps, type TurnResult } from "./engine/turn";
 import type { ChannelId } from "./identity";
 import type { Worker } from "./recorded-io";
@@ -9,6 +10,7 @@ import type { Worker } from "./recorded-io";
 // caps, and a crash is recovered when the lease expires.
 export type SchedulerCfg = {
   db: Db; engine: EngineDeps; workers: Partial<Record<ChannelId, Worker>>;
+  learn?: boolean;      // after the reply, record what the person said about themselves if the model did not (default on)
   debounceMs?: number; maxWaitMs?: number; leaseMs?: number; heartbeatMs?: number; globalCap?: number; perOrgCap?: number; pollMs?: number; maxReruns?: number;
   owner?: string; log?: (m: string) => void; now?: () => Date;
   afterTurn?: (a: { orgId: ObjectId; conversationId: ObjectId; contactId: ObjectId }) => Promise<void>;
@@ -117,6 +119,7 @@ export class Scheduler {
         }
         await db.collection("messages").updateMany({ _id: { $in: batch.map((m) => m._id) } }, { $set: { handledByTurn: result.turnId } });
         await record(result.outcome, sendStatus === "failed" ? `reply send failed: ${result.note ?? ""}`.trim() : undefined);
+        if (this.c.learn !== false) await learnFromTurn({ db, llm: engine.llm }, { orgId: claimed.orgId, contactId: claimed.contactId, text: batch.map((m) => m.body).join("\n"), recorded: result.toolCalls.some((t) => t.name === "customer_profile_update" && t.ok), channel }).catch((e) => this.log(`learn: ${(e as Error).message}`));
         await this.c.afterTurn?.({ orgId: claimed.orgId, conversationId: claimed._id, contactId: claimed.contactId }).catch((e) => this.log(`afterTurn: ${(e as Error).message}`));
         break;
       }

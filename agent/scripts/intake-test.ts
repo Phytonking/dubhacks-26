@@ -3,7 +3,7 @@ import { ObjectId } from "mongodb";
 import { buildContext } from "../src/engine/context";
 import { executeTool, runTurn } from "../src/engine/turn";
 import { planTotalCents } from "../src/engine/tools/tmo-catalog";
-import { applyExtraction, extractIntake, parseJsonObject, sanitizeExtracted } from "../src/intake-extract";
+import { applyExtraction, extractIntake, parseJsonObject, sanitizeExtracted, supportedByCaller } from "../src/intake-extract";
 import { importCallEvent } from "../src/voice/bridge";
 import { Scheduler } from "../src/scheduler";
 import { Worker } from "../src/recorded-io";
@@ -153,5 +153,11 @@ await t("listen-only SMS: the message is stored and the model learns from it, bu
   ok(/listen-only/i.test(JSON.stringify(llm.requests[0].messages[0])), "model is told its reply will not be delivered");
   const out = await db.collection("messages").countDocuments({ direction: "out", channel: "sms" }); ok(out === 0, "no outbound row");
   await w.handleInbound({ orgId, address: phone, text: "STOP", channelMsgId: "sms_2", ref: {} }); ok(kit.adapters.sms.sent.length === 0, "STOP/HELP replies cannot go out either");
+});
+await t("extraction keeps only what the CALLER said: a name or plan the agent said is dropped, spoken numbers and partial matches are kept", async () => {
+  const caller = "I pay about a hundred bucks for two lines with Verizon, got an iPhone 13 and my wife has a Pixel. I'm Dev by the way. Budget is maybe eighty dollars";
+  const r = supportedByCaller({ first_name: "Andre", current_carrier: "Verizon", current_plan: "Experience More 2.0", monthly_bill_usd: 100, line_count: 2, budget_usd: 80, devices: ["iPhone 13", "Galaxy S24"], needs: "cheaper bill" }, caller);
+  ok(r.first_name === undefined && r.current_plan === undefined && r.needs === undefined && r.current_carrier === "Verizon" && r.monthly_bill_usd === 100 && r.line_count === 2 && r.budget_usd === 80 && r.devices?.join() === "iPhone 13", JSON.stringify(r));
+  ok(supportedByCaller({ first_name: "Dev" }, caller).first_name === "Dev", "name said by the caller is kept");
 });
 await finish(kit);
